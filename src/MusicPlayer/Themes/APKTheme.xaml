@@ -1,0 +1,638 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <!-- ===== APK COLOR PALETTE ===== -->
+    <Color x:Key="APK_DarkBackground">#FF1D2026</Color>
+    <Color x:Key="APK_DarkSurface">#FF242831</Color>
+    <Color x:Key="APK_DarkToolbarOverlay">#33000000</Color>
+    <Color x:Key="APK_ListDivider">#1AFFFFFF</Color>
+
+    <!-- Primary Accent - THE BLUE from APK -->
+    <Color x:Key="APK_AccentBlue">#FF4995F3</Color>
+    <Color x:Key="APK_AccentBlueHover">#FF5EA5FF</Color>
+    <Color x:Key="APK_AccentBluePressed">#FF3A82DB</Color>
+    
+    <!-- Selection Highlight - THE YELLOW from APK -->
+    <Color x:Key="APK_SelectionYellow">#FFFFCF4D</Color>
+
+    <!-- Text Colors -->
+    <Color x:Key="APK_TextPrimary">#FFFFFFFF</Color>
+    <Color x:Key="APK_TextHigh">#FFFFFFFF</Color>
+    <Color x:Key="APK_TextMedium">#B3FFFFFF</Color>
+    <Color x:Key="APK_TextLow">#4DFFFFFF</Color>
+    <Color x:Key="APK_TextDisabled">#4D4D4D4D</Color>
+
+    <!-- Card Backgrounds -->
+    <Color x:Key="APK_CardBackground">#1F242C38</Color>
+    <Color x:Key="APK_CardBackgroundHover">#333A485A</Color>
+    <Color x:Key="APK_CardBorder">#1AFFFFFF</Color>
+
+    <!-- ===== BRUSHES ===== -->
+    <SolidColorBrush x:Key="APK_BackgroundBrush" Color="{StaticResource APK_DarkBackground}"/>
+    <SolidColorBrush x:Key="APK_SurfaceBrush" Color="{StaticResource APK_DarkSurface}"/>
+    <SolidColorBrush x:Key="APK_ToolbarOverlayBrush" Color="{StaticResource APK_DarkToolbarOverlay}"/>
+    <SolidColorBrush x:Key="APK_ListDividerBrush" Color="{StaticResource APK_ListDivider}"/>
+    <SolidColorBrush x:Key="APK_AccentBrush" Color="{StaticResource APK_AccentBlue}"/>
+    <SolidColorBrush x:Key="APK_AccentHoverBrush" Color="{StaticResource APK_AccentBlueHover}"/>
+    <SolidColorBrush x:Key="APK_AccentPressedBrush" Color="{StaticResource APK_AccentBluePressed}"/>
+    <SolidColorBrush x:Key="APK_SelectionBrush" Color="{StaticResource APK_SelectionYellow}"/>
+    <SolidColorBrush x:Key="APK_YellowBrush" Color="{StaticResource APK_SelectionYellow}"/>
+    <SolidColorBrush x:Key="APK_TextPrimaryBrush" Color="{StaticResource APK_TextPrimary}"/>
+    <SolidColorBrush x:Key="APK_TextMediumBrush" Color="{StaticResource APK_TextMedium}"/>
+    <SolidColorBrush x:Key="APK_TextLowBrush" Color="{StaticResource APK_TextLow}"/>
+    <SolidColorBrush x:Key="APK_TextDisabledBrush" Color="{StaticResource APK_TextDisabled}"/>
+    <SolidColorBrush x:Key="APK_CardBackgroundBrush" Color="{StaticResource APK_CardBackground}"/>
+    <SolidColorBrush x:Key="APK_CardBorderBrush" Color="{StaticResource APK_CardBorder}"/>
+
+    <!-- ===== TYPOGRAPHY ===== -->
+    <FontFamily x:Key="APK_FontPrimary">Segoe UI, Roboto, sans-serif</FontFamily>
+    
+    <sys:Double x:Key="APK_FontSize_Tiny">10</sys:Double>
+    <sys:Double x:Key="APK_FontSize_Small">12</sys:Double>
+    <sys:Double x:Key="APK_FontSize_Body">13</sys:Double>
+    <sys:Double x:Key="APK_FontSize_Title">18</sys:Double>
+    <sys:Double x:Key="APK_FontSize_AppTitle">20</sys:Double>
+
+    <!-- ===== DIMENSIONS ===== -->
+    <sys:Double x:Key="APK_ToolbarHeight">56</sys:Double>
+    <sys:Double x:Key="APK_MiniPlayerHeight">62</sys:Double>
+    <sys:Double x:Key="APK_ListItemHeight">68</sys:Double>
+    
+    <!-- ===== CORNERS ===== -->
+    <CornerRadius x:Key="APK_Corner_Small">6</CornerRadius>
+    <CornerRadius x:Key="APK_Corner_Medium">12</CornerRadius>
+    <CornerRadius x:Key="APK_Corner_Large">18</CornerRadius>
+    <CornerRadius x:Key="APK_Corner_Round">100</CornerRadius>
+
+    <!-- ===== SHADOWS (removed DropShadowEffect — causes black rectangles during resize) ===== -->
+
+    <!-- ===== TEXT STYLES ===== -->
+    <Style x:Key="APK_TextAppTitle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource APK_FontPrimary}"/>
+        <Setter Property="FontSize" Value="{StaticResource APK_FontSize_AppTitle}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{StaticResource APK_TextPrimaryBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <Style x:Key="APK_TextSectionTitle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource APK_FontPrimary}"/>
+        <Setter Property="FontSize" Value="{StaticResource APK_FontSize_Title}"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{StaticResource APK_TextPrimaryBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <Style x:Key="APK_TextBodyStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource APK_FontPrimary}"/>
+        <Setter Property="FontSize" Value="{StaticResource APK_FontSize_Body}"/>
+        <Setter Property="Foreground" Value="{StaticResource APK_TextPrimaryBrush}"/>
+    </Style>
+
+    <Style x:Key="APK_TextMediumStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource APK_FontPrimary}"/>
+        <Setter Property="FontSize" Value="{StaticResource APK_FontSize_Small}"/>
+        <Setter Property="Foreground" Value="{StaticResource APK_TextMediumBrush}"/>
+    </Style>
+
+    <Style x:Key="APK_TextLowStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource APK_FontPrimary}"/>
+        <Setter Property="FontSize" Value="{StaticResource APK_FontSize_Tiny}"/>
+        <Setter Property="Foreground" Value="{StaticResource APK_TextLowBrush}"/>
+    </Style>
+
+    <!-- ===== DEFAULT ITEMS CONTROL (enables UI virtualization for all lists) ===== -->
+    <Style TargetType="ItemsControl">
+        <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True"/>
+        <Setter Property="VirtualizingStackPanel.VirtualizationMode" Value="Recycling"/>
+        <Setter Property="VirtualizingPanel.CacheLength" Value="1,2"/>
+        <Setter Property="VirtualizingPanel.CacheLengthUnit" Value="Item"/>
+    </Style>
+
+    <!-- ===== VIRTUALIZED LISTBOX STYLE (high-performance, instant rendering, recycling) ===== -->
+    <Style x:Key="APK_VirtualListBox" TargetType="ListBox">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True"/>
+        <Setter Property="VirtualizingStackPanel.VirtualizationMode" Value="Recycling"/>
+        <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel"/>
+        <Setter Property="VirtualizingPanel.CacheLength" Value="1,1"/>
+        <Setter Property="VirtualizingPanel.CacheLengthUnit" Value="Page"/>
+        <Setter Property="ItemsPanel">
+            <Setter.Value>
+                <ItemsPanelTemplate>
+                    <VirtualizingStackPanel
+                        VirtualizingStackPanel.IsVirtualizing="True"
+                        VirtualizingStackPanel.VirtualizationMode="Recycling"
+                        VirtualizingStackPanel.ScrollUnit="Pixel"
+                        VirtualizingPanel.CacheLengthUnit="Page"
+                        VirtualizingPanel.CacheLength="1,1" />
+                </ItemsPanelTemplate>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="ItemContainerStyle">
+            <Setter.Value>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="Margin" Value="0"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+                    <Setter Property="Focusable" Value="False"/>
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListBoxItem">
+                                <Border Background="Transparent" BorderThickness="0" BorderBrush="Transparent">
+                                    <ContentPresenter/>
+                                </Border>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ===== BUTTON STYLES ===== -->
+    <Style x:Key="APK_IconButton" TargetType="Button">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Padding" Value="8"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="20" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#26FFFFFF"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#40FFFFFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Tab Button: transparent tab, centered content, subtle hover halo (no Windows default chrome) -->
+    <Style x:Key="APK_TabButton" TargetType="Button">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="border" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#1AFFFFFF"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#26FFFFFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Row Button: full-width option rows, halo fitting the row shape -->
+    <Style x:Key="APK_RowButton" TargetType="Button">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="border" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#1AFFFFFF"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#26FFFFFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Cell Button: grid-cell icon buttons, rounded halo fitting the cell -->
+    <Style x:Key="APK_CellButton" TargetType="Button">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="border" Background="Transparent" CornerRadius="12" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#1AFFFFFF"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#26FFFFFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="APK_AccentButton" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource APK_AccentBrush}"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="12,6"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="{StaticResource APK_AccentHoverBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="{StaticResource APK_AccentPressedBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="border" Property="Background" Value="#26FFFFFF"/>
+                            <Setter Property="Foreground" Value="#66FFFFFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Accent Play / Action Round Button -->
+    <Style x:Key="APK_CircleActionButton" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource APK_AccentBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="100">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="{StaticResource APK_AccentHoverBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="{StaticResource APK_AccentPressedBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Seek Slider Style -->
+    <Style x:Key="APK_SeekSlider" TargetType="Slider">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Slider">
+                    <Grid VerticalAlignment="Center" Height="14" Background="Transparent" Cursor="Hand">
+                        <Track x:Name="PART_Track"
+                               VerticalAlignment="Center"
+                               Orientation="Horizontal"
+                               Value="{TemplateBinding Value}"
+                               Minimum="{TemplateBinding Minimum}"
+                               Maximum="{TemplateBinding Maximum}">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="Slider.DecreaseLarge" Cursor="Hand">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border x:Name="DecreaseBorder" Background="#FF7EC8E3" CornerRadius="1.5" Height="3" VerticalAlignment="Center" SnapsToDevicePixels="True"/>
+                                            <ControlTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
+                                                    <Setter TargetName="DecreaseBorder" Property="Height" Value="5"/>
+                                                    <Setter TargetName="DecreaseBorder" Property="CornerRadius" Value="2.5"/>
+                                                </DataTrigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="Slider.IncreaseLarge" Cursor="Hand">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border x:Name="IncreaseBorder" Background="#33485B6A" CornerRadius="1.5" Height="3" VerticalAlignment="Center" SnapsToDevicePixels="True"/>
+                                            <ControlTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
+                                                    <Setter TargetName="IncreaseBorder" Property="Height" Value="5"/>
+                                                    <Setter TargetName="IncreaseBorder" Property="CornerRadius" Value="2.5"/>
+                                                </DataTrigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Cursor="Hand" VerticalAlignment="Center">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Grid Width="14" Height="14" Background="Transparent" Cursor="Hand" VerticalAlignment="Center">
+                                                <Ellipse x:Name="Halo" Width="20" Height="20" Fill="#337EC8E3" Opacity="0" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="-3"/>
+                                                <Ellipse x:Name="Dot" Width="10" Height="10" Fill="#FF7EC8E3" HorizontalAlignment="Center" VerticalAlignment="Center" SnapsToDevicePixels="True"/>
+                                            </Grid>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Halo" Property="Opacity" Value="0.35"/>
+                                                    <Setter TargetName="Halo" Property="Width" Value="20"/>
+                                                    <Setter TargetName="Halo" Property="Height" Value="20"/>
+                                                </Trigger>
+                                                <Trigger Property="IsDragging" Value="True">
+                                                    <Setter TargetName="Halo" Property="Opacity" Value="0.55"/>
+                                                    <Setter TargetName="Halo" Property="Width" Value="22"/>
+                                                    <Setter TargetName="Halo" Property="Height" Value="22"/>
+                                                    <Setter TargetName="Dot" Property="Width" Value="11"/>
+                                                    <Setter TargetName="Dot" Property="Height" Value="11"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Cursor" Value="Hand"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="APK_SeekSlider_Vertical" TargetType="Slider">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Slider">
+                    <Grid HorizontalAlignment="Center" Width="24" Background="Transparent" Cursor="Hand">
+                        <Track x:Name="PART_Track"
+                               HorizontalAlignment="Center"
+                               Orientation="Vertical"
+                               Value="{TemplateBinding Value}"
+                               Minimum="{TemplateBinding Minimum}"
+                               Maximum="{TemplateBinding Maximum}">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="Slider.DecreaseLarge" Cursor="Hand">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border x:Name="DecreaseBorder" Background="#33485B6A" CornerRadius="2" Width="4" HorizontalAlignment="Center" SnapsToDevicePixels="True"/>
+                                            <ControlTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
+                                                    <Setter TargetName="DecreaseBorder" Property="Background" Value="#4D62778A"/>
+                                                    <Setter TargetName="DecreaseBorder" Property="Width" Value="5"/>
+                                                </DataTrigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="Slider.IncreaseLarge" Cursor="Hand">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border x:Name="IncreaseBorder" Background="#33485B6A" CornerRadius="2" Width="4" HorizontalAlignment="Center" SnapsToDevicePixels="True"/>
+                                            <ControlTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
+                                                    <Setter TargetName="IncreaseBorder" Property="Background" Value="#4D62778A"/>
+                                                    <Setter TargetName="IncreaseBorder" Property="Width" Value="5"/>
+                                                </DataTrigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Cursor="Hand" HorizontalAlignment="Center">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Grid Width="20" Height="20" Background="Transparent" Cursor="Hand" HorizontalAlignment="Center">
+                                                <Ellipse x:Name="Halo" Width="22" Height="22" Fill="#337EC8E3" Opacity="0" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                <Ellipse x:Name="Dot" Width="12" Height="12" Fill="#FF7EC8E3" HorizontalAlignment="Center" VerticalAlignment="Center" SnapsToDevicePixels="True"/>
+                                            </Grid>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Halo" Property="Opacity" Value="0.4"/>
+                                                </Trigger>
+                                                <Trigger Property="IsDragging" Value="True">
+                                                    <Setter TargetName="Halo" Property="Opacity" Value="0.6"/>
+                                                    <Setter TargetName="Halo" Property="Width" Value="24"/>
+                                                    <Setter TargetName="Halo" Property="Height" Value="24"/>
+                                                    <Setter TargetName="Dot" Property="Width" Value="13"/>
+                                                    <Setter TargetName="Dot" Property="Height" Value="13"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.38"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Seek Bar / Progress Bar -->
+    <Style x:Key="APK_MiniProgressBar" TargetType="ProgressBar">
+        <Setter Property="Height" Value="12"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{StaticResource APK_AccentBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ProgressBar">
+                    <Grid x:Name="TemplateRoot" VerticalAlignment="Center" Height="12">
+                        <Border Background="#33FFFFFF" CornerRadius="2" Height="2" VerticalAlignment="Center"/>
+                        <Border x:Name="PART_Track" HorizontalAlignment="Stretch"/>
+                        <Grid x:Name="PART_Indicator" HorizontalAlignment="Left">
+                            <Border Background="{TemplateBinding Foreground}" CornerRadius="2" Height="2" VerticalAlignment="Center"/>
+                            <Ellipse Width="8" Height="8" Fill="{TemplateBinding Foreground}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-4,0"/>
+                        </Grid>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ===== GLOBAL THIN SCROLLBAR (Android-style, virtualization-safe) ===== -->
+    <!-- Track is transparent; only the thin rounded thumb is visible. -->
+    <!-- No arrow buttons, no effects, triggers only (software-render safe). -->
+    <SolidColorBrush x:Key="APK_ScrollBarTrackBrush" Color="#00000000"/>
+    <SolidColorBrush x:Key="APK_ScrollBarThumbBrush" Color="#597E8794"/>
+    <SolidColorBrush x:Key="APK_ScrollBarThumbHoverBrush" Color="#997E8794"/>
+    <SolidColorBrush x:Key="APK_ScrollBarThumbPressedBrush" Color="#FF7EC8E3"/>
+
+    <!-- Transparent page buttons: keep PageUp/PageDown/Left/Right working, no visuals -->
+    <Style x:Key="APK_ScrollPageButton" TargetType="RepeatButton">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="IsTabStop" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RepeatButton">
+                    <Border Background="Transparent"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Thin vertical thumb: 8px visual pill (radius = half width); pure stretch so Track sizes it without clipping -->
+    <Style x:Key="APK_ScrollThumbVertical" TargetType="Thumb">
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="IsTabStop" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <Border x:Name="ThumbBar" Background="{StaticResource APK_ScrollBarThumbBrush}" CornerRadius="4" Width="8" HorizontalAlignment="Center" VerticalAlignment="Stretch"/>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ThumbBar" Property="Background" Value="{StaticResource APK_ScrollBarThumbHoverBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="ThumbBar" Property="Background" Value="{StaticResource APK_ScrollBarThumbPressedBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Thin horizontal thumb: 8px visual pill (radius = half height); pure stretch so Track sizes it without clipping -->
+    <Style x:Key="APK_ScrollThumbHorizontal" TargetType="Thumb">
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="IsTabStop" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <Border x:Name="ThumbBar" Background="{StaticResource APK_ScrollBarThumbBrush}" CornerRadius="4" Height="8" VerticalAlignment="Center" HorizontalAlignment="Stretch"/>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ThumbBar" Property="Background" Value="{StaticResource APK_ScrollBarThumbHoverBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="ThumbBar" Property="Background" Value="{StaticResource APK_ScrollBarThumbPressedBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <ControlTemplate x:Key="APK_VerticalScrollBarTemplate" TargetType="ScrollBar">
+        <Grid Background="{StaticResource APK_ScrollBarTrackBrush}" SnapsToDevicePixels="True">
+            <Track x:Name="PART_Track" IsDirectionReversed="True" Focusable="False">
+                <Track.DecreaseRepeatButton>
+                    <RepeatButton Command="ScrollBar.PageUpCommand" Style="{StaticResource APK_ScrollPageButton}"/>
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                    <RepeatButton Command="ScrollBar.PageDownCommand" Style="{StaticResource APK_ScrollPageButton}"/>
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                    <Thumb Style="{StaticResource APK_ScrollThumbVertical}"/>
+                </Track.Thumb>
+            </Track>
+        </Grid>
+    </ControlTemplate>
+
+    <ControlTemplate x:Key="APK_HorizontalScrollBarTemplate" TargetType="ScrollBar">
+        <Grid Background="{StaticResource APK_ScrollBarTrackBrush}" SnapsToDevicePixels="True">
+            <Track x:Name="PART_Track" IsDirectionReversed="False" Focusable="False">
+                <Track.DecreaseRepeatButton>
+                    <RepeatButton Command="ScrollBar.PageLeftCommand" Style="{StaticResource APK_ScrollPageButton}"/>
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                    <RepeatButton Command="ScrollBar.PageRightCommand" Style="{StaticResource APK_ScrollPageButton}"/>
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                    <Thumb Style="{StaticResource APK_ScrollThumbHorizontal}"/>
+                </Track.Thumb>
+            </Track>
+        </Grid>
+    </ControlTemplate>
+
+    <!-- One implicit global style: every ScrollBar in the app (all lists, queue, lyrics, settings) -->
+    <Style TargetType="ScrollBar">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+        <Setter Property="Width" Value="10"/>
+        <Setter Property="MinWidth" Value="10"/>
+        <Setter Property="Template" Value="{StaticResource APK_VerticalScrollBarTemplate}"/>
+        <Style.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+                <Setter Property="Width" Value="Auto"/>
+                <Setter Property="MinWidth" Value="0"/>
+                <Setter Property="Height" Value="10"/>
+                <Setter Property="MinHeight" Value="10"/>
+                <Setter Property="Template" Value="{StaticResource APK_HorizontalScrollBarTemplate}"/>
+            </Trigger>
+            <Trigger Property="Orientation" Value="Vertical">
+                <Setter Property="Height" Value="Auto"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Global implicit ScrollViewer style: enforces pixel-based virtualization units -->
+    <Style TargetType="ScrollViewer">
+        <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel"/>
+    </Style>
+
+    <Style TargetType="ListBox" BasedOn="{StaticResource APK_VirtualListBox}"/>
+
+</ResourceDictionary>

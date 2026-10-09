@@ -1,0 +1,42 @@
+# Visual Studio & .NET Build Artifacts
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Publish & Binaries (Standalone .exe is distributed via GitHub Releases)
+publish/
+*.exe
+*.dll
+*.pdb
+*.runtimeconfig.json
+*.deps.json
+
+# Local Backups & Historical Archives
+archive/
+MainWindow_Recovery/
+
+# Decompiled & Reverse-Engineering Reference Assets
+decompiled/
+Music Player App Player In Android/
+
+# Temporary & Scratch Files
+scratch/
+*.tmp
+*.log
+stderr.txt
+stdout.txt
+scratch_*.txt
+*.wpftmp.csproj
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+desktop.ini

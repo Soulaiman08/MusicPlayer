@@ -1,0 +1,999 @@
+﻿<USER_REQUEST>
+# ============================================================
+# BAND EQUALIZER — START REPAIR PHASE
+# ROOT-CAUSE FIX ONLY
+# ============================================================
+
+تم الانتهاء من الـFULL AUDIT لمنظومة Band Equalizer وSound Effects.
+
+الآن ابدأ التنفيذ الفعلي للإصلاح.
+
+الـAudit السابق هو Source of Truth لهذه المرحلة.
+
+# IMPORTANT:
+لا تعيد تنفيذ الـAudit من الصفر إلا إذا اكتشفت أثناء التنفيذ معلومة متناقضة تحتاج تحققًا.
+
+لا تبدأ Feature جديدة.
+
+لا تعيد بناء AudioEngine بالكامل.
+
+لا تعيد كتابة Sound Effects.
+
+لا تغير Speed/Pitch.
+
+لا تغير Lyrics.
+
+لا تغير Queue.
+
+لا تغير SmoothScroll.
+
+لا تغير Wallpaper Blur.
+
+الهدف هو:
+
+# FIX THE EXISTING EQ SYSTEM WITHOUT DESTROYING THE STABLE BASELINE.
+
+============================================================
+# PRIMARY ARCHITECTURAL RULE
+# ============================================================
+
+يجب أن يصبح:
+
+EQ
+و
+Sound Effects
+
+نظامين مستقلين في الـSTATE والـCONTROL.
+
+لكن يمكنهما العمل معًا في نفس Audio Pipeline.
+
+المطلوب:
+
+    EQ State
+        ↓
+    Equalizer DSP
+        ↓
+                     ┌───────────────┐
+Audio ──────────────→│ EQ → Effects  │→ Output
+                     └───────────────┘
+                           ↑
+                    Sound Effects State
+
+والقاعدة المطلقة:
+
+Changing EQ
+    MUST NOT
+change Sound Effects state.
+
+Changing Sound Effects
+    MUST NOT
+change EQ state.
+
+لكن:
+
+EQ + Sound Effects
+    MUST
+be able to process audio simultaneously.
+
+============================================================
+# PHASE 1 — DECOUPLE EQ FROM SOUND EFFECTS
+# ============================================================
+
+ابدأ بهذه المرحلة أولًا.
+
+## 1. SoundEffect.cs
+
+أزل فقط ما يربط SoundEffect بالـEQ إذا كان غير مستخدم فعليًا من SoundEffect DSP.
+
+خصوصًا:
+
+- EqGains
+- أي EQ-related state داخل SoundEffect
+
+لكن قبل الحذف:
+
+ابحث عن جميع references إليها.
+
+لا تحذف property إذا كان هناك استخدام حقيقي يحتاج migration.
+
+إذا وجدت caller:
+
+اعمل migration واضح بدل حذف أعمى.
+
+---
+
+## 2. AudioEngine.cs
+
+في:
+
+ApplySoundEffectPreset()
+
+أزل السلوك الذي يجعل Sound Effect يكتب مباشرة إلى EqualizerSampleProvider.
+
+خصوصًا أي شيء مثل:
+
+    _equalizer.SetAllBands(fx.EqGains)
+
+أو:
+
+    _equalizer.BassBoostEnabled = ...
+
+إذا كان هذا جزءًا من Sound Effect القديم.
+
+Sound Effect يجب أن يطبق Sound Effect DSP فقط.
+
+مثال:
+
+    ApplySoundEffectPreset(effect)
+
+يجب أن يؤدي إلى:
+
+    SoundEffectProcessor = selected effect
+
+وليس:
+
+    SoundEffect
+        ↓
+    modify EQ
+        ↓
+    modify Bass
+        ↓
+    modify Virtualizer
+        ↓
+    modify other EQ state
+
+---
+
+## 3. MainViewModel.cs
+
+أوقف منطق:
+
+    Sound Effect
+        ↓
+    DisableAllEqSettings()
+
+وأوقف منطق:
+
+    EQ
+        ↓
+    DisableSoundEffect()
+
+لا تحذف الدوال مباشرة قبل فحص جميع callers.
+
+استبدل mutual-annihilation behavior باستقلال حقيقي.
+
+بعد الإصلاح يجب أن يكون ممكنًا:
+
+    EQ = ON
+    EQ preset = Rock
+    Band3 = +5 dB
+    Sound Effect = Tone Low
+
+في الوقت نفسه.
+
+ويجب أن تبقى كل القيم مستقلة.
+
+============================================================
+# PHASE 2 — SINGLE EQ STATE / PREVENT STATE POLLUTION
+# ============================================================
+
+لدينا حاليًا:
+
+Database
+ViewModel
+AudioEngine
+DSP Provider
+
+لا تحاول إزالة كل هذه الطبقات.
+
+بدلًا من ذلك:
+
+اجعل هناك مصدر Runtime واضح للـEQ.
+
+المسار المطلوب:
+
+    Persistent Settings
+          ↓
+       EQ Runtime State
+          ↓
+       ViewModel
+          ↓
+       AudioEngine
+          ↓
+       Equalizer DSP
+
+يجب ألا يستطيع SoundEffectProcessor تعديل EQ Runtime State.
+
+ويجب ألا يستطيع EQ UI تعديل SoundEffect State.
+
+============================================================
+# PHASE 3 — FIX PRESET RE-ENTRANCY
+# ============================================================
+
+أصلح مشكلة:
+
+Preset
+→ Band setters
+→ CurrentEqPreset = Custom
+
+يجب إضافة transaction/update guard مناسب، مثل:
+
+    _isApplyingEqPreset
+
+أو mechanism equivalent.
+
+عند:
+
+    ApplyPreset(Rock)
+
+يجب أن يتم تحديث جميع الـ10 bands كعملية واحدة.
+
+السلوك المطلوب:
+
+    User selects Rock
+        ↓
+    10 bands update
+        ↓
+    CurrentEqPreset remains Rock
+        ↓
+    DSP receives Rock values
+
+ولا يتحول إلى Custom أثناء التطبيق.
+
+---
+
+# IMPORTANT — CUSTOM MUST NOT BE DESTROYED
+
+يجب فصل:
+
+Selected Preset
+
+عن:
+
+Saved Custom EQ
+
+مثال:
+
+    User has Custom:
+    [2, -1, 4, 0, ...]
+    
+    Select Rock
+    
+    Rock becomes active
+    
+    Custom values remain stored.
+
+ثم:
+
+    Select Custom
+
+يعود الـCustom السابق.
+
+لا تسمح لتطبيق Preset بأن يكتب فوق Custom state بلا قصد.
+
+============================================================
+# PHASE 4 — FIX ALL 10 BANDS
+# ============================================================
+
+تحقق أثناء التنفيذ أن جميع الـ10 bands تعمل end-to-end:
+
+Band0 = 31 Hz
+Band1 = 62 Hz
+Band2 = 125 Hz
+Band3 = 250 Hz
+Band4 = 500 Hz
+Band5 = 1 kHz
+Band6 = 2 kHz
+Band7 = 4 kHz
+Band8 = 8 kHz
+Band9 = 16 kHz
+
+لكل Band:
+
+UI
+→ ViewModel
+→ AudioEngine
+→ DSP
+→ actual audio processing
+
+يجب أن يعمل.
+
+لا تكتفِ بوجود Slider.
+
+============================================================
+# PHASE 5 — FIX DSP PARAMETER UPDATE SAFETY
+# ============================================================
+
+في:
+
+EqualizerSampleProvider.cs
+
+أصلح مشكلة تحديث Biquad coefficients من UI thread بينما Audio Thread يقرأها.
+
+لا تسمح للحالة التالية:
+
+    coefficient 1 = NEW
+    coefficient 2 = NEW
+    coefficient 3 = OLD
+    coefficient 4 = NEW
+    coefficient 5 = OLD
+
+يجب أن يرى Audio Thread مجموعة coefficients متماسكة.
+
+استخدم آلية مناسبة مثل:
+
+    complete coefficient snapshot
+        ↓
+    atomic state replacement
+        ↓
+    Audio Thread reads snapshot
+
+ولا تضف locks ثقيلة داخل:
+
+    Read()
+
+ولا تضف allocations لكل audio buffer/sample.
+
+Audio realtime path يجب أن يبقى performant.
+
+============================================================
+# PHASE 6 — FIX ZERO-GAIN FILTER HISTORY
+# ============================================================
+
+لا تستخدم:
+
+    if (MathF.Abs(gain) > 0.05f)
+
+بطريقة تجعل filter يتوقف عن المعالجة ويجمد history ثم يعود فجأة.
+
+المشكلة الحالية:
+
+    0 dB
+      ↓
+    filter bypassed
+      ↓
+    history freezes
+      ↓
+    0.1 dB
+      ↓
+    filter starts with stale history
+      ↓
+    click/pop
+
+أصلح هذا مع الحفاظ على استقرار الصوت.
+
+يمكن أن يكون:
+
+- filter processing مستمرًا
+أو
+- smooth bypass
+أو
+- state reset صحيح وآمن
+
+اختر الحل الذي يناسب الـDSP الحالي.
+
+لا تعيد كتابة Biquad implementation بالكامل دون ضرورة.
+
+============================================================
+# PHASE 7 — FIX HEADROOM JUMP
+# ============================================================
+
+لا تجعل:
+
+    0 dB
+        ↓
+    0.1 dB
+
+يسبب فجأة:
+
+    * 0.95
+
+ويخفض الصوت العام 5%.
+
+يجب أن يكون headroom behavior ثابتًا ومتوقعًا.
+
+إذا كان attenuation مطلوبًا، اجعله:
+
+- deterministic
+- stable
+- بدون sudden gain jump
+
+ولا تكسر Clean Audio Defaults.
+
+============================================================
+# PHASE 8 — NYQUIST SAFETY
+# ============================================================
+
+Band8 / Band9 يجب ألا يسببان انهيارًا رياضيًا عند sample rates منخفضة.
+
+تحقق من:
+
+    requested frequency
+    sample rate
+    Nyquist frequency
+
+قبل إنشاء coefficients.
+
+خصوصًا:
+
+22.05 kHz
+32 kHz
+44.1 kHz
+48 kHz
+96 kHz
+
+لا تسمح بإنشاء Biquad غير صالح.
+
+إذا كان band غير قابل للتطبيق على sample rate معين:
+
+استخدم behavior آمن ومتوقع.
+
+لا تسبب:
+
+NaN
+Infinity
+unstable poles
+digital explosion
+click
+
+ولا تخفي المشكلة بمجرد تجاهلها بصمت إذا كان ذلك سيجعل UI غير متزامن مع DSP.
+
+يجب أن يبقى UI وDSP state متسقين.
+
+============================================================
+# PHASE 9 — PERSISTENCE
+# ============================================================
+
+لا تكتب SQLite مع كل pixel أثناء تحريك Slider.
+
+المطلوب:
+
+Slider movement
+    ↓
+Immediate runtime DSP update
+
+ثم:
+
+Slider stops moving
+    ↓
+Debounced persistence
+
+يجب ألا يتجمد UI أثناء السحب.
+
+ولا تجعل persistence delay يؤخر الصوت.
+
+تحقق من:
+
+- startup
+- shutdown
+- restart
+- preset
+- custom
+- EQ enabled
+- EQ disabled
+
+============================================================
+# PHASE 10 — STARTUP ORDER
+# ============================================================
+
+أصلح مشكلة:
+
+Load EQ
+→ preset changes to Custom
+→ Load Sound Effect
+→ Sound Effect clears EQ
+→ database gets overwritten
+
+يجب أن يكون startup sequence آمنًا.
+
+مثال منطقي:
+
+    Load persistent EQ state
+    Load persistent Sound Effect state
+    Apply EQ state to EQ DSP
+    Apply Sound Effect state to FX DSP
+
+بدون أن يقوم أحدهما بتدمير الآخر.
+
+============================================================
+# PHASE 11 — TRACK CHANGE
+# ============================================================
+
+عند:
+
+Track A
+→ custom EQ
+
+ثم:
+
+Track B
+
+يجب أن يبقى:
+
+- EQ enabled state
+- 10 band values
+- selected preset/custom state
+- Sound Effect state
+
+ولا يحدث reset غير مقصود.
+
+يمكن إعادة إنشاء EqualizerSampleProvider عند track change إذا كان هذا هو التصميم الحالي.
+
+لكن يجب أن يحصل الـnew provider على runtime EQ state الصحيح.
+
+============================================================
+# PHASE 12 — ONLY AFTER DSP/STATE IS FIXED: UI REPAIR
+# ============================================================
+
+بعد نجاح المراحل السابقة فقط، أصلح واجهة Equalizer.
+
+المطلوب:
+
+## 10-Band Layout
+
+يجب أن تكون الـ10 bands واضحة ومتوازنة:
+
+31
+62
+125
+250
+500
+1K
+2K
+4K
+8K
+16K
+
+مع:
+
+- readable labels
+- consistent spacing
+- large hit area
+- consistent slider width
+- clear dB values
+- centered 0 dB
+- active/inactive visual state
+- hover
+- pressed
+- disabled
+
+---
+
+# EQ OFF STATE
+
+عند:
+
+    EQ OFF
+
+يجب أن:
+
+- تتعطل sliders visually
+- يظهر state واضح
+- تبقى قيم bands محفوظة
+- لا يتم تصفيرها
+- لا يتم فقدان preset
+
+ثم:
+
+    EQ ON
+
+تعود نفس القيم مباشرة.
+
+---
+
+# RESET / FLAT
+
+أضف:
+
+    Flat / Reset
+
+بحيث:
+
+    Band0..Band9 = 0 dB
+
+مع تحديث:
+
+- UI
+- runtime DSP
+- selected preset = Flat/Custom حسب التصميم الصحيح
+
+ولا تلوث Custom persistence بشكل غير مقصود.
+
+---
+
+# SLIDER TEMPLATE
+
+أصلح:
+
+    Themes/APKTheme.xaml
+
+بحيث:
+
+0 dB
+
+يظهر فعليًا في المنتصف.
+
+ولا يكون النصف العلوي مضاءً وكأن القيمة +15 dB.
+
+اختبر:
+
+    -15
+    0
+    +15
+
+والـhover والـpressed والـdisabled.
+
+============================================================
+# PHASE 13 — REMOVE UI CONTAMINATION
+# ============================================================
+
+نافذة Graphic Equalizer يجب ألا تبدو كأنها Sound Effects dashboard.
+
+لا تضع:
+
+- Bass Boost
+- Virtualizer
+- Reverb
+- Loudness
+- Sound Effects
+
+داخل Graphic EQ بشكل يخلط الأنظمة.
+
+إذا كانت هذه الوظائف لها controls مستقلة أصلًا، أبقها في النظام/القسم الخاص بها.
+
+هدف EQ screen:
+
+    EQ Enable
+    ↓
+    Preset
+    ↓
+    10 Bands
+    ↓
+    Reset/Flat
+
+فقط، ما لم يكن هناك عنصر آخر مثبت من تصميم المشروع الحالي يجب الحفاظ عليه.
+
+============================================================
+# PHASE 14 — BUILD + RUNTIME TEST
+# ============================================================
+
+بعد تنفيذ الإصلاحات:
+
+نفذ:
+
+    dotnet build --nologo
+
+ثم:
+
+    dotnet run
+
+لا تتوقف عند Build.
+
+يجب اختبار التطبيق الحقيقي.
+
+============================================================
+# REQUIRED FUNCTIONAL TESTS
+# ============================================================
+
+اختبر:
+
+1. EQ OFF
+2. EQ ON
+
+3. Band0
+4. Band1
+5. Band2
+6. Band3
+7. Band4
+8. Band5
+9. Band6
+10. Band7
+11. Band8
+12. Band9
+
+13. Flat
+14. Rock
+15. جميع الـ23 presets
+
+16. Custom save
+17. Custom restore
+
+18. EQ OFF → ON
+
+19. Sound Effect OFF → ON
+20. Sound Effect ON → OFF
+
+21. EQ + Sound Effect simultaneously
+
+22. Change EQ while Sound Effect active
+
+23. Change Sound Effect while EQ active
+
+24. Track A → Track B
+
+25. Pause → Resume
+
+26. Restart application
+
+27. 22.05 kHz file
+28. 32 kHz file
+29. 44.1 kHz
+30. 48 kHz
+
+============================================================
+# CRITICAL COUPLING TEST
+# ============================================================
+
+هذا الاختبار إجباري:
+
+Start:
+
+    EQ:
+    Rock
+    Band3 = +5 dB
+    EQ = ON
+
+ثم:
+
+    Sound Effect = Tone Low
+
+EXPECTED:
+
+    Band3 remains +5 dB
+    Rock remains selected
+    EQ remains ON
+    Custom/Preset state remains correct
+
+ثم:
+
+    Change Sound Effect
+
+EXPECTED:
+
+    EQ remains unchanged.
+
+ثم:
+
+    Change Band3
+
+EXPECTED:
+
+    Sound Effect remains active.
+
+ثم:
+
+    Turn EQ OFF
+
+EXPECTED:
+
+    Sound Effect remains active.
+
+ثم:
+
+    Turn EQ ON
+
+EXPECTED:
+
+    Same EQ values return.
+
+============================================================
+# REGRESSION TESTS
+# ============================================================
+
+بعد EQ repair:
+
+VERIFY:
+
+- Speed/Pitch
+- Lyrics loading
+- Lyrics sync
+- Back Navigation
+- Mini → Full Player
+- Queue
+- Smooth Scroll
+- Audio defaults
+
+لا تقم بأي تعديل على هذه الأنظمة إلا إذا ظهر Regression حقيقي ناتج مباشرة عن EQ changes.
+
+============================================================
+# FILE CHANGE DISCIPLINE
+# ============================================================
+
+الملفات المحتمل تعديلها:
+
+- DSP/SoundEffect.cs
+- Audio/AudioEngine.cs
+- ViewModels/MainViewModel.cs
+- Audio/EqualizerSampleProvider.cs
+- Themes/APKTheme.xaml
+- Views/MainWindow.xaml
+
+قد تضيف ملفًا صغيرًا فقط إذا كان ذلك ضروريًا لتوحيد EQ state.
+
+لكن:
+
+# DO NOT CREATE A SECOND EQ SYSTEM.
+
+# DO NOT DUPLICATE AUDIO PROCESSING.
+
+# DO NOT REWRITE THE AUDIO ENGINE.
+
+============================================================
+# PERFORMANCE REQUIREMENTS
+# ============================================================
+
+يجب ألا يؤدي الإصلاح إلى:
+
+- audio thread allocations
+- heavy locks داخل Read()
+- UI freezes
+- SQLite writes لكل slider pixel
+- unnecessary DSP rebuilds
+- CPU spike مستمر
+
+خصوصًا أثناء:
+
+    dragging EQ slider
+
+يجب أن يبقى الصوت مستقرًا والواجهة responsive.
+
+============================================================
+# FINAL VALIDATION REPORT
+# ============================================================
+
+بعد التنفيذ، لا تكتب فقط:
+
+"Fixed."
+
+أرسل تقريرًا بهذا الشكل:
+
+# 1. CHANGES MADE
+
+كل ملف وما الذي تغير فيه.
+
+# 2. EQ ARCHITECTURE AFTER FIX
+
+ارسم:
+
+UI
+↓
+EQ State
+↓
+EQ DSP
+↓
+Audio Pipeline
+
+# 3. SOUND EFFECT ARCHITECTURE AFTER FIX
+
+ارسم:
+
+UI
+↓
+FX State
+↓
+FX DSP
+↓
+Audio Pipeline
+
+# 4. COUPLING STATUS
+
+EQ → FX = PASS/FAIL
+FX → EQ = PASS/FAIL
+
+# 5. BANDS
+
+Band0 → PASS/FAIL
+...
+Band9 → PASS/FAIL
+
+# 6. PRESETS
+
+23/23 → PASS/FAIL
+
+# 7. PERSISTENCE
+
+PASS/FAIL
+
+# 8. DSP SAFETY
+
+- coefficient update safety
+- zero-gain transition
+- headroom
+- Nyquist
+
+PASS/FAIL لكل نقطة.
+
+# 9. UI
+
+- 10 bands
+- disabled state
+- Reset/Flat
+- slider template
+- spacing
+- labels
+
+# 10. RUNTIME TEST
+
+اذكر الاختبارات التي نفذتها فعليًا والنتائج.
+
+# 11. REGRESSION
+
+Speed/Pitch
+Lyrics
+Back
+Mini→Full
+Queue
+SmoothScroll
+
+PASS/FAIL.
+
+# 12. BUILD
+
+يجب أن تكون:
+
+0 Error
+0 Warning
+
+# 13. FINAL STATUS
+
+لا تقل "complete" إلا إذا تم:
+
+BUILD
++
+RUN
++
+FUNCTIONAL TEST
++
+REGRESSION TEST
+
+============================================================
+# ABSOLUTE RULES
+# ============================================================
+
+# DO NOT STOP AT BUILD.
+
+# RUN THE REAL APPLICATION.
+
+# DO NOT REWRITE STABLE SYSTEMS.
+
+# DO NOT TOUCH SPEED/PITCH.
+
+# DO NOT TOUCH LYRICS.
+
+# DO NOT TOUCH QUEUE.
+
+# DO NOT TOUCH SMOOTH SCROLL.
+
+# DO NOT CREATE A NEW EQ SYSTEM.
+
+# DO NOT LET SOUND EFFECTS MODIFY EQ.
+
+# DO NOT LET EQ MODIFY SOUND EFFECTS.
+
+# EQ + SOUND EFFECTS MUST WORK TOGETHER.
+
+# FIX ROOT CAUSES, NOT SYMPTOMS.
+
+# TEST EVERY BAND.
+
+# TEST ALL 23 PRESETS.
+
+# TEST REAL AUDIO.
+
+# BUILD.
+
+# RUN.
+
+# REGRESSION TEST.
+
+# THEN REPORT EXACTLY WHAT WAS CHANGED.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-24T15:27:28+01:00.
+
+The user's current state is as follows:
+Active Document: c:\Users\win\Desktop\Soulaiman\run.ps1 (LANGUAGE_POWERSHELL)
+Cursor is on line: 1
+Other open documents:
+- c:\Users\win\Desktop\Soulaiman\run.ps1 (LANGUAGE_POWERSHELL)
+</ADDITIONAL_METADATA>

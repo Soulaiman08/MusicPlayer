@@ -1,0 +1,99 @@
+<Application x:Class="MusicPlayer.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:conv="clr-namespace:MusicPlayer.Converters">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes/Icons.xaml" />
+        <ResourceDictionary Source="Themes/APKTheme.xaml" />
+        <ResourceDictionary Source="Themes/ThemesResources.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+      <conv:DurationConverter x:Key="DurationConverter" />
+      <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+      <conv:AlbumArtConverter x:Key="AlbumArtConverter" />
+      <conv:StringNullOrEmptyToVisibilityConverter x:Key="StringNullOrEmptyToVisibilityConverter" />
+      <conv:EqualityToVisibilityConverter x:Key="EqualityToVisibilityConverter" />
+      <conv:ZeroToVisibilityConverter x:Key="ZeroToVisibilityConverter" />
+      <conv:PlayModeToVisibilityConverter x:Key="PlayModeToVisibilityConverter" />
+      <conv:IntEqualityToBrushConverter x:Key="IntEqualityToBrushConverter" />
+      <conv:EqualityToBrushConverter x:Key="EqualityToBrushConverter" />
+      <conv:ResourceKeyToGeometryConverter x:Key="ResourceKeyToGeometryConverter" />
+      <conv:BoolToBrushConverter x:Key="BoolToBrushConverter" ActiveBrush="#FF4995F3" InactiveBrush="#FFFFFFFF" />
+      <conv:PlayingTrackHighlightConverter x:Key="PlayingTrackHighlightConverter" />
+      <conv:DateAddedShortConverter x:Key="DateAddedShortConverter" />
+      <conv:StringToFontWeightConverter x:Key="StringToFontWeightConverter" />
+      <conv:StringToBrushConverter x:Key="StringToBrushConverter" />
+      <conv:ArtistImageConverter x:Key="ArtistImageConverter" />
+      <conv:WidthToItemSizeConverter x:Key="WidthToItemSizeConverter" />
+      <conv:HalfPointConverter x:Key="HalfPointConverter" />
+      <conv:HalfConverter x:Key="HalfConverter" />
+      <conv:WidthToColumnsConverter x:Key="WidthToColumnsConverter" />
+      <conv:RoundedClipConverter x:Key="RoundedClipConverter" />
+      <conv:VolumeToGeometryConverter x:Key="VolumeToGeometryConverter" />
+      <conv:WallpaperThumbnailConverter x:Key="WallpaperThumbnailConverter" />
+      <conv:ThemeCardWidthConverter x:Key="ThemeCardWidthConverter" />
+      <conv:ThemeCardHeightConverter x:Key="ThemeCardHeightConverter" />
+      <conv:ThemeColumnsConverter x:Key="ThemeColumnsConverter" />
+      <conv:FallbackIfEmptyConverter x:Key="FallbackIfEmptyConverter" />
+
+      <Style x:Key="RoundedImage4" TargetType="Image">
+        <Setter Property="Clip">
+          <Setter.Value>
+            <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="4">
+              <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
+              <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
+            </MultiBinding>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="RoundedImage6" TargetType="Image">
+        <Setter Property="Clip">
+          <Setter.Value>
+            <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="6">
+              <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
+              <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
+            </MultiBinding>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="RoundedImage8" TargetType="Image">
+        <Setter Property="Clip">
+          <Setter.Value>
+            <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="8">
+              <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
+              <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
+            </MultiBinding>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="RoundedImage10" TargetType="Image">
+        <Setter Property="Clip">
+          <Setter.Value>
+            <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="10">
+              <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
+              <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
+            </MultiBinding>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="RoundedImage12" TargetType="Image">
+        <Setter Property="Clip">
+          <Setter.Value>
+            <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="12">
+              <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
+              <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
+            </MultiBinding>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="RoundedImage14" TargetType="Image">
+        <Setter Property="Clip">
+          <Setter.Value>
+            <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="14">
+              <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
+              <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
+            </MultiBinding>
+          </Setter.Value>
+        </Setter>
+      </Style>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>
