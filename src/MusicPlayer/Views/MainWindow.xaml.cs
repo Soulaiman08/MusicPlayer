@@ -870,14 +870,57 @@ public partial class MainWindow : Window
         _isAlbumTransition = true;
         _albumTransitionTrack = dataContext;
 
-        var converter = new Converters.AlbumArtConverter();
-        var imageSource = (converter.Convert(dataContext, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource)
-            ?? AlbumArtLoader.Instance?.LoadFullAlbumArt(dataContext)
+        AlbumArtLoader.SetScrollingActive(false);
+
+        // Zero-lag image acquisition from existing in-memory card visual
+        ImageSource? imageSource = null;
+        if (square is Border sqBorder && sqBorder.Background is ImageBrush ib && ib.ImageSource != null)
+        {
+            imageSource = ib.ImageSource;
+        }
+        else if (square is System.Windows.Controls.Grid sqGrid)
+        {
+            foreach (var child in sqGrid.Children)
+            {
+                if (child is Border b && b.Background is ImageBrush bib && bib.ImageSource != null)
+                {
+                    imageSource = bib.ImageSource;
+                    break;
+                }
+                if (child is Image img && img.Source != null)
+                {
+                    imageSource = img.Source;
+                    break;
+                }
+            }
+        }
+        imageSource ??= AlbumArtLoader.Instance?.LoadAlbumArt(dataContext)
             ?? AlbumArtLoader.Instance?.GetDefaultAlbumArt();
+
         if (imageSource == null) return;
 
         ResetArtistTransition();
-        // Hide the album detail page BEFORE navigating to avoid flash
+
+        // Immediately cover the source card so there is ZERO black void gap!
+        double targetSize = 280;
+        double scale = Math.Clamp(_artistTransitionSourceSize.Width / targetSize, 0.1, 1.5);
+        ArtistTransitionImage.Source = imageSource;
+        ArtistTransitionGrid.Width = targetSize;
+        ArtistTransitionGrid.Height = targetSize;
+        ArtistTransitionScale.CenterX = targetSize / 2;
+        ArtistTransitionScale.CenterY = targetSize / 2;
+        ArtistTransitionGrid.Clip = new System.Windows.Media.RectangleGeometry(new Rect(0, 0, targetSize, targetSize));
+
+        Canvas.SetLeft(ArtistTransitionGrid, _artistTransitionSourcePos.X + _artistTransitionSourceSize.Width / 2 - targetSize / 2);
+        Canvas.SetTop(ArtistTransitionGrid, _artistTransitionSourcePos.Y + _artistTransitionSourceSize.Height / 2 - targetSize / 2);
+        ArtistTransitionScale.ScaleX = scale;
+        ArtistTransitionScale.ScaleY = scale;
+        ArtistTransitionTranslate.X = 0;
+        ArtistTransitionTranslate.Y = 0;
+        ArtistTransitionOverlay.Opacity = 1.0;
+        ArtistTransitionOverlay.Visibility = Visibility.Visible;
+
+        // Hide album detail page initially
         AlbumDetailView.Opacity = 0;
         _heroTransitionPending = true;
 
@@ -885,19 +928,18 @@ public partial class MainWindow : Window
 
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
         {
-            var target = FindAlbumDetailArt();
-            if (target != null)
+            var target = AlbumDetailArtBorder ?? FindAlbumDetailArt();
+            if (target != null && target.ActualWidth > 0)
             {
                 _artistTransitionTargetPos = target.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
                 _artistTransitionTargetSize = new Size(target.ActualWidth, target.ActualHeight);
             }
             else
             {
-                _artistTransitionTargetPos = _artistTransitionSourcePos;
+                _artistTransitionTargetPos = new Point(48, 56);
                 _artistTransitionTargetSize = new Size(280, 280);
             }
 
-            // Hide the album detail page and prepare parallel reveal
             AlbumDetailView.Opacity = 0;
             AlbumDetailView.IsHitTestVisible = false;
             if (AlbumDetailBackRow != null)
@@ -1055,17 +1097,32 @@ public partial class MainWindow : Window
 
         AlbumArtLoader.SetScrollingActive(false);
 
-        var converter = new Converters.ArtistImageConverter();
-        var imageSource = converter.Convert(dataContext.Artist, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource
-            ?? _defaultArtistImage
-            ?? CreateDefaultArtistImage();
-
-        if (imageSource == null)
+        // Zero-lag image acquisition from existing in-memory card visual without UI thread blocking
+        ImageSource? imageSource = null;
+        if (circle is Grid circleGrid)
         {
-            // Capture the exact default-artist element rendered in the grid
-            _defaultArtistImage = CaptureElementToBitmap(circle);
-            imageSource = _defaultArtistImage ?? CreateDefaultArtistImage();
+            foreach (var child in circleGrid.Children)
+            {
+                if (child is Image img && img.Source != null)
+                {
+                    imageSource = img.Source;
+                    break;
+                }
+            }
         }
+        else if (circle is Image directImg && directImg.Source != null)
+        {
+            imageSource = directImg.Source;
+        }
+
+        // If high-res cache already has it, use that high-res image
+        if (!string.IsNullOrEmpty(dataContext.Artist) &&
+            Converters.ArtistImageConverter.HighResCache.TryGetValue(dataContext.Artist, out var cachedHi))
+        {
+            imageSource = cachedHi;
+        }
+
+        imageSource ??= _defaultArtistImage ?? CreateDefaultArtistImage();
 
         if (imageSource == null)
         {
@@ -1073,37 +1130,64 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Background prefetch for 400px image if not cached yet
+        if (!string.IsNullOrEmpty(dataContext.Artist) &&
+            !Converters.ArtistImageConverter.HighResCache.ContainsKey(dataContext.Artist))
+        {
+            var artName = dataContext.Artist;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var conv = new Converters.ArtistImageConverter();
+                conv.Convert(artName, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture);
+            });
+        }
+
         ResetArtistTransition();
-        // Hide the detail circle AND the detail page BEFORE navigating so the
-        // transition has no aborted full-page flash while the overlay morphs.
+
+        // Immediately cover the source card so there is ZERO black void gap!
+        double targetSize = 300;
+        double scale = Math.Clamp(_artistTransitionSourceSize.Width / targetSize, 0.1, 1.5);
+        ArtistTransitionImage.Source = imageSource;
+        ArtistTransitionGrid.Width = targetSize;
+        ArtistTransitionGrid.Height = targetSize;
+        ArtistTransitionScale.CenterX = targetSize / 2;
+        ArtistTransitionScale.CenterY = targetSize / 2;
+        ArtistTransitionClip.Center = new Point(targetSize / 2, targetSize / 2);
+        ArtistTransitionClip.RadiusX = targetSize / 2;
+        ArtistTransitionClip.RadiusY = targetSize / 2;
+        ArtistTransitionGrid.Clip = ArtistTransitionClip;
+
+        Canvas.SetLeft(ArtistTransitionGrid, _artistTransitionSourcePos.X + _artistTransitionSourceSize.Width / 2 - targetSize / 2);
+        Canvas.SetTop(ArtistTransitionGrid, _artistTransitionSourcePos.Y + _artistTransitionSourceSize.Height / 2 - targetSize / 2);
+        ArtistTransitionScale.ScaleX = scale;
+        ArtistTransitionScale.ScaleY = scale;
+        ArtistTransitionTranslate.X = 0;
+        ArtistTransitionTranslate.Y = 0;
+        ArtistTransitionOverlay.Opacity = 1.0;
+        ArtistTransitionOverlay.Visibility = Visibility.Visible;
+
         ArtistDetailCircle.Opacity = 0;
         ArtistDetailView.Opacity = 0;
         _heroTransitionPending = true;
 
         ViewModel?.NavigateToArtist(dataContext.Artist);
 
-        // Measure the target AFTER navigation but BEFORE any slide transform
-        // so the overlay lands exactly on the real final circle position.
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
         {
-            var target = FindArtistDetailCircle();
-            if (target != null)
+            var target = ArtistDetailCircle ?? FindArtistDetailCircle();
+            if (target != null && target.ActualWidth > 0)
             {
                 _artistTransitionTargetPos = target.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
                 _artistTransitionTargetSize = new Size(target.ActualWidth, target.ActualHeight);
             }
             else
             {
-                _artistTransitionTargetPos = _artistTransitionSourcePos;
+                _artistTransitionTargetPos = new Point(10, 48);
                 _artistTransitionTargetSize = new Size(300, 300);
             }
 
-            // The big circle stays visible and continuous under the overlay; only the
-            // surrounding content (back row + info panel) will be mix-revealed later.
             PrepareDetailMixReveal();
-
             LogHelper.LogInfo($"HeroTransition fwd: src=({_artistTransitionSourcePos.X:F1},{_artistTransitionSourcePos.Y:F1}) target=({_artistTransitionTargetPos.X:F1},{_artistTransitionTargetPos.Y:F1})");
-
             StartForwardTransition(imageSource);
         });
     }
@@ -1473,7 +1557,7 @@ public partial class MainWindow : Window
 
         LogHelper.LogInfo("HeroTransition back: starting reverse");
 
-        var target = FindArtistDetailCircle();
+        var target = ArtistDetailCircle ?? FindArtistDetailCircle();
         if (target != null)
         {
             _artistTransitionTargetPos = target.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
@@ -1511,7 +1595,7 @@ public partial class MainWindow : Window
 
         LogHelper.LogInfo($"HeroTransition back: album='{_artistTransitionArtistName}' srcW={_artistTransitionSourceSize.Width}");
 
-        var target = FindAlbumDetailArt();
+        var target = AlbumDetailArtBorder ?? FindAlbumDetailArt();
         if (target != null)
         {
             target.BeginAnimation(OpacityProperty, null);
@@ -1614,6 +1698,15 @@ public partial class MainWindow : Window
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(scale, duration) { EasingFunction = ease });
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(scale, duration) { EasingFunction = ease });
         ArtistTransitionTranslate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(sourceCenter.X - targetCenter.X, duration) { EasingFunction = ease });
+
+        // Gentle fade-out of overlay in final 70ms so it melts into the card seamlessly
+        var fadeEase = new QuadraticEase { EasingMode = EasingMode.EaseIn };
+        var overlayFade = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(70))
+        {
+            BeginTime = TimeSpan.FromMilliseconds(190),
+            EasingFunction = fadeEase
+        };
+        ArtistTransitionOverlay.BeginAnimation(OpacityProperty, overlayFade);
 
         var morphAnim = new DoubleAnimation(sourceCenter.Y - targetCenter.Y, duration) { EasingFunction = ease };
         morphAnim.Completed += (_, _) =>
