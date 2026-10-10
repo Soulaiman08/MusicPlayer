@@ -33,7 +33,7 @@
             </StackPanel>
           </Grid>
         </Border>
-        <Grid Name="ContentGrid" Row="1" Visibility="Collapsed" CacheMode="BitmapCache">
+        <Grid Name="ContentGrid" Row="1" Visibility="Collapsed">
           <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="24,16,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True" Visibility="{Binding CurrentView, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=home}">
             <StackPanel>
               <Border Background="#331D2026" CornerRadius="12" Padding="16" Margin="0,0,0,20" Visibility="{Binding SearchQuery, Converter={StaticResource StringNullOrEmptyToVisibilityConverter}}">
@@ -455,25 +455,23 @@
                         <DataTemplate>
                           <Border Cursor="Hand" Margin="4,4" HorizontalAlignment="Stretch" MouseLeftButtonUp="ArtistRow_Click">
                             <StackPanel HorizontalAlignment="Center">
-                              <Grid HorizontalAlignment="Center" Width="150" Height="150">
-                                <UIElement.Clip>
-                                  <EllipseGeometry Center="75,75" RadiusX="75" RadiusY="75" />
-                                </UIElement.Clip>
-                                <Border Background="#28FFFFFF" />
-                                <Image Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Artist, Converter={StaticResource ArtistImageConverter}}" />
-                                <Path Data="{StaticResource Icon.Artist}" Fill="#AAFFFFFF" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                  <FrameworkElement.Style>
-                                    <Style TargetType="{x:Type Path}">
-                                      <Setter Property="Visibility" Value="Collapsed" />
-                                      <Style.Triggers>
-                                        <DataTrigger Value="" Binding="{Binding Artist, Converter={StaticResource ArtistImageConverter}}">
-                                          <Setter Property="Visibility" Value="Visible" />
-                                        </DataTrigger>
-                                      </Style.Triggers>
-                                    </Style>
-                                  </FrameworkElement.Style>
-                                </Path>
-                              </Grid>
+                              <Border Width="150" Height="150" CornerRadius="75" ClipToBounds="True" Background="#28FFFFFF" HorizontalAlignment="Center">
+                                <Grid>
+                                  <Image Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Artist, Converter={StaticResource ArtistImageConverter}}" />
+                                  <Path Data="{StaticResource Icon.Artist}" Fill="#AAFFFFFF" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <FrameworkElement.Style>
+                                      <Style TargetType="{x:Type Path}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                          <DataTrigger Value="" Binding="{Binding Artist, Converter={StaticResource ArtistImageConverter}}">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                          </DataTrigger>
+                                        </Style.Triggers>
+                                      </Style>
+                                    </FrameworkElement.Style>
+                                  </Path>
+                                </Grid>
+                              </Border>
                               <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Margin="0,6,0,0" MaxWidth="150" TextAlignment="Center" Text="{Binding Artist}" />
                             </StackPanel>
                           </Border>
@@ -1180,25 +1178,23 @@
                   <DataTemplate>
                     <Border Margin="4,4" Cursor="Hand" HorizontalAlignment="Stretch" MouseLeftButtonUp="ArtistRow_Click">
                       <StackPanel HorizontalAlignment="Center">
-                        <Grid HorizontalAlignment="Center" Width="150" Height="150">
-                          <UIElement.Clip>
-                            <EllipseGeometry Center="75,75" RadiusX="75" RadiusY="75" />
-                          </UIElement.Clip>
-                          <Border Background="#28FFFFFF" />
-                          <Image Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" Source="{Binding Artist, Converter={StaticResource ArtistImageConverter}}" />
-                          <Path Data="{StaticResource Icon.Artist}" Fill="#AAFFFFFF" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <FrameworkElement.Style>
-                              <Style TargetType="{x:Type Path}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                  <DataTrigger Value="" Binding="{Binding Artist, Converter={StaticResource ArtistImageConverter}}">
-                                    <Setter Property="Visibility" Value="Visible" />
-                                  </DataTrigger>
-                                </Style.Triggers>
-                              </Style>
-                            </FrameworkElement.Style>
-                          </Path>
-                        </Grid>
+                        <Border Width="150" Height="150" CornerRadius="75" ClipToBounds="True" Background="#28FFFFFF" HorizontalAlignment="Center">
+                          <Grid>
+                            <Image Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Artist, Converter={StaticResource ArtistImageConverter}}" />
+                            <Path Data="{StaticResource Icon.Artist}" Fill="#AAFFFFFF" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" VerticalAlignment="Center">
+                              <FrameworkElement.Style>
+                                <Style TargetType="{x:Type Path}">
+                                  <Setter Property="Visibility" Value="Collapsed" />
+                                  <Style.Triggers>
+                                    <DataTrigger Value="" Binding="{Binding Artist, Converter={StaticResource ArtistImageConverter}}">
+                                      <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                  </Style.Triggers>
+                                </Style>
+                              </FrameworkElement.Style>
+                            </Path>
+                          </Grid>
+                        </Border>
                         <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Margin="0,6,0,0" MaxWidth="150" TextAlignment="Center" Text="{Binding Artist}" />
                       </StackPanel>
                     </Border>

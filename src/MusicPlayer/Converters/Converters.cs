@@ -368,12 +368,16 @@ public class ArtistImageConverter : IValueConverter
 
             if (vm.ArtistImages.TryGetValue(artistName, out var path) && !string.IsNullOrWhiteSpace(path))
             {
+                // While continuous scrolling is active, return placeholder immediately to prevent UI thread hitching
+                if (AlbumArtLoader.ScrollingActive)
+                    return DefaultArtistImage ?? string.Empty as object;
+
                 try
                 {
                     var bi = new System.Windows.Media.Imaging.BitmapImage();
                     bi.BeginInit();
                     bi.UriSource = new System.Uri(path, System.UriKind.Absolute);
-                    bi.DecodePixelWidth = 256;
+                    bi.DecodePixelWidth = 180;
                     bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
                     bi.EndInit();
                     bi.Freeze();

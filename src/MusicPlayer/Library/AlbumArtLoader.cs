@@ -37,7 +37,7 @@ public class AlbumArtLoader
 
     private const int MaxCacheSize = 250;
     private const int DecodePixelSize = 80;   // list thumbnails: 2× the ~40px display slot
-    private const int MediumDecodeSize = 380; // album cards and mini-player: sharp at ~120-190px display
+    private const int MediumDecodeSize = 220; // album cards and mini-player: crisp and fast at 150px display slot
     private const int ThumbEncodeSize = 512;
     private const int MaxThumbFileBytes = 1024 * 1024;
     private const int MaxMediumCacheSize = 150; // Increased to 150 so albums view does not aggressively evict
@@ -80,6 +80,9 @@ public class AlbumArtLoader
 
         if (_cache.TryGetValue(filePath, out var cached) && cached != null)
             return cached;
+
+        if (_scrollingActive)
+            return GetDefaultAlbumArt();
 
         try
         {
@@ -218,6 +221,9 @@ public class AlbumArtLoader
         if (_mediumCache.TryGetValue(path, out var cached) && cached != null)
             return cached;
 
+        if (_scrollingActive)
+            return GetDefaultAlbumArt();
+
         // 1. Try disk cache first at MediumDecodeSize (380px)
         try
         {
@@ -267,6 +273,9 @@ public class AlbumArtLoader
 
         if (_mediumCache.TryGetValue(filePath, out var cached) && cached != null)
             return cached;
+
+        if (_scrollingActive)
+            return GetDefaultAlbumArt();
 
         // Try loading from disk cache at medium decode size
         try

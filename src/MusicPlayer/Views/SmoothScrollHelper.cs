@@ -264,7 +264,7 @@ public static class SmoothScrollHelper
         //    materialized, so the only per-frame GPU cost is painting the rows
         //    actually on screen. (Scaling mode / ClearType hints are per-element
         //    render hints, not cached VRAM surfaces — kept for crisp text.)
-        RenderOptions.SetBitmapScalingMode(sv, BitmapScalingMode.LowQuality);
+        RenderOptions.SetBitmapScalingMode(sv, BitmapScalingMode.HighQuality);
         RenderOptions.SetClearTypeHint(sv, ClearTypeHint.Enabled);
 
         _configured.Add(sv, new object());
@@ -354,6 +354,7 @@ public static class SmoothScrollHelper
             state.LastStepTicks = 0L;
             _layoutGateBusy     = true;
         }
+        AlbumArtLoader.SetScrollingActive(true);
 
         EnsureMotionRendering(sv);
         e.Handled = true;
