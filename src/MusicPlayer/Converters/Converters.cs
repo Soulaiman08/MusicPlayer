@@ -336,6 +336,7 @@ public class StringToBrushConverter : IValueConverter
 public class ArtistImageConverter : IValueConverter
 {
     public static System.Windows.Media.ImageSource? DefaultArtistImage { get; set; }
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Windows.Media.ImageSource> HighResCache = new(StringComparer.OrdinalIgnoreCase);
 
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
     {
@@ -361,15 +362,22 @@ public class ArtistImageConverter : IValueConverter
         if (value is not string artistName || string.IsNullOrWhiteSpace(artistName))
             return DefaultArtistImage ?? string.Empty as object;
 
+        var paramStr = parameter as string ?? "";
+        bool isHighRes = paramStr.Equals("full", StringComparison.OrdinalIgnoreCase) ||
+                         paramStr.Equals("detail", StringComparison.OrdinalIgnoreCase);
+
+        if (isHighRes && HighResCache.TryGetValue(artistName, out var cachedHighRes))
+            return cachedHighRes;
+
         if (System.Windows.Application.Current?.MainWindow is { DataContext: ViewModels.MainViewModel vm })
         {
-            if (vm.ArtistImageCache.TryGetValue(artistName, out var img))
+            if (!isHighRes && vm.ArtistImageCache.TryGetValue(artistName, out var img))
                 return img;
 
             if (vm.ArtistImages.TryGetValue(artistName, out var path) && !string.IsNullOrWhiteSpace(path))
             {
-                // While continuous scrolling is active, return placeholder immediately to prevent UI thread hitching
-                if (AlbumArtLoader.ScrollingActive)
+                // While continuous scrolling is active, return placeholder immediately for regular list thumbnails
+                if (!isHighRes && AlbumArtLoader.ScrollingActive)
                     return DefaultArtistImage ?? string.Empty as object;
 
                 try
@@ -377,15 +385,21 @@ public class ArtistImageConverter : IValueConverter
                     var bi = new System.Windows.Media.Imaging.BitmapImage();
                     bi.BeginInit();
                     bi.UriSource = new System.Uri(path, System.UriKind.Absolute);
-                    bi.DecodePixelWidth = 180;
+                    bi.DecodePixelWidth = isHighRes ? 400 : 180;
                     bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
                     bi.EndInit();
                     bi.Freeze();
-                    vm.ArtistImageCache[artistName] = bi;
+                    if (isHighRes)
+                        HighResCache[artistName] = bi;
+                    else
+                        vm.ArtistImageCache[artistName] = bi;
                     return bi;
                 }
                 catch { }
             }
+
+            if (isHighRes && vm.ArtistImageCache.TryGetValue(artistName, out var fallbackImg))
+                return fallbackImg;
         }
 
         return DefaultArtistImage ?? string.Empty as object;

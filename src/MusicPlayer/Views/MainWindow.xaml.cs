@@ -871,7 +871,10 @@ public partial class MainWindow : Window
         _albumTransitionTrack = dataContext;
 
         var converter = new Converters.AlbumArtConverter();
-        if (converter.Convert(dataContext, typeof(object), null!, System.Globalization.CultureInfo.InvariantCulture) is not ImageSource imageSource) return;
+        var imageSource = (converter.Convert(dataContext, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource)
+            ?? AlbumArtLoader.Instance?.LoadFullAlbumArt(dataContext)
+            ?? AlbumArtLoader.Instance?.GetDefaultAlbumArt();
+        if (imageSource == null) return;
 
         ResetArtistTransition();
         // Hide the album detail page BEFORE navigating to avoid flash
@@ -894,11 +897,19 @@ public partial class MainWindow : Window
                 _artistTransitionTargetSize = new Size(280, 280);
             }
 
-            // Aggressively hide EVERYTHING that could show the album art during hero morph.
-            // 1) Hide the entire AlbumDetailView (parent opacity)
-            // 2) Hide the specific art Border element (direct target)
+            // Hide the album detail page and prepare parallel reveal
             AlbumDetailView.Opacity = 0;
             AlbumDetailView.IsHitTestVisible = false;
+            if (AlbumDetailBackRow != null)
+            {
+                AlbumDetailBackRow.Opacity = 0;
+                AlbumDetailBackRow.RenderTransform = new TranslateTransform { Y = -10 };
+            }
+            if (AlbumDetailInfo != null)
+            {
+                AlbumDetailInfo.Opacity = 0;
+                AlbumDetailInfo.RenderTransform = new TranslateTransform { Y = 16 };
+            }
             if (target != null)
             {
                 target.Opacity = 0;
@@ -1045,7 +1056,7 @@ public partial class MainWindow : Window
         AlbumArtLoader.SetScrollingActive(false);
 
         var converter = new Converters.ArtistImageConverter();
-        var imageSource = converter.Convert(dataContext.Artist, typeof(object), null!, System.Globalization.CultureInfo.InvariantCulture) as ImageSource
+        var imageSource = converter.Convert(dataContext.Artist, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource
             ?? _defaultArtistImage
             ?? CreateDefaultArtistImage();
 
@@ -1118,10 +1129,10 @@ public partial class MainWindow : Window
 
     private void RevealDetailMix(TimeSpan? delay = null)
     {
-        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-        var fadeIn = new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease };
-        var slideBack = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease };
-        var slideInfo = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(280)) { EasingFunction = ease };
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var fadeIn = new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(260)) { EasingFunction = ease };
+        var slideBack = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(260)) { EasingFunction = ease };
+        var slideInfo = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(260)) { EasingFunction = ease };
 
         if (delay.HasValue)
         {
@@ -1266,6 +1277,20 @@ public partial class MainWindow : Window
         if (ArtistDetailView.RenderTransform is TranslateTransform oldTranslate)
             oldTranslate.BeginAnimation(TranslateTransform.YProperty, null);
         AlbumDetailView.BeginAnimation(OpacityProperty, null);
+        if (AlbumDetailBackRow != null)
+        {
+            AlbumDetailBackRow.BeginAnimation(OpacityProperty, null);
+            AlbumDetailBackRow.Opacity = 1;
+            if (AlbumDetailBackRow.RenderTransform is TranslateTransform rmb)
+                rmb.BeginAnimation(TranslateTransform.YProperty, null);
+        }
+        if (AlbumDetailInfo != null)
+        {
+            AlbumDetailInfo.BeginAnimation(OpacityProperty, null);
+            AlbumDetailInfo.Opacity = 1;
+            if (AlbumDetailInfo.RenderTransform is TranslateTransform rmi)
+                rmi.BeginAnimation(TranslateTransform.YProperty, null);
+        }
         // During album transitions, don't restore AlbumDetailView or art —
         // the caller hides them explicitly to prevent double-image.
         if (!_isAlbumTransition)
@@ -1309,7 +1334,9 @@ public partial class MainWindow : Window
 
     private void StartForwardTransition(ImageSource imageSource)
     {
-        const double morphMs = 350;
+        const double morphMs = 260;
+        var duration = TimeSpan.FromMilliseconds(morphMs);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
 
         // Nav already happened; the pending flag is only needed so the CurrentView
         // handler doesn't cancel the detail page's hidden state during the morph.
@@ -1351,85 +1378,69 @@ public partial class MainWindow : Window
             ArtistTransitionGrid.Clip = ArtistTransitionClip;
         }
 
-        // ScaleTransform scales from Center (targetSize/2, targetSize/2).
-        // Translate = sourceCenter - targetCenter compensates for the offset.
         ArtistTransitionScale.ScaleX = scale;
         ArtistTransitionScale.ScaleY = scale;
         ArtistTransitionTranslate.X = sourceCenter.X - targetCenter.X;
         ArtistTransitionTranslate.Y = sourceCenter.Y - targetCenter.Y;
 
-        var duration = TimeSpan.FromMilliseconds(morphMs);
-        var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
-
-        // Artist: fade the detail page in from 0 as the circle grows.
-        // Album: do NOT fade in here — AlbumDetailView stays hidden (opacity 0)
-        // during the entire hero morph to prevent double-image. It is revealed
-        // only after the overlay disappears (see below).
-        if (!_isAlbumTransition)
-            ArtistDetailView.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1.0, duration) { EasingFunction = ease });
-
+        // Animate overlay scale & translate
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.0, duration) { EasingFunction = ease });
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.0, duration) { EasingFunction = ease });
         ArtistTransitionTranslate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0.0, duration) { EasingFunction = ease });
-        ArtistTransitionTranslate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0.0, duration) { EasingFunction = ease });
+        var morphAnim = new DoubleAnimation(0.0, duration) { EasingFunction = ease };
 
         if (_isAlbumTransition)
         {
-            // Album crossfade: once the morph lands on the target, crossfade
-            // the overlay OUT while simultaneously fading the real page IN.
-            // No gap = no flicker. The overlay covers the page the whole time
-            // so there's never a double-image.
-            var crossfadeEase = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-            var crossfadeDuration = TimeSpan.FromMilliseconds(250);
+            // Keep AlbumDetailView visible and fade it in simultaneously during the 260ms morph (NO black void)
+            AlbumDetailView.Opacity = 0.0;
+            AlbumDetailView.BeginAnimation(OpacityProperty, new DoubleAnimation(0.0, 1.0, duration) { EasingFunction = ease });
 
-            // Overlay fades out starting right after morph completes
-            var overlayFadeOut = new DoubleAnimation(0.0, crossfadeDuration) { BeginTime = duration, EasingFunction = crossfadeEase };
-            overlayFadeOut.Completed += (_, _) =>
+            if (AlbumDetailBackRow != null)
+            {
+                AlbumDetailBackRow.BeginAnimation(OpacityProperty, new DoubleAnimation(0.0, 1.0, duration) { EasingFunction = ease });
+                if (AlbumDetailBackRow.RenderTransform is TranslateTransform tb)
+                    tb.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0.0, duration) { EasingFunction = ease });
+            }
+            if (AlbumDetailInfo != null)
+            {
+                AlbumDetailInfo.BeginAnimation(OpacityProperty, new DoubleAnimation(0.0, 1.0, duration) { EasingFunction = ease });
+                if (AlbumDetailInfo.RenderTransform is TranslateTransform ti)
+                    ti.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0.0, duration) { EasingFunction = ease });
+            }
+
+            morphAnim.Completed += (_, _) =>
             {
                 ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
                 ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
                 ArtistTransitionOverlay.Opacity = 1;
-                // Restore interactivity AFTER overlay is gone
                 AlbumDetailView.IsHitTestVisible = true;
                 var artEl = FindAlbumDetailArt();
-                if (artEl != null) artEl.IsHitTestVisible = true;
+                if (artEl != null)
+                {
+                    artEl.BeginAnimation(OpacityProperty, null);
+                    artEl.Opacity = 1;
+                    artEl.IsHitTestVisible = true;
+                }
             };
-            ArtistTransitionOverlay.BeginAnimation(OpacityProperty, overlayFadeOut);
-
-            // Content fades in at the same time as overlay fades out (crossfade)
-            var contentFadeIn = new DoubleAnimation(1.0, crossfadeDuration) { BeginTime = duration, EasingFunction = crossfadeEase };
-            AlbumDetailView.BeginAnimation(OpacityProperty, contentFadeIn);
-
-            var art = FindAlbumDetailArt();
-            if (art != null)
-            {
-                art.BeginAnimation(OpacityProperty, new DoubleAnimation(1.0, crossfadeDuration) { BeginTime = duration, EasingFunction = crossfadeEase });
-            }
         }
         else
         {
-            // Artist: "Mix" reveal for surrounding content (back row + info)
-            RevealDetailMix(duration);
+            // Fade ArtistDetailView in simultaneously
+            ArtistDetailView.BeginAnimation(OpacityProperty, new DoubleAnimation(0.0, 1.0, duration) { EasingFunction = ease });
 
-            // After the surrounding content has finished its mix reveal, reveal the real
-            // circle while the overlay is STILL fully opaque (zero flicker).
-            var revealEnd = duration + TimeSpan.FromMilliseconds(280);
+            // Reveal surrounding content in parallel
+            RevealDetailMix(null);
 
-            var earlyReveal = revealEnd - TimeSpan.FromMilliseconds(100);
-            if (earlyReveal < TimeSpan.Zero) earlyReveal = TimeSpan.Zero;
-            var earlyTimer = new System.Windows.Threading.DispatcherTimer { Interval = earlyReveal };
-            earlyTimer.Tick += (_, _) =>
+            morphAnim.Completed += (_, _) =>
             {
-                earlyTimer.Stop();
                 ArtistDetailCircle.Opacity = 1;
+                ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
+                ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
+                ArtistTransitionOverlay.Opacity = 1;
             };
-            earlyTimer.Start();
-
-            var handoffEase = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-            var fadeOut = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(200)) { BeginTime = revealEnd, EasingFunction = handoffEase };
-            fadeOut.Completed += (_, _) => ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
-            ArtistTransitionOverlay.BeginAnimation(OpacityProperty, fadeOut);
         }
+
+        ArtistTransitionTranslate.BeginAnimation(TranslateTransform.YProperty, morphAnim);
     }
 
     private void ArtistDetailBack_Click(object sender, RoutedEventArgs e)
@@ -1449,7 +1460,7 @@ public partial class MainWindow : Window
         AlbumArtLoader.SetScrollingActive(false);
 
         var converter = new Converters.ArtistImageConverter();
-        var imageSource = converter.Convert(_artistTransitionArtistName, typeof(object), null!, System.Globalization.CultureInfo.InvariantCulture) as ImageSource
+        var imageSource = converter.Convert(_artistTransitionArtistName, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource
             ?? _defaultArtistImage
             ?? CreateDefaultArtistImage();
 
@@ -1462,7 +1473,6 @@ public partial class MainWindow : Window
 
         LogHelper.LogInfo("HeroTransition back: starting reverse");
 
-        // Measure the detail circle exactly (the overlay must start right on top of it)
         var target = FindArtistDetailCircle();
         if (target != null)
         {
@@ -1488,9 +1498,10 @@ public partial class MainWindow : Window
         ImageSource? imageSource = null;
         var converter = new Converters.AlbumArtConverter();
         if (_albumTransitionTrack != null)
-            imageSource = converter.Convert(_albumTransitionTrack, typeof(object), null!, System.Globalization.CultureInfo.InvariantCulture) as ImageSource;
+            imageSource = converter.Convert(_albumTransitionTrack, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource;
 
-        imageSource ??= AlbumArtLoader.Instance?.GetDefaultAlbumArt();
+        imageSource ??= (_albumTransitionTrack != null ? AlbumArtLoader.Instance?.LoadFullAlbumArt(_albumTransitionTrack) : null)
+            ?? AlbumArtLoader.Instance?.GetDefaultAlbumArt();
 
         if (imageSource == null)
         {
@@ -1501,15 +1512,10 @@ public partial class MainWindow : Window
         LogHelper.LogInfo($"HeroTransition back: album='{_artistTransitionArtistName}' srcW={_artistTransitionSourceSize.Width}");
 
         var target = FindAlbumDetailArt();
-        // Immediately hide the art element to prevent double-image during back transition
         if (target != null)
         {
             target.BeginAnimation(OpacityProperty, null);
             target.Opacity = 0;
-        }
-
-        if (target != null)
-        {
             _artistTransitionTargetPos = target.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
             _artistTransitionTargetSize = new Size(target.ActualWidth, target.ActualHeight);
         }
@@ -1524,9 +1530,8 @@ public partial class MainWindow : Window
         if (TransitionInputBlocker != null)
             TransitionInputBlocker.Visibility = Visibility.Visible;
 
-        // Safety net: never leave input blocked if the fade-out animation is
-        // cancelled for any reason. The animation takes ~650ms total.
-        var unblockTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
+        // Safety net: never leave input blocked if the animation is cancelled for any reason.
+        var unblockTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
         unblockTimer.Tick += (_, _) =>
         {
             unblockTimer.Stop();
@@ -1536,18 +1541,15 @@ public partial class MainWindow : Window
         };
         unblockTimer.Start();
 
-        const double morphMs = 350;
+        const double morphMs = 260;
+        var duration = TimeSpan.FromMilliseconds(morphMs);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
 
         // Save album transition state before ResetArtistTransition clears animations
         bool wasAlbumTransition = _isAlbumTransition;
-
         ResetArtistTransition();
-
-        // Restore album state (ResetArtistTransition doesn't clear these anymore,
-        // but be safe)
         _isAlbumTransition = wasAlbumTransition;
 
-        // Reset transforms on the detail view we're about to fade
         if (_isAlbumTransition)
             AlbumDetailView.RenderTransform = null;
         else
@@ -1565,11 +1567,9 @@ public partial class MainWindow : Window
         ArtistTransitionGrid.Width = targetSize;
         ArtistTransitionGrid.Height = targetSize;
 
-        // Update ScaleTransform center to match actual grid size
         ArtistTransitionScale.CenterX = targetSize / 2;
         ArtistTransitionScale.CenterY = targetSize / 2;
 
-        // Set clip based on transition type
         if (_isAlbumTransition)
         {
             ArtistTransitionGrid.Clip = new System.Windows.Media.RectangleGeometry(new Rect(0, 0, targetSize, targetSize));
@@ -1587,7 +1587,7 @@ public partial class MainWindow : Window
         ArtistTransitionTranslate.X = 0.0;
         ArtistTransitionTranslate.Y = 0.0;
 
-        // Step 1: hide the detail page immediately (no fade — hero covers it)
+        // Hide the detail view so the previous view shows underneath
         if (_isAlbumTransition)
         {
             AlbumDetailView.BeginAnimation(OpacityProperty, null);
@@ -1595,126 +1595,39 @@ public partial class MainWindow : Window
         }
         else
         {
-            ArtistDetailView.BeginAnimation(OpacityProperty, new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(150))
-            {
-                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
-            });
+            ArtistDetailView.BeginAnimation(OpacityProperty, null);
+            ArtistDetailView.Opacity = 0;
         }
 
-        // Step 2: after detail fades, go back and morph the element to its grid position
-        var goBackTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-        goBackTimer.Tick += (_, _) =>
+        // Navigate back immediately so the underlying list is active and visible
+        ViewModel?.GoBackCommand.Execute(null);
+
+        // Morph overlay from detail element back to grid position
+        double scale = Math.Clamp(_artistTransitionSourceSize.Width / targetSize, 0.1, 1.5);
+        var sourceCenter = new Point(
+            _artistTransitionSourcePos.X + _artistTransitionSourceSize.Width / 2,
+            _artistTransitionSourcePos.Y + _artistTransitionSourceSize.Height / 2);
+        var targetCenter = new Point(
+            _artistTransitionTargetPos.X + targetSize / 2,
+            _artistTransitionTargetPos.Y + targetSize / 2);
+
+        ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(scale, duration) { EasingFunction = ease });
+        ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(scale, duration) { EasingFunction = ease });
+        ArtistTransitionTranslate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(sourceCenter.X - targetCenter.X, duration) { EasingFunction = ease });
+
+        var morphAnim = new DoubleAnimation(sourceCenter.Y - targetCenter.Y, duration) { EasingFunction = ease };
+        morphAnim.Completed += (_, _) =>
         {
-            goBackTimer.Stop();
-
-            LogHelper.LogInfo($"HeroTransition back: pre-goback view='{ViewModel?.CurrentView}' isAlbum={_isAlbumTransition}");
-
-            // Fade in EVERY view container GoBack might reveal. Start the clocks BEFORE
-            // GoBack so the revealed view's very first frame is already faded and it ramps
-            // to full opacity in sync with the morphing element.
-            var duration = TimeSpan.FromMilliseconds(morphMs);
-            var morphEase = new CubicEase { EasingMode = EasingMode.EaseInOut };
-            var revealEase = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-            foreach (var child in ContentGrid.Children)
-            {
-                if (child == ArtistTransitionOverlay) continue;
-                if (child == ArtistDetailView && !_isAlbumTransition) continue;
-                if (child == AlbumDetailView && _isAlbumTransition) continue;
-                if (child is not FrameworkElement fe) continue;
-                if (fe.Visibility == Visibility.Collapsed)
-                {
-                    fe.Opacity = 0;
-                    var fadeIn = new DoubleAnimation(0, 1.0, duration) { EasingFunction = morphEase };
-                    fadeIn.Completed += (_, _) =>
-                    {
-                        fe.BeginAnimation(OpacityProperty, null);
-                        fe.Opacity = 1;
-                    };
-                    fe.BeginAnimation(OpacityProperty, fadeIn);
-                }
-            }
-
-            ViewModel?.GoBackCommand.Execute(null);
-
-            LogHelper.LogInfo($"HeroTransition back: post-goback view='{ViewModel?.CurrentView}'");
-
-            // Keep every image inside the just-revealed view hidden until the element
-            // lands on its grid slot, then pop them in.
-            Dispatcher.BeginInvoke(
-                System.Windows.Threading.DispatcherPriority.Loaded,
-                new Action(() =>
-                {
-                    var revealedImages = new List<Image>();
-                    foreach (var child in ContentGrid.Children)
-                    {
-                        if (child == ArtistTransitionOverlay) continue;
-                        if (child == ArtistDetailView && !_isAlbumTransition) continue;
-                        if (child == AlbumDetailView && _isAlbumTransition) continue;
-                        if (child is FrameworkElement cfe && cfe.Visibility == Visibility.Visible && cfe.IsVisible)
-                        {
-                            CollectImages(cfe, revealedImages);
-                        }
-                    }
-                    foreach (var img in revealedImages)
-                        img.Opacity = 0;
-                    LogHelper.LogInfo($"HeroTransition back: hiddenImages={revealedImages.Count}");
-
-                    if (revealedImages.Count > 0)
-                    {
-                        var revealImagesTimer = new System.Windows.Threading.DispatcherTimer { Interval = duration };
-                        revealImagesTimer.Tick += (_, _) =>
-                        {
-                            revealImagesTimer.Stop();
-                            var pop = new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(200)) { EasingFunction = revealEase };
-                            pop.Completed += (_, _) =>
-                            {
-                                foreach (var img in revealedImages)
-                                {
-                                    img.BeginAnimation(OpacityProperty, null);
-                                    img.Opacity = 1;
-                                }
-                            };
-                            foreach (var img in revealedImages)
-                                img.BeginAnimation(OpacityProperty, pop);
-                        };
-                        revealImagesTimer.Start();
-                    }
-                }));
-
-            // Morph overlay from detail element back to grid position
-            double scale = Math.Clamp(_artistTransitionSourceSize.Width / targetSize, 0.1, 1.5);
-
-            var ease = morphEase;
-
-            // ScaleTransform center was set to (targetSize/2, targetSize/2) in forward transition.
-            // Translate = sourceCenter - targetCenter compensates for center-based scaling.
-            var sourceCenter = new Point(
-                _artistTransitionSourcePos.X + _artistTransitionSourceSize.Width / 2,
-                _artistTransitionSourcePos.Y + _artistTransitionSourceSize.Height / 2);
-            var targetCenter = new Point(
-                _artistTransitionTargetPos.X + targetSize / 2,
-                _artistTransitionTargetPos.Y + targetSize / 2);
-
-            ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(scale, duration) { EasingFunction = ease });
-            ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(scale, duration) { EasingFunction = ease });
-            ArtistTransitionTranslate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(sourceCenter.X - targetCenter.X, duration) { EasingFunction = ease });
-            ArtistTransitionTranslate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(sourceCenter.Y - targetCenter.Y, duration) { EasingFunction = ease });
-
-            // Fade the overlay out after morph completes
-            var fadeOut = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(150)) { BeginTime = duration, EasingFunction = revealEase };
-            fadeOut.Completed += (_, _) =>
-            {
-                ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
-                _isAlbumTransition = false;
-                _albumTransitionTrack = null;
-                // Re-enable input now that the back animation finished.
-                _isBackTransitioning = false;
-                if (TransitionInputBlocker != null)
-                    TransitionInputBlocker.Visibility = Visibility.Collapsed;
-            };
-            ArtistTransitionOverlay.BeginAnimation(OpacityProperty, fadeOut);
+            ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
+            ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
+            ArtistTransitionOverlay.Opacity = 1;
+            _isAlbumTransition = false;
+            _albumTransitionTrack = null;
+            _isBackTransitioning = false;
+            if (TransitionInputBlocker != null)
+                TransitionInputBlocker.Visibility = Visibility.Collapsed;
         };
-        goBackTimer.Start();
+        ArtistTransitionTranslate.BeginAnimation(TranslateTransform.YProperty, morphAnim);
     }
 
     private void ArtistAlbum_Click(object sender, MouseButtonEventArgs e)
