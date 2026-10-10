@@ -17,6 +17,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MusicPlayer.Lyrics;
 using MusicPlayer.Models;
 using MusicPlayer.Services;
+using MusicPlayer.Library;
 using MusicPlayer.Utilities;
 using MusicPlayer.ViewModels;
 
@@ -1032,7 +1033,7 @@ public partial class MainWindow : Window
 
         FrameworkElement? circle = null;
         if (border.Child is StackPanel sp && sp.Children.Count > 0)
-            circle = sp.Children[0] as System.Windows.Controls.Grid;
+            circle = sp.Children[0] as FrameworkElement;
         circle ??= border;
 
         _artistTransitionSourcePos = circle.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
@@ -1041,15 +1042,18 @@ public partial class MainWindow : Window
         _isAlbumTransition = false;
         _albumTransitionTrack = null;
 
+        AlbumArtLoader.SetScrollingActive(false);
+
         var converter = new Converters.ArtistImageConverter();
-        var imageSource = converter.Convert(dataContext.Artist, typeof(object), null!, System.Globalization.CultureInfo.InvariantCulture) as ImageSource;
+        var imageSource = converter.Convert(dataContext.Artist, typeof(object), null!, System.Globalization.CultureInfo.InvariantCulture) as ImageSource
+            ?? _defaultArtistImage
+            ?? CreateDefaultArtistImage();
 
         if (imageSource == null)
         {
             // Capture the exact default-artist element rendered in the grid
-            // (same icon the program shows for artists without a photo).
             _defaultArtistImage = CaptureElementToBitmap(circle);
-            imageSource = _defaultArtistImage;
+            imageSource = _defaultArtistImage ?? CreateDefaultArtistImage();
         }
 
         if (imageSource == null)
@@ -1442,9 +1446,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        AlbumArtLoader.SetScrollingActive(false);
+
         var converter = new Converters.ArtistImageConverter();
         var imageSource = converter.Convert(_artistTransitionArtistName, typeof(object), null!, System.Globalization.CultureInfo.InvariantCulture) as ImageSource
-            ?? _defaultArtistImage;
+            ?? _defaultArtistImage
+            ?? CreateDefaultArtistImage();
 
         if (imageSource == null)
         {
@@ -1476,10 +1483,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        AlbumArtLoader.SetScrollingActive(false);
+
         ImageSource? imageSource = null;
         var converter = new Converters.AlbumArtConverter();
         if (_albumTransitionTrack != null)
             imageSource = converter.Convert(_albumTransitionTrack, typeof(object), null!, System.Globalization.CultureInfo.InvariantCulture) as ImageSource;
+
+        imageSource ??= AlbumArtLoader.Instance?.GetDefaultAlbumArt();
 
         if (imageSource == null)
         {
