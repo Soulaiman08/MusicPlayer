@@ -9,6 +9,7 @@
       <conv:DurationConverter x:Key="DurationConverter" />
       <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
       <conv:AlbumArtConverter x:Key="AlbumArtConverter" />
+      <conv:AlbumCoverArtConverter x:Key="AlbumCoverArtConverter" />
       <conv:StringNullOrEmptyToVisibilityConverter x:Key="StringNullOrEmptyToVisibilityConverter" />
       <conv:EqualityToVisibilityConverter x:Key="EqualityToVisibilityConverter" />
       <conv:ZeroToVisibilityConverter x:Key="ZeroToVisibilityConverter" />

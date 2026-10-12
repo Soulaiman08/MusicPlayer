@@ -5,6 +5,7 @@ using System.Windows.Data;
 using System.Windows.Media;
 using MusicPlayer.Library;
 using MusicPlayer.Models;
+using MusicPlayer.ViewModels;
 
 namespace MusicPlayer.Converters;
 
@@ -338,6 +339,27 @@ public class ArtistImageConverter : IValueConverter
     public static System.Windows.Media.ImageSource? DefaultArtistImage { get; set; }
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Windows.Media.ImageSource> HighResCache = new(StringComparer.OrdinalIgnoreCase);
 
+    // Cached on the UI thread when the window's DataContext is assigned. Reading
+    // Application.Current.MainWindow enforces dispatcher affinity and throws when
+    // touched from a worker thread (e.g. the background hi-res prefetch in
+    // ArtistRow_Click), so background callers must use this cached reference.
+    public static ViewModels.MainViewModel? SharedViewModel { get; set; }
+
+    private static ViewModels.MainViewModel? GetViewModel()
+    {
+        var cached = SharedViewModel;
+        if (cached != null) return cached;
+
+        var app = System.Windows.Application.Current;
+        if (app?.Dispatcher?.CheckAccess() == true &&
+            app.MainWindow?.DataContext is ViewModels.MainViewModel vm)
+        {
+            SharedViewModel = vm;
+            return vm;
+        }
+        return null;
+    }
+
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
     {
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -369,7 +391,7 @@ public class ArtistImageConverter : IValueConverter
         if (isHighRes && HighResCache.TryGetValue(artistName, out var cachedHighRes))
             return cachedHighRes;
 
-        if (System.Windows.Application.Current?.MainWindow is { DataContext: ViewModels.MainViewModel vm })
+        if (GetViewModel() is { } vm)
         {
             if (!isHighRes && vm.ArtistImageCache.TryGetValue(artistName, out var img))
                 return img;
@@ -520,9 +542,49 @@ public class VolumeToGeometryConverter : IValueConverter
         string key = v <= 0.5f ? "Icon.VolumeMute" : v < 33 ? "Icon.VolumeLow" : v < 66 ? "Icon.VolumeMedium" : "Icon.VolumeHigh";
         try { return Application.Current?.TryFindResource(key) as Geometry ?? Application.Current?.TryFindResource("Icon.Volume") as Geometry; } catch { return null; }
     }
-    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AlbumCoverArtConverter (MultiBinding: album name + window DataContext/VM)
+// Resolves the ONE canonical cover for an album name (see
+// DatabaseService.PickCanonicalTrack) instead of the card's own track art —
+// multi-song pseudo-albums ("Unknown Album") otherwise show a different cover
+// on every surface. Expects: values[0] = album name, values[1] = MainViewModel
+// (whose AlbumCoverTracks is pre-warmed off the UI thread before cards publish,
+// so this never touches the database). Falls back to the neutral placeholder.
+// ─────────────────────────────────────────────────────────────────────────────
+public class AlbumCoverArtConverter : IMultiValueConverter
+{
+    public object? Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+    {
+        try
+        {
+            var loader = AlbumArtLoader.Instance;
+            string? album = values.Length > 0 ? values[0] as string : null;
+            MusicTrack? cover = null;
+            if (!string.IsNullOrWhiteSpace(album) && values.Length > 1 &&
+                values[1] is MainViewModel vm &&
+                loader != null)
+            {
+                vm.AlbumCoverTracks.TryGetValue(album.Trim(), out cover);
+            }
+            if (loader == null || cover == null)
+                return loader?.GetDefaultAlbumArt();
+            var paramStr = parameter as string ?? "";
+            if (paramStr.Equals("full", StringComparison.OrdinalIgnoreCase))
+                return loader.LoadFullAlbumArt(cover);
+            if (paramStr.Equals("medium", StringComparison.OrdinalIgnoreCase))
+                return loader.LoadMediumAlbumArt(cover);
+            return loader.LoadAlbumArt(cover);
+        }
+        catch { return AlbumArtLoader.Instance?.GetDefaultAlbumArt(); }
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
 public class RoundedClipConverter : IMultiValueConverter
 {
     // Fallback keeps the image fully visible (no clipping) when layout size

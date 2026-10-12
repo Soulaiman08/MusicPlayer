@@ -1333,7 +1333,7 @@
                   </Button>
                 </Grid>
                 <Border Grid.Row="3" Height="1" Background="#22FFFFFF" Margin="0,0,0,4" SnapsToDevicePixels="True" UseLayoutRounding="True" />
-                <Grid Row="4">
+                <Grid Row="4" Name="ArtistDetailContentHost">
                   <Grid Visibility="{Binding ArtistDetailActiveTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=albums}">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                       <ListBox ItemsSource="{Binding ArtistAlbums}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
@@ -1347,7 +1347,15 @@
                             <Border Width="140" Margin="6,8" Cursor="Hand" MouseLeftButtonUp="ArtistAlbum_Click">
                               <StackPanel>
                                 <Border Width="140" Height="140" CornerRadius="10" ClipToBounds="True" Background="#26FFFFFF">
-                                  <Image Stretch="UniformToFill" Style="{StaticResource RoundedImage10}" Source="{Binding Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium}" RenderOptions.BitmapScalingMode="HighQuality" />
+                                  <!-- Canonical album cover (one deterministic cover per album name), NOT the card's own track art -->
+                                  <Image Stretch="UniformToFill" Style="{StaticResource RoundedImage10}" RenderOptions.BitmapScalingMode="HighQuality">
+                                    <Image.Source>
+                                      <MultiBinding Converter="{StaticResource AlbumCoverArtConverter}" ConverterParameter="medium">
+                                        <Binding Path="Album" />
+                                        <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                      </MultiBinding>
+                                    </Image.Source>
+                                  </Image>
                                 </Border>
                                 <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" Margin="0,8,0,0" Text="{Binding Album}" />
                                 <TextBlock FontSize="12" Foreground="#80FFFFFF" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" Text="{Binding Artist}" />

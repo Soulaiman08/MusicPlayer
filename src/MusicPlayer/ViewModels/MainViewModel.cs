@@ -596,6 +596,13 @@ public partial class MainViewModel : ViewModelBase
 	public ConcurrentDictionary<string, ImageSource> ArtistImageCache { get; } = new ConcurrentDictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
 
 
+	// Canonical album cover per album name (global scope — see
+	// DatabaseService.PickCanonicalTrack). Rebuilt on every artist-detail load
+	// BEFORE the album cards are published, so card bindings resolve instantly
+	// on the UI thread with no DB access. Key = trimmed album name.
+	public ConcurrentDictionary<string, MusicTrack> AlbumCoverTracks { get; } = new ConcurrentDictionary<string, MusicTrack>(StringComparer.OrdinalIgnoreCase);
+
+
 	public BulkObservableCollection<MusicTrack> ArtistDetailTracks { get; } = new BulkObservableCollection<MusicTrack>();
 
 	public BulkObservableCollection<MusicTrack> GenreDetailTracks { get; } = new BulkObservableCollection<MusicTrack>();
@@ -4351,7 +4358,19 @@ public partial class MainViewModel : ViewModelBase
 		_navigatedFromFullPlayer = false;
 		if (_viewHistory.Count > 0)
 		{
-			CurrentView = _viewHistory.Pop();
+			string target = _viewHistory.Pop();
+			// Collapse consecutive duplicates left by double-invocations: popping
+			// to the view we already show notifies nothing, so the back silently
+			// does nothing while a hidden detail page stays invisible (ghost page).
+			while (_viewHistory.Count > 0 && string.Equals(target, CurrentView, StringComparison.OrdinalIgnoreCase))
+			{
+				LogHelper.LogInfo($"GoBack: skipping duplicate history entry '{target}'");
+				target = _viewHistory.Pop();
+			}
+			if (string.Equals(target, CurrentView, StringComparison.OrdinalIgnoreCase))
+				LogHelper.LogInfo($"GoBack: no-op, already on '{CurrentView}'");
+			else
+				CurrentView = target;
 		}
 		else if (CurrentView != "home")
 		{
@@ -4680,7 +4699,11 @@ public partial class MainViewModel : ViewModelBase
 
 	public void NavigateToFolder(string folderPath)
 	{
-		_viewHistory.Push(CurrentView);
+		// Never record a consecutive duplicate: popping back to the view we are
+		// already on notifies nothing (silent no-op GoBack) and strands later
+		// backs — the ghost empty page. Mirrors Navigate().
+		if (!string.Equals(CurrentView, "folder_detail", StringComparison.OrdinalIgnoreCase))
+			_viewHistory.Push(CurrentView);
 		CurrentView = "folder_detail";
 		IsDrawerOpen = false;
 		LoadFolderDetail(folderPath);
@@ -4690,7 +4713,9 @@ public partial class MainViewModel : ViewModelBase
 	public void NavigateToArtist(string artistName)
 	{
 		string prev = CurrentView;
-		_viewHistory.Push(CurrentView);
+		// See NavigateToFolder: no consecutive duplicates in history.
+		if (!string.Equals(CurrentView, "artist_detail", StringComparison.OrdinalIgnoreCase))
+			_viewHistory.Push(CurrentView);
 		CurrentView = "artist_detail";
 		LogHelper.LogInfo($"NavigateToArtist: '{artistName}' prevView='{prev}' newView='{CurrentView}'");
 		IsDrawerOpen = false;
@@ -4700,19 +4725,23 @@ public partial class MainViewModel : ViewModelBase
 
 	public void NavigateToGenre(string genre)
 	{
-		_viewHistory.Push(CurrentView);
+		// See NavigateToFolder: no consecutive duplicates in history.
+		if (!string.Equals(CurrentView, "genre_detail", StringComparison.OrdinalIgnoreCase))
+			_viewHistory.Push(CurrentView);
 		CurrentView = "genre_detail";
 		IsDrawerOpen = false;
 		LoadGenreDetail(genre);
 		OnPropertyChanged("CanNavigateBack");
 	}
 
-	public void NavigateToAlbum(string albumName, string artistName)
+	public void NavigateToAlbum(string albumName, string artistName, MusicTrack? artSource = null)
 	{
-		_viewHistory.Push(CurrentView);
+		// See NavigateToFolder: no consecutive duplicates in history.
+		if (!string.Equals(CurrentView, "album_detail", StringComparison.OrdinalIgnoreCase))
+			_viewHistory.Push(CurrentView);
 		CurrentView = "album_detail";
 		IsDrawerOpen = false;
-		LoadAlbumDetail(albumName, artistName);
+		LoadAlbumDetail(albumName, artistName, artSource);
 		OnPropertyChanged("CanNavigateBack");
 	}
 	private void Navigate(string page)
@@ -5647,7 +5676,7 @@ public partial class MainViewModel : ViewModelBase
 			List<MusicTrack> items = await Task.Run(() => (from g in (from t in _db.GetAllTracks()
 					where !string.IsNullOrWhiteSpace(t.Album)
 					select t).GroupBy<MusicTrack, string>((MusicTrack t) => t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
-				select g.OrderBy((MusicTrack t) => t.TrackNumber).First() into t
+				select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
 				orderby t.Album
 				select t).ToList());
 		// Sort BEFORE inserting: replacing the collection twice (insert, then
@@ -5942,6 +5971,22 @@ private async void LoadFolders()
 				where !string.IsNullOrEmpty(t.Album)
 				group t by t.Album into g
 				select g.First()).ToList();
+			// Resolve canonical covers off the UI thread BEFORE publishing: the
+			// card bindings evaluate synchronously at realization and must never
+			// hit the database (a full-table scan per card = dropped frames).
+			await Task.Run(() =>
+			{
+				List<MusicTrack> all = _db.GetAllTracks();
+				AlbumCoverTracks.Clear();
+				foreach (string rawKey in albums.Select(a => a.Album).Distinct(StringComparer.OrdinalIgnoreCase))
+				{
+					string key = (rawKey ?? string.Empty).Trim();
+					if (string.IsNullOrEmpty(key)) continue;
+					MusicTrack? cover = DatabaseService.PickCanonicalTrack(
+						all.Where(t => string.Equals(t.Album?.Trim(), key, StringComparison.OrdinalIgnoreCase)));
+					if (cover != null) AlbumCoverTracks[key] = cover;
+				}
+			});
 			await DispatchAsync(delegate
 			{
 				ArtistDetailActiveTab = "albums";
@@ -5997,12 +6042,57 @@ private async void LoadFolders()
 		GenreDetailTracks.ReplaceAll(tracks);
 	}
 
-	private async void LoadAlbumDetail(string albumName, string artistName)
+	private async void LoadAlbumDetail(string albumName, string artistName, MusicTrack? artSource = null)
 	{
 		string albumName2 = albumName;
 		string artistName2 = artistName;
 		try
 		{
+			// Publish the title synchronously so the detail page shows the right
+			// header on the very first frame of the hero morph — the DB query below
+			// is async and would otherwise let the previous album's title linger.
+			if (!string.Equals(CurrentAlbumName, albumName2, StringComparison.Ordinal))
+			{
+				CurrentAlbumName = albumName2;
+				OnPropertyChanged("CurrentAlbumName");
+			}
+			// Clear the rest of the stale album-detail state synchronously too:
+			// non-hero entries (artist-page / list rows) reveal the page instantly,
+			// and the async DB query lands ~3 frames later — long enough to flash
+			// the PREVIOUS album's artist, cover and tracks (seen when two albums
+			// share a title, e.g. two "Unknown Album"s by different artists).
+			// The clicked card's own track (same album) is published as provisional
+			// art when available; otherwise the art area falls back to the neutral
+			// placeholder — never a wrong cover.
+			bool sameTarget = string.Equals(CurrentAlbumName, albumName2, StringComparison.Ordinal)
+				&& !string.IsNullOrEmpty(artistName2)
+				&& string.Equals(CurrentAlbumArtist, artistName2, StringComparison.Ordinal)
+				&& AlbumDetailTracks.Count > 0;
+			if (!sameTarget)
+			{
+				string artistSync = artistName2 ?? string.Empty;
+				if (!string.Equals(CurrentAlbumArtist, artistSync, StringComparison.Ordinal))
+				{
+					CurrentAlbumArtist = artistSync;
+					OnPropertyChanged("CurrentAlbumArtist");
+				}
+				if (!string.IsNullOrEmpty(CurrentAlbumYear))
+				{
+					CurrentAlbumYear = string.Empty;
+					OnPropertyChanged("CurrentAlbumYear");
+				}
+				if (!ReferenceEquals(CurrentAlbumArtTrack, artSource))
+				{
+					CurrentAlbumArtTrack = artSource;
+					OnPropertyChanged("CurrentAlbumArtTrack");
+				}
+				if (AlbumDetailTracks.Count > 0)
+				{
+					AlbumDetailTracks.ReplaceAll(new List<MusicTrack>());
+					AlbumDetailTrackCount = 0;
+					OnPropertyChanged("AlbumDetailTrackCount");
+				}
+			}
 			(List<MusicTrack>, string) tuple = await Task.Run(() => _db.GetAlbumDetail(albumName2));
 			List<MusicTrack> tracks = tuple.Item1;
 			string artist = tuple.Item2;

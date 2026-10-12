@@ -47,9 +47,26 @@ public partial class MainWindow : Window
     private string _artistTransitionArtistName = string.Empty;
     private bool _isAlbumTransition;
     private MusicTrack? _albumTransitionTrack;
+    // Target album/artist of the in-flight forward hero — the reveal gate waits
+    // until the async album load for THESE values has landed (see IsAlbumDataReady).
+    private string _albumTransitionAlbumName = string.Empty;
+    private string _albumTransitionArtist = string.Empty;
     private bool _isBackTransitioning;
     private bool _heroTransitionPending;
     private bool _artistDetailEnteredViaHero;
+    private bool _albumDetailEnteredViaHero;
+    // Current navigation generation (see NavGate): every view change mints a new
+    // one; fire-and-forget timers capture it and no-op when stale, so a delayed
+    // callback can never corrupt a superseding navigation.
+    private long _navGen;
+    // Stashed artist hero state, saved when an album hero starts FROM the artist
+    // detail page: the album entry overwrites the shared hero slot (name/pos/flags),
+    // which would otherwise "steal" the artist's own reverse animation. Restored
+    // when the album reverse lands back on the artist page (see StartReverseTransition).
+    private (string Name, Point Pos, Size Size, bool IsAlbum, MusicTrack? Track, bool ArtistViaHero, bool AlbumViaHero)? _stashedArtistHero;
+    // Source card temporarily hidden while the reverse hero flies toward it,
+    // so the morphing overlay never doubles with the real card underneath.
+    private FrameworkElement? _hiddenReverseCard;
 
     private Point _queueDragStart;
     private bool _queuePressActive;
@@ -210,6 +227,7 @@ public partial class MainWindow : Window
         }
         if (e.NewValue is MainViewModel newVm)
         {
+            Converters.ArtistImageConverter.SharedViewModel = newVm;
             newVm.PropertyChanged += OnViewModelPropertyChanged;
             newVm.Queue.CollectionChanged += OnQueueCollectionChanged;
             newVm.ScrollToCurrentTrackRequested += OnScrollToCurrentTrackRequested;
@@ -264,6 +282,8 @@ public partial class MainWindow : Window
             string path = vm.BackgroundImagePath;
             if (string.IsNullOrEmpty(path)) return;
 
+            double blurRadius = vm.WallpaperBlur;
+
             BitmapImage source = new();
             source.BeginInit();
             if (path.StartsWith("pack:"))
@@ -274,7 +294,6 @@ public partial class MainWindow : Window
             source.EndInit();
             source.Freeze();
 
-            double blurRadius = vm.WallpaperBlur;
             if (blurRadius < 0.5)
             {
                 BackgroundImage.Source = source;
@@ -797,16 +816,20 @@ public partial class MainWindow : Window
         incoming.RenderTransform = incomingTransform;
         outgoing.RenderTransform = outgoingTransform;
 
-        // Two-phase tab slide: making the incoming page Visible forces a one-time
-        // layout of its whole subtree. Paying that while the slide's first frames
-        // are being composed turns it into a visible start hitch, so the layout is
-        // forced first and the slide begins right after, on clean frames.
+        // Pay the one-time layout synchronously BEFORE the slide starts (mirrors
+        // songs entry): making the incoming page Visible forces a full-subtree
+        // measure, and paying that inside the animation turns it into a visible
+        // start hitch. The first switch pays it here (slightly later first frame);
+        // every later switch is already laid out. Tab data + art are pre-warmed,
+        // so this is just a measure pass.
+        long prepT0 = 0L;
+        if (SmoothScrollHelper.ProfilingEnabled) prepT0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        try { incoming.UpdateLayout(); outgoing.UpdateLayout(); } catch { }
+
+        // Kick the slide on the next render with everything measured.
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Render, () =>
         {
             if (!_isTabSliding) return;
-            long prepT0 = 0L;
-            if (SmoothScrollHelper.ProfilingEnabled) prepT0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            try { incoming.UpdateLayout(); outgoing.UpdateLayout(); } catch { }
             if (SmoothScrollHelper.ProfilingEnabled)
                 LogHelper.LogInfo($"TAB-PREP {newTab} layoutMs={(System.Diagnostics.Stopwatch.GetTimestamp() - prepT0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} relMs={SmoothScrollHelper.TabRelMs():0}");
             var inAnim = new DoubleAnimation(incomingStart, 0, dur) { EasingFunction = ease };
@@ -858,17 +881,48 @@ public partial class MainWindow : Window
     private void AlbumRow_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Border { DataContext: MusicTrack dataContext } border) return;
+        BeginAlbumHeroFromCard(border, dataContext);
+    }
 
+    // Shared forward hero into the album detail page, used by the albums-grid
+    // cards (AlbumRow_Click) and the artist-page album cards (ArtistAlbum_Click).
+    // Captures the card's art box + in-memory image, hides the detail page, and
+    // flies the shared-element overlay to the 280px art target — all
+    // synchronously inside the click so the first rendered frame already morphs.
+    private void BeginAlbumHeroFromCard(Border border, MusicTrack dataContext)
+    {
+        _navGen = NavGate.NewNavigation();
         FrameworkElement? square = null;
         if (border.Child is StackPanel sp && sp.Children.Count > 0)
+        {
+            // Albums-grid cards hold a 150 Grid; artist-page cards hold a
+            // 140x140 art Border with the Image inside.
             square = sp.Children[0] as System.Windows.Controls.Grid;
+            square ??= sp.Children[0] as Border;
+        }
         square ??= border;
+
+        // Stash the artist hero state when detouring from the artist page — the
+        // lines below overwrite the shared slot with album values. A null stash
+        // (album entered from anywhere else) also discards an abandoned detour.
+        if (string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal))
+        {
+            _stashedArtistHero = (_artistTransitionArtistName, _artistTransitionSourcePos,
+                _artistTransitionSourceSize, _isAlbumTransition, _albumTransitionTrack,
+                _artistDetailEnteredViaHero, _albumDetailEnteredViaHero);
+        }
+        else
+        {
+            _stashedArtistHero = null;
+        }
 
         _artistTransitionSourcePos = square.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
         _artistTransitionSourceSize = new Size(square.ActualWidth, square.ActualHeight);
         _artistTransitionArtistName = dataContext.Album;
         _isAlbumTransition = true;
         _albumTransitionTrack = dataContext;
+        _albumTransitionAlbumName = dataContext.Album;
+        _albumTransitionArtist = dataContext.Artist ?? string.Empty;
 
         AlbumArtLoader.SetScrollingActive(false);
 
@@ -877,6 +931,11 @@ public partial class MainWindow : Window
         if (square is Border sqBorder && sqBorder.Background is ImageBrush ib && ib.ImageSource != null)
         {
             imageSource = ib.ImageSource;
+        }
+        else if (square is Border sqArtBorder && sqArtBorder.Child is Image sqArtImage && sqArtImage.Source != null)
+        {
+            // Artist-page 140x140 art box: reuse its in-memory bitmap directly.
+            imageSource = sqArtImage.Source;
         }
         else if (square is System.Windows.Controls.Grid sqGrid)
         {
@@ -923,11 +982,15 @@ public partial class MainWindow : Window
         // Hide album detail page initially
         AlbumDetailView.Opacity = 0;
         _heroTransitionPending = true;
+        _albumDetailEnteredViaHero = true;
 
-        ViewModel?.NavigateToAlbum(dataContext.Album, dataContext.Artist);
+        ViewModel?.NavigateToAlbum(dataContext.Album, dataContext.Artist, dataContext);
 
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        // Synchronous measure + morph start (see ArtistRow_Click): a Loaded-priority
+        // deferral renders one frame with both the old list and the new page hidden.
+        try
         {
+            AlbumDetailView.UpdateLayout();
             var target = AlbumDetailArtBorder ?? FindAlbumDetailArt();
             if (target != null && target.ActualWidth > 0)
             {
@@ -960,7 +1023,32 @@ public partial class MainWindow : Window
 
             LogHelper.LogInfo($"HeroTransition fwd album: src=({_artistTransitionSourcePos.X:F1},{_artistTransitionSourcePos.Y:F1}) target=({_artistTransitionTargetPos.X:F1},{_artistTransitionTargetPos.Y:F1})");
             StartForwardTransition(imageSource);
-        });
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("HeroTransition fwd album failed", ex);
+            _heroTransitionPending = false;
+            _albumDetailEnteredViaHero = false;
+            EnsureDetailPageOpacity();
+            // Restore everything this handler hid before the failure.
+            AlbumDetailView.Opacity = 1;
+            AlbumDetailView.IsHitTestVisible = true;
+            if (AlbumDetailBackRow != null)
+            {
+                AlbumDetailBackRow.Opacity = 1;
+                AlbumDetailBackRow.RenderTransform = null;
+            }
+            if (AlbumDetailInfo != null)
+            {
+                AlbumDetailInfo.Opacity = 1;
+                AlbumDetailInfo.RenderTransform = null;
+            }
+            if (AlbumDetailArtBorder != null)
+            {
+                AlbumDetailArtBorder.Opacity = 1;
+                AlbumDetailArtBorder.IsHitTestVisible = true;
+            }
+        }
     }
 
     private void GenreRow_Click(object sender, MouseButtonEventArgs e)
@@ -1083,6 +1171,7 @@ public partial class MainWindow : Window
     private void ArtistRow_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Border { DataContext: MusicTrack dataContext } border) return;
+        _navGen = NavGate.NewNavigation();
 
         FrameworkElement? circle = null;
         if (border.Child is StackPanel sp && sp.Children.Count > 0)
@@ -1094,6 +1183,7 @@ public partial class MainWindow : Window
         _artistTransitionArtistName = dataContext.Artist;
         _isAlbumTransition = false;
         _albumTransitionTrack = null;
+        _stashedArtistHero = null;
 
         AlbumArtLoader.SetScrollingActive(false);
 
@@ -1130,15 +1220,29 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Background prefetch for 400px image if not cached yet
+        // Background prefetch for 400px image if not cached yet, then upgrade the
+        // flying image in place so the overlay lands sharp instead of upscaled.
         if (!string.IsNullOrEmpty(dataContext.Artist) &&
             !Converters.ArtistImageConverter.HighResCache.ContainsKey(dataContext.Artist))
         {
             var artName = dataContext.Artist;
+            var flightImage = imageSource;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
                 var conv = new Converters.ArtistImageConverter();
                 conv.Convert(artName, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture);
+                if (!Converters.ArtistImageConverter.HighResCache.TryGetValue(artName, out var hiRes)) return;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    // Only swap while OUR image is still in flight.
+                    if (!_isAlbumTransition &&
+                        ArtistTransitionOverlay.Visibility == Visibility.Visible &&
+                        string.Equals(_artistTransitionArtistName, artName, StringComparison.OrdinalIgnoreCase) &&
+                        ReferenceEquals(ArtistTransitionImage.Source, flightImage))
+                    {
+                        ArtistTransitionImage.Source = hiRes;
+                    }
+                }));
             });
         }
 
@@ -1172,8 +1276,14 @@ public partial class MainWindow : Window
 
         ViewModel?.NavigateToArtist(dataContext.Artist);
 
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        // Start the morph SYNCHRONOUSLY inside the click handler. DispatcherPriority.Loaded
+        // sits BELOW Render priority, so a deferred start lets one frame render with the old
+        // list already Collapsed and the detail page still at Opacity=0 — the black void seen
+        // in recordings. UpdateLayout() measures the new page now, so the very first rendered
+        // frame already contains the morphing overlay.
+        try
         {
+            ArtistDetailView.UpdateLayout();
             var target = ArtistDetailCircle ?? FindArtistDetailCircle();
             if (target != null && target.ActualWidth > 0)
             {
@@ -1189,7 +1299,14 @@ public partial class MainWindow : Window
             PrepareDetailMixReveal();
             LogHelper.LogInfo($"HeroTransition fwd: src=({_artistTransitionSourcePos.X:F1},{_artistTransitionSourcePos.Y:F1}) target=({_artistTransitionTargetPos.X:F1},{_artistTransitionTargetPos.Y:F1})");
             StartForwardTransition(imageSource);
-        });
+        }
+        catch (Exception ex)
+        {
+            // Never leave the detail page hidden if the morph fails to start.
+            LogHelper.LogError("HeroTransition fwd failed", ex);
+            _heroTransitionPending = false;
+            EnsureDetailPageOpacity();
+        }
     }
 
     // Hide only the non-circle content of the artist detail page so it can be
@@ -1343,6 +1460,8 @@ public partial class MainWindow : Window
 
     private void ResetArtistTransition()
     {
+        // A previous reverse flight may have left its card hidden (e.g. interrupted).
+        RestoreHiddenReverseCard();
         ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
@@ -1356,6 +1475,15 @@ public partial class MainWindow : Window
             rm.BeginAnimation(TranslateTransform.YProperty, null);
         if (ArtistDetailInfo.RenderTransform is TranslateTransform tm)
             tm.BeginAnimation(TranslateTransform.YProperty, null);
+        // Staged reverse reveal (album -> artist) leaves a base offset/opacity on the
+        // content host — restore it here like EnsureDetailPageOpacity.ResetChild does.
+        ArtistDetailContentHost.BeginAnimation(OpacityProperty, null);
+        ArtistDetailContentHost.Opacity = 1;
+        if (ArtistDetailContentHost.RenderTransform is TranslateTransform rmh)
+        {
+            rmh.BeginAnimation(TranslateTransform.YProperty, null);
+            rmh.Y = 0;
+        }
         ArtistDetailView.BeginAnimation(OpacityProperty, null);
         ArtistDetailView.Opacity = 1;
         if (ArtistDetailView.RenderTransform is TranslateTransform oldTranslate)
@@ -1418,9 +1546,8 @@ public partial class MainWindow : Window
 
     private void StartForwardTransition(ImageSource imageSource)
     {
-        const double morphMs = 260;
-        var duration = TimeSpan.FromMilliseconds(morphMs);
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var duration = MotionTokens.HeroMorph;
+        var ease = MotionTokens.EaseOut;
 
         // Nav already happened; the pending flag is only needed so the CurrentView
         // handler doesn't cancel the detail page's hidden state during the morph.
@@ -1494,17 +1621,47 @@ public partial class MainWindow : Window
 
             morphAnim.Completed += (_, _) =>
             {
-                ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
-                ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
-                ArtistTransitionOverlay.Opacity = 1;
-                AlbumDetailView.IsHitTestVisible = true;
-                var artEl = FindAlbumDetailArt();
-                if (artEl != null)
+                void Reveal()
                 {
-                    artEl.BeginAnimation(OpacityProperty, null);
-                    artEl.Opacity = 1;
-                    artEl.IsHitTestVisible = true;
+                    ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
+                    ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
+                    ArtistTransitionOverlay.Opacity = 1;
+                    AlbumDetailView.IsHitTestVisible = true;
+                    var artEl = FindAlbumDetailArt();
+                    if (artEl != null)
+                    {
+                        artEl.BeginAnimation(OpacityProperty, null);
+                        artEl.Opacity = 1;
+                        artEl.IsHitTestVisible = true;
+                    }
                 }
+                // Reveal gate: hold the flown overlay over the art target until the
+                // async album load for THIS navigation has landed — otherwise the
+                // provisional-art swap and the rows pop show mid-zoom. Capped at
+                // 500ms (genuinely empty albums, or a user who navigated away
+                // mid-morph, must never hold the overlay forever).
+                if (ViewModel?.CurrentView != "album_detail" || IsAlbumDataReady())
+                {
+                    Reveal();
+                    return;
+                }
+                var gate = new System.Windows.Threading.DispatcherTimer { Interval = MotionTokens.RevealGatePoll };
+                var deadline = DateTime.UtcNow + MotionTokens.RevealGateCap;
+                long gateGen = _navGen;
+                gate.Tick += (_, _) =>
+                {
+                    if (!NavGate.IsCurrent(gateGen))
+                    {
+                        gate.Stop();
+                        return;
+                    }
+                    if (ViewModel?.CurrentView != "album_detail" || IsAlbumDataReady() || DateTime.UtcNow >= deadline)
+                    {
+                        gate.Stop();
+                        Reveal();
+                    }
+                };
+                gate.Start();
             };
         }
         else
@@ -1527,9 +1684,18 @@ public partial class MainWindow : Window
         ArtistTransitionTranslate.BeginAnimation(TranslateTransform.YProperty, morphAnim);
     }
 
+    // True once the async album load for the in-flight forward hero has landed
+    // (track list + final art published for the target album/artist). The track
+    // count is the real signal — names are published synchronously up front.
+    private bool IsAlbumDataReady() => ViewModel is { } vm
+        && string.Equals(vm.CurrentAlbumName, _albumTransitionAlbumName, StringComparison.Ordinal)
+        && string.Equals(vm.CurrentAlbumArtist, _albumTransitionArtist, StringComparison.Ordinal)
+        && vm.AlbumDetailTracks.Count > 0;
+
     private void ArtistDetailBack_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel is not { } vm) return;
+        _navGen = NavGate.NewNavigation();
 
         LogHelper.LogInfo($"HeroTransition back: artist='{_artistTransitionArtistName}' srcW={_artistTransitionSourceSize.Width} " +
             $"enteredViaHero={_artistDetailEnteredViaHero} ArtistDetailView.Opacity={ArtistDetailView.Opacity} Vis={ArtistDetailView.Visibility} view='{ViewModel?.CurrentView}'");
@@ -1567,11 +1733,45 @@ public partial class MainWindow : Window
         StartReverseTransition(imageSource);
     }
 
+    // Reverse-flight image for album transitions: must be the SAME canonical
+    // cover the forward flight carried and the page is showing — flying the
+    // clicked track's own art instead visibly swaps covers at landing for
+    // multi-art pseudo-albums ("Unknown Album").
+    // 1) the on-screen detail art visual (pixel-exact, zero lag),
+    // 2) the canonical cover track at full quality,
+    // 3) the clicked track (pre-canonical fallback),
+    // 4) the neutral placeholder.
+    private ImageSource? ResolveReverseAlbumImage()
+    {
+        var artEl = AlbumDetailArtBorder ?? FindAlbumDetailArt();
+        if (artEl is Border artBorder && artBorder.Background is ImageBrush artBrush && artBrush.ImageSource != null)
+            return artBrush.ImageSource;
+        var loader = AlbumArtLoader.Instance;
+        if (loader != null && ViewModel != null &&
+            ViewModel.AlbumCoverTracks.TryGetValue((_artistTransitionArtistName ?? string.Empty).Trim(), out var cover) && cover != null)
+        {
+            var full = loader.LoadFullAlbumArt(cover);
+            if (full != null) return full;
+        }
+        var converter = new Converters.AlbumArtConverter();
+        if (_albumTransitionTrack != null)
+        {
+            var fromTrack = converter.Convert(_albumTransitionTrack, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource;
+            if (fromTrack != null) return fromTrack;
+        }
+        return (_albumTransitionTrack != null ? loader?.LoadFullAlbumArt(_albumTransitionTrack) : null)
+            ?? loader?.GetDefaultAlbumArt();
+    }
+
     private void AlbumDetailBack_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel is not { } vm) return;
+        _navGen = NavGate.NewNavigation();
 
-        if (string.IsNullOrEmpty(_artistTransitionArtistName) || _artistTransitionSourceSize.Width <= 0)
+        // Without a genuine hero ENTRY the stored source state is stale (e.g. a
+        // list-entered album after an earlier hero transition) — fall back to a
+        // plain GoBack with the standard page zoom instead of flying to a wrong card.
+        if (!_albumDetailEnteredViaHero || string.IsNullOrEmpty(_artistTransitionArtistName) || _artistTransitionSourceSize.Width <= 0)
         {
             vm.GoBackCommand.Execute(null);
             return;
@@ -1579,13 +1779,7 @@ public partial class MainWindow : Window
 
         AlbumArtLoader.SetScrollingActive(false);
 
-        ImageSource? imageSource = null;
-        var converter = new Converters.AlbumArtConverter();
-        if (_albumTransitionTrack != null)
-            imageSource = converter.Convert(_albumTransitionTrack, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource;
-
-        imageSource ??= (_albumTransitionTrack != null ? AlbumArtLoader.Instance?.LoadFullAlbumArt(_albumTransitionTrack) : null)
-            ?? AlbumArtLoader.Instance?.GetDefaultAlbumArt();
+        ImageSource? imageSource = ResolveReverseAlbumImage();
 
         if (imageSource == null)
         {
@@ -1607,6 +1801,48 @@ public partial class MainWindow : Window
         StartReverseTransition(imageSource);
     }
 
+    // Hides the artist landing-page pieces with small offsets, then cascades them
+    // back during the cover flight (BackRow/Info lead, content block follows, the
+    // landing card closes as the overlay melts). Mirrors the forward mix-reveal
+    // language (BackRow -10 / Info +16). The avatar circle stays put as the anchor.
+    // Runs synchronously inside the back click, so the first presented frame is
+    // already staged. Cleanup: EnsureDetailPageOpacity.ResetChild zeroes bases on
+    // the next arrival; ResetArtistTransition restores them at the next start.
+    private void PrepareArtistReverseReveal()
+    {
+        var ease = MotionTokens.EaseOut;
+        void StageIn(FrameworkElement? fe, double offsetY, TimeSpan begin, TimeSpan dur)
+        {
+            if (fe == null) return;
+            fe.BeginAnimation(OpacityProperty, null);
+            fe.Opacity = 0;
+            TranslateTransform? tr = fe.RenderTransform as TranslateTransform;
+            if (tr == null)
+            {
+                tr = new TranslateTransform();
+                fe.RenderTransform = tr;
+            }
+            else
+                tr.BeginAnimation(TranslateTransform.YProperty, null);
+            tr.Y = offsetY;
+            var fade = new DoubleAnimation(1.0, dur)
+            {
+                BeginTime = begin,
+                EasingFunction = ease
+            };
+            fe.BeginAnimation(OpacityProperty, fade);
+            var rise = new DoubleAnimation(0.0, dur)
+            {
+                BeginTime = begin,
+                EasingFunction = ease
+            };
+            tr.BeginAnimation(TranslateTransform.YProperty, rise);
+        }
+        StageIn(ArtistDetailBackRow, -10, MotionTokens.ReverseRevealLead, MotionTokens.ReverseRevealLeadDuration);
+        StageIn(ArtistDetailInfo, 16, MotionTokens.ReverseRevealLead, MotionTokens.ReverseRevealLeadDuration);
+        StageIn(ArtistDetailContentHost, 24, MotionTokens.ReverseRevealFollow, MotionTokens.ReverseRevealFollowDuration);
+    }
+
     private void StartReverseTransition(ImageSource imageSource)
     {
         // Block all input (clicks + Escape) until the back animation finishes.
@@ -1615,19 +1851,20 @@ public partial class MainWindow : Window
             TransitionInputBlocker.Visibility = Visibility.Visible;
 
         // Safety net: never leave input blocked if the animation is cancelled for any reason.
-        var unblockTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+        long unblockGen = _navGen;
+        var unblockTimer = new System.Windows.Threading.DispatcherTimer { Interval = MotionTokens.BackUnblockTimeout };
         unblockTimer.Tick += (_, _) =>
         {
             unblockTimer.Stop();
+            if (!NavGate.IsCurrent(unblockGen)) return;
             _isBackTransitioning = false;
             if (TransitionInputBlocker != null)
                 TransitionInputBlocker.Visibility = Visibility.Collapsed;
         };
         unblockTimer.Start();
 
-        const double morphMs = 260;
-        var duration = TimeSpan.FromMilliseconds(morphMs);
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var duration = MotionTokens.HeroMorph;
+        var ease = MotionTokens.EaseOut;
 
         // Save album transition state before ResetArtistTransition clears animations
         bool wasAlbumTransition = _isAlbumTransition;
@@ -1686,6 +1923,16 @@ public partial class MainWindow : Window
         // Navigate back immediately so the underlying list is active and visible
         ViewModel?.GoBackCommand.Execute(null);
 
+        // Re-measure the source card at its CURRENT position (the list may have been
+        // re-laid out or re-virtualized while the detail page was open) and hide it
+        // for the flight so the morphing overlay never doubles with the real card.
+        ReMeasureReverseSource();
+
+        // Staged reverse reveal (album -> artist only): the landing page takes part
+        // in the transition instead of sitting fully visible behind the flight.
+        if (_isAlbumTransition && string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal))
+            PrepareArtistReverseReveal();
+
         // Morph overlay from detail element back to grid position
         double scale = Math.Clamp(_artistTransitionSourceSize.Width / targetSize, 0.1, 1.5);
         var sourceCenter = new Point(
@@ -1701,16 +1948,35 @@ public partial class MainWindow : Window
 
         // Gentle fade-out of overlay in final 70ms so it melts into the card seamlessly
         var fadeEase = new QuadraticEase { EasingMode = EasingMode.EaseIn };
-        var overlayFade = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(70))
+        var overlayFade = new DoubleAnimation(0.0, MotionTokens.OverlayMeltDuration)
         {
-            BeginTime = TimeSpan.FromMilliseconds(190),
+            BeginTime = MotionTokens.OverlayMeltBegin,
             EasingFunction = fadeEase
         };
         ArtistTransitionOverlay.BeginAnimation(OpacityProperty, overlayFade);
 
+        // Reveal the hidden source card the moment the overlay starts fading, so the
+        // card is already back underneath the fading pixels — no gap, no double image.
+        if (_hiddenReverseCard != null)
+        {
+            long revealGen = _navGen;
+            var revealTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = MotionTokens.CardRevealDelay
+            };
+            revealTimer.Tick += (_, _) =>
+            {
+                revealTimer.Stop();
+                if (!NavGate.IsCurrent(revealGen)) return;
+                RestoreHiddenReverseCard();
+            };
+            revealTimer.Start();
+        }
+
         var morphAnim = new DoubleAnimation(sourceCenter.Y - targetCenter.Y, duration) { EasingFunction = ease };
         morphAnim.Completed += (_, _) =>
         {
+            RestoreHiddenReverseCard();
             ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
             ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
             ArtistTransitionOverlay.Opacity = 1;
@@ -1719,20 +1985,163 @@ public partial class MainWindow : Window
             _isBackTransitioning = false;
             if (TransitionInputBlocker != null)
                 TransitionInputBlocker.Visibility = Visibility.Collapsed;
+            // Safety net: if the view never actually changed (silent no-op GoBack
+            // on a duplicate history top), the detail page hidden for the flight
+            // would stay invisible forever — restore it so a ghost empty page is
+            // impossible. Harmless otherwise (already visible pages ignore it).
+            if (string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal))
+            {
+                ArtistDetailView.BeginAnimation(OpacityProperty, null);
+                ArtistDetailView.Opacity = 1;
+            }
         };
         ArtistTransitionTranslate.BeginAnimation(TranslateTransform.YProperty, morphAnim);
+
+        // If this reverse returns from an album detour to the artist page, the album
+        // entry overwrote the shared hero slot — restore the stashed artist state now
+        // that ReMeasureReverseSource (which needs the album state) has run, so the
+        // NEXT back (artist -> grid) still has its own reverse animation.
+        if (_isAlbumTransition && _stashedArtistHero != null &&
+            string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal))
+        {
+            var s = _stashedArtistHero.Value;
+            _artistTransitionArtistName = s.Name;
+            _artistTransitionSourcePos = s.Pos;
+            _artistTransitionSourceSize = s.Size;
+            // Not s.IsAlbum: we are restoring an ARTIST context by construction
+            // (stashed on the artist page). A stale true would wrongly steer the
+            // artist reverse down the album branch for up to 260ms.
+            _isAlbumTransition = false;
+            _albumTransitionTrack = s.Track;
+            _artistDetailEnteredViaHero = s.ArtistViaHero;
+            _albumDetailEnteredViaHero = s.AlbumViaHero;
+            _stashedArtistHero = null;
+        }
+    }
+
+    // Called right after GoBack in the reverse transition: locates the card that
+    // started the hero in the now-visible list, re-measures it at its CURRENT
+    // position (scroll/virtualization may have moved it) and hides it so the
+    // overlay flies over an empty slot instead of doubling with the real card.
+    private void ReMeasureReverseSource()
+    {
+        RestoreHiddenReverseCard();
+
+        string name = _artistTransitionArtistName;
+        if (string.IsNullOrEmpty(name)) return;
+
+        try { ContentGrid.UpdateLayout(); } catch { }
+
+        FrameworkElement? card = null;
+        FrameworkElement? circle = null;
+        foreach (UIElement child in ContentGrid.Children)
+        {
+            var hit = FindHeroSourceCard(child, name, _isAlbumTransition);
+            if (hit != null)
+            {
+                card = hit.Value.Card;
+                circle = hit.Value.Circle;
+                break;
+            }
+        }
+
+        if (card == null || circle == null || !circle.IsVisible || circle.ActualWidth <= 0)
+            return; // Card not realized (scrolled out) — keep the stored position.
+
+        try
+        {
+            _artistTransitionSourcePos = circle.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
+            _artistTransitionSourceSize = new Size(circle.ActualWidth, circle.ActualHeight);
+        }
+        catch
+        {
+            return; // Disconnected visual — keep the stored position.
+        }
+
+        _hiddenReverseCard = card;
+        card.Opacity = 0;
+    }
+
+    private (FrameworkElement Card, FrameworkElement Circle)? FindHeroSourceCard(
+        DependencyObject root, string name, bool album)
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is Border { DataContext: MusicTrack t, IsVisible: true } b &&
+                b.Child is StackPanel sp && sp.Children.Count > 0 &&
+                sp.Children[0] is FrameworkElement sq &&
+                Math.Abs(sq.Width - 150) < 0.5 && sq.ActualWidth > 0)
+            {
+                bool match = album
+                    ? string.Equals(t.Album, name, StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(t.Artist, name, StringComparison.OrdinalIgnoreCase);
+                if (!match) goto nextChild;
+
+                // Artist cards clip their square with an ellipse; album cards do not.
+                // Album and genre cards are structurally identical (Grid 150 +
+                // ClipToBounds), but only album cards hold the artwork Image — the
+                // discriminator that keeps a genre card from stealing the match.
+                if (album)
+                {
+                    if (sq.Clip is EllipseGeometry) goto nextChild;
+                    bool hasArtImage = false;
+                    if (sq is System.Windows.Controls.Grid g)
+                    {
+                        foreach (var gc in g.Children)
+                            if (gc is Image) { hasArtImage = true; break; }
+                    }
+                    if (!hasArtImage) goto nextChild;
+                }
+                else if (sq.Clip is not EllipseGeometry)
+                {
+                    goto nextChild;
+                }
+
+                return (b, sq);
+            }
+            if (album && child is Border { DataContext: MusicTrack t2, IsVisible: true } b2 &&
+                b2.Child is StackPanel sp2 && sp2.Children.Count > 0 &&
+                sp2.Children[0] is Border artBox &&
+                Math.Abs(artBox.Width - 140) < 0.5 && artBox.ActualWidth > 0 &&
+                artBox.Child is Image &&
+                string.Equals(t2.Album, name, StringComparison.OrdinalIgnoreCase))
+            {
+                // Artist-page album card (140x140 art box holding the Image) — the
+                // reverse morph re-measures here so it lands back on the same card.
+                return (b2, artBox);
+            }
+        nextChild:
+            var hit = FindHeroSourceCard(child, name, album);
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    private void RestoreHiddenReverseCard()
+    {
+        if (_hiddenReverseCard == null) return;
+        var card = _hiddenReverseCard;
+        _hiddenReverseCard = null;
+        card.BeginAnimation(OpacityProperty, null);
+        card.Opacity = 1;
     }
 
     private void ArtistAlbum_Click(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: MusicTrack dataContext })
-            ViewModel?.NavigateToAlbum(dataContext.Album, dataContext.Artist);
+        // Same shared-element hero as the albums-grid cards; falls back to a
+        // plain navigation if the template ever stops being a card Border.
+        if (sender is Border { DataContext: MusicTrack dataContext } border)
+            BeginAlbumHeroFromCard(border, dataContext);
+        else if (sender is FrameworkElement { DataContext: MusicTrack track })
+            ViewModel?.NavigateToAlbum(track.Album, track.Artist, track);
     }
 
     private void AlbumListRow_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: MusicTrack dataContext })
-            ViewModel?.NavigateToAlbum(dataContext.Album, dataContext.Artist);
+            ViewModel?.NavigateToAlbum(dataContext.Album, dataContext.Artist, dataContext);
     }
 
     private void AlbumDetailTrack_Click(object sender, MouseButtonEventArgs e)
@@ -3955,7 +4364,7 @@ public partial class MainWindow : Window
         if (t == null) return;
         var album = t.Album;
         var artist = t.Artist;
-        _pendingNavAction = () => ViewModel?.NavigateToAlbum(album, artist);
+        _pendingNavAction = () => ViewModel?.NavigateToAlbum(album, artist, t);
         ViewModel!.ShowFullPlayer = false;
     }
 
@@ -3978,7 +4387,7 @@ public partial class MainWindow : Window
         var album = t.Album;
         var artist = t.Artist;
         ViewModel!.ShowTrackBottomSheet = false;
-        Dispatcher.BeginInvoke(() => ViewModel?.NavigateToAlbum(album, artist));
+        Dispatcher.BeginInvoke(() => ViewModel?.NavigateToAlbum(album, artist, t));
     }
 
     private void BottomSheetPlayNext_Click(object sender, RoutedEventArgs e)
@@ -4281,29 +4690,19 @@ public partial class MainWindow : Window
             // Clear hero flag when leaving artist detail so re-entry via
             // non-hero paths (e.g. Full Player -> Artist) won't trigger
             // the reverse hero animation on back.
+            _navGen = NavGate.NewNavigation();
             var cv = ViewModel?.CurrentView;
             if (cv != "artist_detail") _artistDetailEnteredViaHero = false;
+            if (cv != "album_detail") _albumDetailEnteredViaHero = false;
 
             EnsureDetailPageOpacity();
             var enteredView = ViewModel?.CurrentView;
-            if (enteredView == "songs" && !_heroTransitionPending)
+            if (!_heroTransitionPending && !_isBackTransitioning)
             {
-                // Two-phase songs entry — mirrors SwitchTab: the songs list pays
-                // its one-time container-generation + full-subtree layout BEFORE
-                // the zoom starts, so the zoom runs on clean frames. Starting the
-                // zoom first makes the first layout, first raster and pending
-                // bindings all land inside the 300ms animation (frozen start +
-                // hitches) — the documented stutter cause in SwitchTab.
-                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Render, new Action(() =>
-                {
-                    if (ViewModel?.CurrentView != enteredView) return;
-                    try { TabContent_Songs.UpdateLayout(); } catch { }
-                    AnimatePageZoom();
-                }));
-            }
-            else
-            {
-                AnimatePageZoom();
+                if (enteredView == "songs")
+                    RunSongsEntryChoreography();
+                else
+                    RunPageZoomChoreography();
             }
             if (!_heroTransitionPending)
             {
@@ -4677,15 +5076,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private ScaleTransform EnsureZoomTransform()
-    {
-        if (ContentGrid.RenderTransform is ScaleTransform st) return st;
-        st = new ScaleTransform(1, 1);
-        ContentGrid.RenderTransform = st;
-        ContentGrid.RenderTransformOrigin = new Point(0.5, 0.5);
-        return st;
-    }
-
     private void DumpNavState(string tag)
     {
         try
@@ -4720,11 +5110,17 @@ public partial class MainWindow : Window
             fe.BeginAnimation(OpacityProperty, null);
             fe.Opacity = 1;
             if (fe.RenderTransform is TranslateTransform tr)
+            {
                 tr.BeginAnimation(TranslateTransform.YProperty, null);
+                // PrepareDetailMixReveal also sets a BASE offset (-12/22); clearing
+                // only the animation would leave the row permanently shifted.
+                tr.Y = 0;
+            }
         }
         ResetChild(ArtistDetailBackRow);
         ResetChild(ArtistDetailInfo);
         ResetChild(ArtistDetailCircle);
+        ResetChild(ArtistDetailContentHost);
 
         foreach (var child in ContentGrid.Children)
         {
@@ -4744,16 +5140,65 @@ public partial class MainWindow : Window
     }
 
 
-    private void AnimatePageZoom()
+    // Page zoom-out for plain view changes (both directions: home -> ALL SONGS
+    // and ALL SONGS -> home). The page starts slightly zoomed-in (1.05) and dim,
+    // and settles to 1.0 / full opacity — a clean "camera pulls out" feel.
+    //
+    // Two rules make this look right (the old implementation violated both and
+    // read as a "grows then shrinks" bounce):
+    //  1. Callers must invoke this SYNCHRONOUSLY with the CurrentView change,
+    //     so the FIRST presented frame is already at 1.05/dim. Deferring one
+    //     frame lets the swap render at full size first — that jump is the bounce.
+    //  2. ClipToBounds while scaled, so the oversized page never bleeds over
+    //     the fixed header bar above ContentGrid.
+    // Arrival-side navigation choreographies. Hero/reverse flights own their own
+    // reveal and skip this entirely (see the guards at the call site).
+    private void RunSongsEntryChoreography()
+    {
+        // First-time songs entry: pay the visible page's one-time container
+        // generation + full-subtree layout SYNCHRONOUSLY BEFORE starting
+        // the zoom-out. Deferring it (or letting it land inside the
+        // animation) makes the UI thread stall mid-animation — the first
+        // entry played at a visibly reduced frame count. The click → first
+        // frame is a little later on the very first entry only; every
+        // later entry is already laid out and starts instantly.
+        // ContentGrid (not TabContent_Songs) so whichever tab was last
+        // active (tracks list / artists grid / ...) gets pre-laid-out too.
+        try { ContentGrid.UpdateLayout(); } catch { }
+        AnimatePageEnter();
+    }
+
+    private void RunPageZoomChoreography() => AnimatePageEnter();
+
+    private void AnimatePageEnter()
     {
         if (ContentGrid == null) return;
         var st = EnsureZoomTransform();
-        var dur = TimeSpan.FromMilliseconds(300);
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var dur = MotionTokens.PageEnter;
+        var ease = MotionTokens.EaseOut;
 
-        st.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.03, 1, dur) { EasingFunction = ease });
-        st.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.03, 1, dur) { EasingFunction = ease });
-        ContentGrid.BeginAnimation(OpacityProperty, new DoubleAnimation(0.6, 1, dur) { EasingFunction = ease });
+        ContentGrid.ClipToBounds = true;
+        st.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.05, 1, dur) { EasingFunction = ease });
+        st.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.05, 1, dur) { EasingFunction = ease });
+        var fade = new DoubleAnimation(0.55, 1, dur) { EasingFunction = ease };
+        long gen = _navGen;
+        fade.Completed += (_, _) =>
+        {
+            if (!NavGate.IsCurrent(gen)) return;
+            // Only the latest navigation's completion clears the clip; a replaced
+            // animation's Completed never fires, so this can't unclip mid-flight.
+            ContentGrid.ClipToBounds = false;
+        };
+        ContentGrid.BeginAnimation(OpacityProperty, fade);
+    }
+
+    private ScaleTransform EnsureZoomTransform()
+    {
+        if (ContentGrid.RenderTransform is ScaleTransform st) return st;
+        st = new ScaleTransform(1, 1);
+        ContentGrid.RenderTransform = st;
+        ContentGrid.RenderTransformOrigin = new Point(0.5, 0.5);
+        return st;
     }
 
     private void AnimateCloseZoom()

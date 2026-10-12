@@ -504,6 +504,21 @@ public class DatabaseService
             .FirstOrDefault()?.Key ?? "Unknown Artist";
     }
 
+    // Canonical album-cover rule — THE single definition of "which track's art
+    // represents an album" used by every surface (artist cards, albums cards,
+    // album detail, hero overlays). Lowest track number wins; Title then FilePath
+    // break ties deterministically — untagged files all share TrackNumber 0, so
+    // TrackNumber alone would leave the pick to raw scan order (covers flipping
+    // after rescans). Null-guards: tags are often missing at runtime.
+    public static MusicTrack? PickCanonicalTrack(IEnumerable<MusicTrack> tracks)
+    {
+        return tracks
+            .OrderBy(t => t.TrackNumber)
+            .ThenBy(t => t.Title ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(t => t.FilePath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
     public (List<MusicTrack> Tracks, string Artist) GetAlbumDetail(string album)
     {
         var key = album.Trim();
@@ -511,6 +526,8 @@ public class DatabaseService
         var tracks = all
             .Where(t => !t.IsHidden && string.Equals(t.Album?.Trim(), key, StringComparison.OrdinalIgnoreCase))
             .OrderBy(t => t.TrackNumber)
+            .ThenBy(t => t.Title ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(t => t.FilePath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var artist = tracks
             .Where(t => !string.IsNullOrWhiteSpace(t.Artist))
