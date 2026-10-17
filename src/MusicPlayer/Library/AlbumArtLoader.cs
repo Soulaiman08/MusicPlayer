@@ -20,7 +20,6 @@ public class AlbumArtLoader
     private readonly ConcurrentDictionary<string, ImageSource?> _mediumCache = new(); // mini-player quality
     private readonly ConcurrentDictionary<string, ImageSource?> _fullQualityCache = new();
     private readonly ConcurrentDictionary<string, byte> _pendingParses = new();
-    private readonly ConcurrentDictionary<string, byte> _pendingMediumParses = new();
     private readonly ConcurrentQueue<string> _preloadQueue = new();
     private ImageSource? _defaultArt;
     private volatile bool _preloading;
@@ -247,9 +246,24 @@ public class AlbumArtLoader
         }
         catch { }
 
-        // 2. If disk cache miss: return default immediately and decode in background.
-        //    TagLib.File.Create must NOT run on UI thread.
-        EnqueueMediumArtAsync(path, track);
+        // 2. If disk cache miss or not yet created, decode from track at medium size
+        var mediumArt = DecodeMediumValidPicture(track);
+        if (mediumArt != null)
+        {
+            _mediumCache[path] = mediumArt;
+            TrimCache();
+            return mediumArt;
+        }
+
+        // 3. Fallback: thumbnail cache or default
+        var normalArt = LoadAlbumArt(track);
+        if (normalArt != null && normalArt != _defaultArt)
+        {
+            _mediumCache[path] = normalArt;
+            TrimCache();
+            return normalArt;
+        }
+
         return GetDefaultAlbumArt();
     }
 
@@ -285,10 +299,18 @@ public class AlbumArtLoader
         }
         catch { }
 
-        // Disk cache miss: enqueue background decode and return default immediately.
+        // Fallback: decode directly from file
         var dummy = new MusicTrack { FilePath = filePath };
-        EnqueueMediumArtAsync(filePath, dummy);
-        return GetDefaultAlbumArt();
+        var mediumArt = DecodeMediumValidPicture(dummy);
+        if (mediumArt != null)
+        {
+            _mediumCache[filePath] = mediumArt;
+            TrimCache();
+            return mediumArt;
+        }
+
+        // Fallback: use the list thumbnail (still better than nothing)
+        return LoadAlbumArt(filePath);
     }
 
     public ImageSource? LoadFullAlbumArt(string? filePath)
@@ -360,92 +382,6 @@ public class AlbumArtLoader
                 _pendingParses.TryRemove(path, out _);
             }
         });
-    }
-
-    // Background medium-art decode: TagLib + WIC happen entirely on a pool thread.
-    // On completion the in-memory cache is updated and a Dispatcher refresh is
-    // triggered so bindings pick up the new image. At most one task per path.
-    private void EnqueueMediumArtAsync(string path, MusicTrack track)
-    {
-        if (_pendingMediumParses.ContainsKey(path)) return;
-        _pendingMediumParses[path] = 0;
-
-        Task.Run(async () =>
-        {
-            try
-            {
-                await _decodeGate.WaitAsync();
-                try
-                {
-                    // Re-check: may have been filled while queued.
-                    if (_mediumCache.TryGetValue(path, out var done) && done != null) return;
-
-                    // Try disk cache first (fast IO path)
-                    try
-                    {
-                        var hash = GetMd5Hash(path);
-                        var cachedJpg = System.IO.Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-                        var cachedPng = System.IO.Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-                        var metaPath  = System.IO.Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.meta");
-                        var existingPath = File.Exists(cachedJpg) ? cachedJpg : (File.Exists(cachedPng) ? cachedPng : null);
-                        if (existingPath != null && !InvalidateStaleCache(path, existingPath, metaPath))
-                        {
-                            var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
-                            if (img != null)
-                            {
-                                _mediumCache[path] = img;
-                                TrimCache();
-                                NotifyMediumArtReady();
-                                return;
-                            }
-                        }
-                    }
-                    catch { }
-
-                    // Heavy path: TagLib decode
-                    var medArt = DecodeMediumValidPicture(track);
-                    if (medArt != null)
-                    {
-                        _mediumCache[path] = medArt;
-                        TrimCache();
-                        NotifyMediumArtReady();
-                        return;
-                    }
-
-                    // Fallback: thumbnail
-                    var normalArt = LoadAlbumArt(track);
-                    if (normalArt != null && normalArt != _defaultArt)
-                    {
-                        _mediumCache[path] = normalArt;
-                        TrimCache();
-                        NotifyMediumArtReady();
-                    }
-                }
-                finally { _decodeGate.Release(); }
-            }
-            catch { }
-            finally { _pendingMediumParses.TryRemove(path, out _); }
-        });
-    }
-
-    // Trigger a lightweight binding refresh so the album-card Images pick up
-    // the newly cached medium art without any explicit PropertyChanged event.
-    // We invalidate all MediaItems bindings by posting a low-priority dummy
-    // action that forces a Converter re-evaluation on visible items.
-    private static void NotifyMediumArtReady()
-    {
-        System.Windows.Application.Current?.Dispatcher?.BeginInvoke(
-            System.Windows.Threading.DispatcherPriority.Background,
-            static () =>
-            {
-                // Force converter re-evaluation on all realized album/artist card Images
-                // by invalidating the AlbumArtConverter's binding path.
-                // The simplest safe approach: trigger a dummy property change on all
-                // existing AlbumArtConverter bindings by posting a style refresh.
-                // In practice WPF will re-evaluate IsAsync=True bindings automatically
-                // when the memory cache is updated. No explicit action needed beyond
-                // ensuring we're on the UI thread to unblock the converter check.
-            });
     }
 
     private ImageSource? DecodeFirstValidPicture(MusicTrack track)
