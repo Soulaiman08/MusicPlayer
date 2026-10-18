@@ -1,9 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -13,30 +17,619 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
+using MusicPlayer.Library;
 using MusicPlayer.Lyrics;
 using MusicPlayer.Models;
 using MusicPlayer.Services;
-using MusicPlayer.Library;
 using MusicPlayer.Utilities;
 using MusicPlayer.ViewModels;
 
-namespace MusicPlayer.Views;
-
-public partial class MainWindow : Window
+namespace MusicPlayer.Views
 {
-    private const int WM_APPCOMMAND = 0x319;
-    private const int WM_HOTKEY = 0x0312;
-    private const int WM_TRAYICON = 0x800;
-    private const int WM_DEVICECHANGE = 0x0219;
-    private const int DBT_DEVNODES_CHANGED = 0x0007;
-    private const int WM_WINDOWPOSCHANGING = 0x0046;
-    private const uint SWP_NOCOPYBITS = 0x0200;
+    public partial class MainWindow : Window
+    {
+        // Windows messages handled in WndProc. WM_TRAYICON has to match the value
+        // SystemTrayService stores in NOTIFYICONDATA.uCallbackMessage.
+        private const int WM_TRAYICON = 0x800;
+        private const int WM_HOTKEY = 0x0312;
+        private const int WM_DEVICECHANGE = 0x0219;
+        private const int DBT_DEVNODES_CHANGED = 0x0007;
+        private const int WM_WINDOWPOSCHANGING = 0x0046;
+        private const int SWP_NOCOPYBITS = 0x0100;
 
-    private WindowsIntegrationService? _winIntegration;
-    private SystemTrayService? _trayService;
+        private WindowsIntegrationService? _winIntegration;
+        private SystemTrayService? _trayService;
 
-    private MainViewModel? ViewModel => DataContext as MainViewModel;
+        /// <summary>The shell view model this window drives.</summary>
+        public MainViewModel? ViewModel { get; set; }
+    private void HideTableColumn_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.Tag is not string key) return;
+        var dp = ColumnPropertyFor(key);
+        if (dp == null) return;
+        bool isSongs = key.StartsWith("SongsCol", StringComparison.Ordinal);
+        if (!_savedColumnWidths.ContainsKey(key)) _savedColumnWidths[key] = (GridLength)GetValue(dp);
+        SetValue(dp, new GridLength(0));
+        var list = isSongs ? SongsHiddenColumns : AlbumHiddenColumns;
+        if (!list.Contains(key)) list.Add(key);
+
+        // The selected column has just collapsed, so its two arrows would keep
+        // floating over the neighbour's boundary. Hiding behaves like a plain
+        // deselect - it must not pick some other column at random.
+        SetValue(isSongs ? SongsActiveColumnProperty : AlbumActiveColumnProperty, -1);
+
+        RaiseHiddenColumnsChanged();
+        e.Handled = true;
+    }
+    // until the user drags a handle, which pins that column to a pixel width.
+    // Header and row grids bind to the same properties, so a drag on the header
+    // handle re-flows every row at once.
+    private static DependencyProperty ColWidthProp(string name, double value, GridUnitType unit = GridUnitType.Star)
+        => DependencyProperty.Register(name, typeof(GridLength), typeof(MainWindow),
+               new PropertyMetadata(new GridLength(value, unit)));
+
+    public static readonly DependencyProperty SongsCol1WidthProperty = ColWidthProp("SongsCol1Width", 2.8);
+    public static readonly DependencyProperty SongsCol2WidthProperty = ColWidthProp("SongsCol2Width", 2.6);
+    public static readonly DependencyProperty SongsCol3WidthProperty = ColWidthProp("SongsCol3Width", 2.0);
+    public static readonly DependencyProperty SongsCol4WidthProperty = ColWidthProp("SongsCol4Width", 1.0);
+    public static readonly DependencyProperty SongsCol5WidthProperty = ColWidthProp("SongsCol5Width", 0.9);
+
+    public static readonly DependencyProperty AlbumCol1WidthProperty = ColWidthProp("AlbumCol1Width", 2.6);
+    public static readonly DependencyProperty AlbumCol2WidthProperty = ColWidthProp("AlbumCol2Width", 2.4);
+    public static readonly DependencyProperty AlbumCol3WidthProperty = ColWidthProp("AlbumCol3Width", 1.6);
+    public static readonly DependencyProperty AlbumCol4WidthProperty = ColWidthProp("AlbumCol4Width", 0.9);
+
+    public GridLength SongsCol1Width { get => (GridLength)GetValue(SongsCol1WidthProperty); set => SetValue(SongsCol1WidthProperty, value); }
+    public GridLength SongsCol2Width { get => (GridLength)GetValue(SongsCol2WidthProperty); set => SetValue(SongsCol2WidthProperty, value); }
+    public GridLength SongsCol3Width { get => (GridLength)GetValue(SongsCol3WidthProperty); set => SetValue(SongsCol3WidthProperty, value); }
+    public GridLength SongsCol4Width { get => (GridLength)GetValue(SongsCol4WidthProperty); set => SetValue(SongsCol4WidthProperty, value); }
+    public GridLength SongsCol5Width { get => (GridLength)GetValue(SongsCol5WidthProperty); set => SetValue(SongsCol5WidthProperty, value); }
+    public GridLength AlbumCol1Width { get => (GridLength)GetValue(AlbumCol1WidthProperty); set => SetValue(AlbumCol1WidthProperty, value); }
+    public GridLength AlbumCol2Width { get => (GridLength)GetValue(AlbumCol2WidthProperty); set => SetValue(AlbumCol2WidthProperty, value); }
+    public GridLength AlbumCol3Width { get => (GridLength)GetValue(AlbumCol3WidthProperty); set => SetValue(AlbumCol3WidthProperty, value); }
+    public GridLength AlbumCol4Width { get => (GridLength)GetValue(AlbumCol4WidthProperty); set => SetValue(AlbumCol4WidthProperty, value); }
+
+    // The trailing "options" cell takes part in resizing too, so the arrow on the
+    // last column's right edge has something to trade with.
+    public static readonly DependencyProperty SongsOptionsWidthProperty = ColWidthProp("SongsOptionsWidth", 40, GridUnitType.Pixel);
+    public static readonly DependencyProperty AlbumOptionsWidthProperty = ColWidthProp("AlbumOptionsWidth", 40, GridUnitType.Pixel);
+
+    /// <summary>Index of the column the pointer is over, -1 when none.</summary>
+    public static readonly DependencyProperty SongsHoverColumnProperty = HoverColumnProp("SongsHoverColumn");
+    public static readonly DependencyProperty AlbumHoverColumnProperty = HoverColumnProp("AlbumHoverColumn");
+
+    private static DependencyProperty HoverColumnProp(string name)
+        => DependencyProperty.Register(name, typeof(int), typeof(MainWindow), new PropertyMetadata(-1));
+
+    public int SongsHoverColumn
+    {
+        get => (int)GetValue(SongsHoverColumnProperty);
+        set => SetValue(SongsHoverColumnProperty, value);
+    }
+
+    public int AlbumHoverColumn
+    {
+        get => (int)GetValue(AlbumHoverColumnProperty);
+        set => SetValue(AlbumHoverColumnProperty, value);
+    }
+
+    public GridLength SongsOptionsWidth { get => (GridLength)GetValue(SongsOptionsWidthProperty); set => SetValue(SongsOptionsWidthProperty, value); }
+    public GridLength AlbumOptionsWidth { get => (GridLength)GetValue(AlbumOptionsWidthProperty); set => SetValue(AlbumOptionsWidthProperty, value); }
+
+    // ---- the column the user selected in each table (-1 = none) ----------------
+    private static DependencyProperty ActiveColumnProp(string name)
+        => DependencyProperty.Register(name, typeof(int), typeof(MainWindow), new PropertyMetadata(-1));
+
+    public static readonly DependencyProperty SongsActiveColumnProperty = ActiveColumnProp("SongsActiveColumn");
+    public static readonly DependencyProperty AlbumActiveColumnProperty = ActiveColumnProp("AlbumActiveColumn");
+
+    /// <summary>
+    /// Index of the column whose resize arrows are showing, or -1. Clicking a
+    /// header picks that column; clicking it again clears the selection - the
+    /// same one-column-at-a-time behaviour Harmonoid uses.
+    /// </summary>
+    public int SongsActiveColumn { get => (int)GetValue(SongsActiveColumnProperty); set => SetValue(SongsActiveColumnProperty, value); }
+
+    /// <summary>Same selection state for the album-detail table.</summary>
+    public int AlbumActiveColumn { get => (int)GetValue(AlbumActiveColumnProperty); set => SetValue(AlbumActiveColumnProperty, value); }
+
+    // ---- per-table hidden columns (session only) ------------------------------
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private ObservableCollection<string> _songsHiddenColumns = new();
+    private ObservableCollection<string> _albumHiddenColumns = new();
+    private readonly Dictionary<string, GridLength> _savedColumnWidths = new();
+
+    public ObservableCollection<string> SongsHiddenColumns
+    {
+        get => _songsHiddenColumns;
+        set { _songsHiddenColumns = value; RaiseHiddenColumnsChanged(); }
+    }
+
+    public ObservableCollection<string> AlbumHiddenColumns
+    {
+        get => _albumHiddenColumns;
+        set { _albumHiddenColumns = value; RaiseHiddenColumnsChanged(); }
+    }
+
+    private static readonly string[] SongsColumnKeys =
+        { "SongsCol1Width", "SongsCol2Width", "SongsCol3Width", "SongsCol4Width", "SongsCol5Width" };
+
+    private static readonly string[] AlbumColumnKeys =
+        { "AlbumCol1Width", "AlbumCol2Width", "AlbumCol3Width", "AlbumCol4Width" };
+
+    public static readonly DependencyProperty SongsHiddenColumnCountProperty = HiddenCountProp("SongsHiddenColumnCount");
+    public static readonly DependencyProperty AlbumHiddenColumnCountProperty = HiddenCountProp("AlbumHiddenColumnCount");
+
+    public int SongsHiddenColumnCount { get => (int)GetValue(SongsHiddenColumnCountProperty); private set => SetValue(SongsHiddenColumnCountProperty, value); }
+    public int AlbumHiddenColumnCount { get => (int)GetValue(AlbumHiddenColumnCountProperty); private set => SetValue(AlbumHiddenColumnCountProperty, value); }
+
+
+    /// <summary>Text-column index of a width property (options excluded), or -1.</summary>
+    private static int IndexOfColumnProperty(DependencyProperty dp, DependencyProperty[] props)
+    {
+        for (int i = 0; i < props.Length - 1; i++) if (ReferenceEquals(props[i], dp)) return i;
+        return -1;
+    }
+
+    /// <summary>Selects the nearest column that still has a width.</summary>
+    private void MoveSelectionOff(DependencyProperty[] props, int hidden, bool isSongs)
+    {
+        int text = props.Length - 1;
+        for (int step = 1; step < text; step++)
+        {
+            foreach (int i in new[] { hidden + step, hidden - step })
+            {
+                if (i < 0 || i >= text) continue;
+                if (((GridLength)GetValue(props[i])).Value <= 0) continue;
+                SetValue(isSongs ? SongsActiveColumnProperty : AlbumActiveColumnProperty, i);
+                return;
+            }
+        }
+        SetValue(isSongs ? SongsActiveColumnProperty : AlbumActiveColumnProperty, -1);
+    }
+
+    private void SongsColumns_Restore_Click(object sender, RoutedEventArgs e) => RestoreColumns(SongsColumnKeys, SongsHiddenColumns);
+
+    private void AlbumColumns_Restore_Click(object sender, RoutedEventArgs e) => RestoreColumns(AlbumColumnKeys, AlbumHiddenColumns);
+
+    private void RestoreColumns(string[] keys, ObservableCollection<string> list)
+    {
+        foreach (var key in keys)
+        {
+            if (_savedColumnWidths.TryGetValue(key, out var width) && ColumnPropertyFor(key) is { } dp)
+            {
+                SetValue(dp, width);
+            }
+        }
+        foreach (var key in keys) _savedColumnWidths.Remove(key);
+        list.Clear();
+        RaiseHiddenColumnsChanged();
+    }
+
+    private static DependencyProperty? ColumnPropertyFor(string key)
+    {
+        foreach (var dp in SongsColProps.Concat(AlbumColProps))
+        {
+            if (dp.Name == key) return dp;
+        }
+        return null;
+    }
+
+    private void RaiseHiddenColumnsChanged()
+    {
+        SongsHiddenColumnCount = SongsHiddenColumns.Count;
+        AlbumHiddenColumnCount = AlbumHiddenColumns.Count;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SongsHiddenColumns)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AlbumHiddenColumns)));
+
+        // Collapsing a column frees up width. If the columns had already been frozen
+        // to pixels by a drag, that width would just sit empty and push the fixed
+        // options ("...") column away from the edge - so let the remaining columns
+        // take it back up once the layout has applied the new widths.
+        _songsSync.NeedsRefit = true;
+        _albumSync.NeedsRefit = true;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(UpdateTracksScrollbarInset));
+    }
+
+    private static DependencyProperty HiddenCountProp(string name)
+        => DependencyProperty.Register(name, typeof(int), typeof(MainWindow), new PropertyMetadata(0));
+
+    private static Grid? FindAncestorGrid(object element)
+    {
+        DependencyObject? current = element as DependencyObject;
+        while (current is not null)
+        {
+            if (current is Grid g && g.Name.EndsWith("HeaderGrid", StringComparison.Ordinal)) return g;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    public static readonly DependencyProperty IsSongsGridViewProperty =
+        DependencyProperty.Register("IsSongsGridView", typeof(bool), typeof(MainWindow),
+            new PropertyMetadata(false));
+
+    /// <summary>
+    /// Width of the tracks list's vertical scrollbar. The table header lives
+    /// outside the list, so without this nudge its separators drift a few pixels
+    /// away from the ones drawn between the rows.
+    /// </summary>
+    public static readonly DependencyProperty TracksScrollbarWidthProperty =
+        DependencyProperty.Register("TracksScrollbarWidth", typeof(double), typeof(MainWindow),
+            new PropertyMetadata(0.0));
+
+    public double TracksScrollbarWidth
+    {
+        get => (double)GetValue(TracksScrollbarWidthProperty);
+        private set => SetValue(TracksScrollbarWidthProperty, value);
+    }
+
+    private void SongsScroller_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        UpdateTracksScrollbarInset();
+    }
+
+    /// <summary>
+    /// Width of the tracks list's viewport, kept in sync with the header grid.
+    /// </summary>
+    public static readonly DependencyProperty SongsViewportWidthProperty =
+        DependencyProperty.Register("SongsViewportWidth", typeof(double), typeof(MainWindow),
+            // NaN keeps the header at its natural (stretch) width until the first
+            // measurement arrives, instead of collapsing to zero.
+            new PropertyMetadata(double.NaN));
+
+    public double SongsViewportWidth
+    {
+        get => (double)GetValue(SongsViewportWidthProperty);
+        private set => SetValue(SongsViewportWidthProperty, value);
+    }
+
+    private void UpdateTracksScrollbarInset()
+    {
+        SyncHeaderToViewport(_songsSync);
+        SyncHeaderToViewport(_albumSync);
+    }
+
+    /// <summary>Per-table state for <see cref="SyncHeaderToViewport"/>.</summary>
+    private sealed class HeaderSync
+    {
+        public ListBox? List;
+        public Grid? Header;
+        public ScrollViewer? Scroller;
+        public bool Hooked, Pending;
+        public int Retries;
+        public DependencyProperty[]? ColProps;
+        public double[]? ColMinimums;
+        public double LastViewport = double.NaN;
+        public bool NeedsRefit;
+    }
+
+    private readonly HeaderSync _songsSync = new();
+    private readonly HeaderSync _albumSync = new();
+
+    /// <summary>
+    /// A table's header sits outside its list, so it has to adopt the exact
+    /// rectangle the rows are laid out in - the same width the list gives up to its
+    /// vertical scrollbar, starting at the same x (the ScrollViewer can sit a pixel
+    /// inside the ListBox). Otherwise every column separator is a pixel or two off
+    /// and the line visibly jogs where the header meets the first row.
+    /// </summary>
+    private void SyncHeaderToViewport(HeaderSync st)
+    {
+        if (st.List is null || st.Header is null) return;
+        st.Scroller ??= FindVisualChild<ScrollViewer>(st.List);
+        if (st.Scroller is null)
+        {
+            // The list is only realised once its page is opened.
+            ScheduleHeaderRetry(st);
+            return;
+        }
+        if (!st.Hooked)
+        {
+            st.Hooked = true;
+            var scroller = st.Scroller;
+            // The gutter appears and disappears without resizing the ScrollViewer,
+            // so these are only triggers - the values are re-read below.
+            scroller.SizeChanged += (_, _) => SyncHeaderToViewport(st);
+            // Creating the scrollbar is reported as a viewport change, which is the
+            // only signal that ViewportWidth just got smaller.
+            scroller.ScrollChanged += (_, _) => SyncHeaderToViewport(st);
+        }
+        double viewport = st.Scroller.ViewportWidth;
+        if (viewport <= 0)
+        {
+            // ViewportWidth is only valid once the ScrollViewer has been measured;
+            // SizeChanged fires before that, so retry after the layout pass.
+            ScheduleHeaderRetry(st);
+            return;
+        }
+        double left = st.Scroller.TranslatePoint(new Point(0, 0), st.List).X;
+        if (st.NeedsRefit
+            || (!double.IsNaN(st.LastViewport) && Math.Abs(st.LastViewport - viewport) > 0.5))
+            RefitFrozenColumns(st, viewport);
+        st.NeedsRefit = false;
+        st.LastViewport = viewport;
+        if (Math.Abs(st.Header.Width - viewport) < 0.01
+            && Math.Abs(st.Header.Margin.Left - left) < 0.01)
+            return; // converged
+
+        st.Header.Margin = new Thickness(left, 0, 0, 0);
+        st.Header.HorizontalAlignment = HorizontalAlignment.Left;
+        st.Header.Width = viewport;
+        if (st.List == AllSongsListBox)
+        {
+            SongsViewportWidth = viewport;
+            TracksScrollbarWidth = Math.Max(0, AllSongsListBox.ActualWidth - viewport);
+        }
+        st.Retries = 0;
+        // The scrollbar may only appear once the items are realised, and that does
+        // not resize anything - re-check until the value stops changing.
+        ScheduleHeaderRetry(st);
+    }
+
+    /// <summary>
+    /// Once a column has been dragged its width is frozen to pixels, so the row of
+    /// columns stops following the window and the fixed art / options columns drift
+    /// away from their edges. Rescale the dragged columns proportionally to the new
+    /// viewport whenever the window changes size: the art cell and the options cell
+    /// keep their fixed widths (so the "..." column stays pinned), and the text
+    /// columns share whatever is left. Star columns already do this by themselves.
+    /// </summary>
+    private void RefitFrozenColumns(HeaderSync st, double viewport)
+    {
+        if (st.ColProps is null || st.ColMinimums is null || st.Header is null) return;
+        var props = st.ColProps;
+        var minimums = st.ColMinimums;
+        int text = props.Length - 1;              // the last entry is the options cell
+
+        // Only act once the widths really are pixels; star widths self-refit.
+        double sum = 0;
+        for (int i = 0; i < text; i++)
+        {
+            if (!((GridLength)GetValue(props[i])).IsAbsolute) return;
+            double v = ((GridLength)GetValue(props[i])).Value;
+            if (v <= 0) continue;                 // hidden column: keep it collapsed
+            sum += v;
+        }
+        if (sum <= 0) return;
+
+        double fixedCells = 0;
+        if (st.Header.ColumnDefinitions.Count > 0)
+        {
+            var art = (GridLength)st.Header.ColumnDefinitions[0].Width;
+            if (art.IsAbsolute) fixedCells += art.Value;
+        }
+        // The options cell is excluded from `sum`, so its width has to come off the
+        // available space as well - otherwise the text columns creep ~3% wider on
+        // every window resize.
+        var options = (GridLength)GetValue(props[text]);
+        if (options.IsAbsolute) fixedCells += options.Value;
+        double avail = viewport - fixedCells;
+        if (avail <= 0) return;
+
+        double k = avail / sum;
+        for (int i = 0; i < text; i++)
+        {
+            var current = (GridLength)GetValue(props[i]);
+            if (current.Value <= 0) continue;      // hidden column stays at zero
+            double w = current.Value * k;
+            SetValue(props[i], new GridLength(Math.Max(minimums[i], w)));
+        }
+    }
+
+    private void SongsHeaderCell_MouseEnter(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement el && el.Tag is string tag
+            && int.TryParse(tag, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index))
+            SongsHoverColumn = index;
+    }
+
+    private void AlbumHeaderCell_MouseEnter(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement el && el.Tag is string tag
+            && int.TryParse(tag, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index))
+            AlbumHoverColumn = index;
+    }
+
+    private void HeaderCell_MouseLeave(object sender, MouseEventArgs e)
+    {
+        SongsHoverColumn = -1;
+        AlbumHoverColumn = -1;
+    }
+
+    private void ScheduleHeaderRetry(HeaderSync st)
+    {
+        if (st.Pending || st.Retries >= 12) return;
+        st.Pending = true;
+        st.Retries++;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+        {
+            st.Pending = false;
+            SyncHeaderToViewport(st);
+        }));
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        int count = VisualTreeHelper.GetChildrenCount(parent);
+        for (int i = 0; i < count; i++)
+        {
+            if (VisualTreeHelper.GetChild(parent, i) is T typed) return typed;
+            if (FindVisualChild<T>(VisualTreeHelper.GetChild(parent, i)) is T nested) return nested;
+        }
+        return null;
+    }
+
+    /// <summary>False shows the tracks table, true shows the album-art card grid.</summary>
+    public bool IsSongsGridView
+    {
+        get => (bool)GetValue(IsSongsGridViewProperty);
+        set => SetValue(IsSongsGridViewProperty, value);
+    }
+
+    /// <summary>Switches the tracks view between the column table and the card grid.</summary>
+    private void ToggleSongsLayout_Click(object sender, RoutedEventArgs e)
+    {
+        IsSongsGridView = !IsSongsGridView;
+        SongsActiveColumn = -1;
+    }
+
+    private static readonly DependencyProperty[] SongsColProps =
+    {
+        SongsCol1WidthProperty, SongsCol2WidthProperty, SongsCol3WidthProperty,
+        SongsCol4WidthProperty, SongsCol5WidthProperty, SongsOptionsWidthProperty
+    };
+
+    private static readonly DependencyProperty[] AlbumColProps =
+    {
+        AlbumCol1WidthProperty, AlbumCol2WidthProperty, AlbumCol3WidthProperty,
+        AlbumCol4WidthProperty, AlbumOptionsWidthProperty
+    };
+
+    /// <summary>
+    /// Picks the clicked column (its two arrows appear) or clears the selection
+    /// when the same header is clicked again.
+    /// </summary>
+    private void ColumnHeader_ToggleEditMode(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.Tag is not string tag) return;
+        if (!int.TryParse(tag, NumberStyles.Integer, CultureInfo.InvariantCulture, out int columnIndex)) return;
+
+        bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
+        var property = isSongs ? SongsActiveColumnProperty : AlbumActiveColumnProperty;
+        int current = (int)GetValue(property);
+        SetValue(property, current == columnIndex ? -1 : columnIndex);
+        e.Handled = true;
+    }
+
+
+    private void SongsRow_Hide_Click(object sender, RoutedEventArgs e) => HideTableColumn_Click(sender, e);
+
+    private void AlbumRow_Hide_Click(object sender, RoutedEventArgs e) => HideTableColumn_Click(sender, e);
+
+    private void SongsRows_Restore_Click(object sender, RoutedEventArgs e) => SongsColumns_Restore_Click(sender, e);
+    private void AlbumRows_Restore_Click(object sender, RoutedEventArgs e) => AlbumColumns_Restore_Click(sender, e);
+
+    private DependencyProperty[]? _activeDragProps;
+    private int _activeDragLeft = -1;
+    private int _activeDragRight = -1;
+    private double _origLeft;
+    private double _origRight;
+    private double _minLeft;
+    private double _minRight;
+    private int _activeDragSign = 1;
+
+    private static readonly double[] SongsColumnMinimums = { 130, 110, 110, 80, 76, 24 };
+    private static readonly double[] AlbumColumnMinimums = { 130, 110, 90, 76, 24 };
+
+    /// <summary>
+    /// Pulling a boundary trades width between the two columns that meet there,
+    /// so the table keeps its overall width and only the grabbed column changes.
+    /// Columns are frozen to pixel sizes on the first drag, otherwise the
+    /// star-weighted ones would silently re-balance each other.
+    /// </summary>
+    private double _dragOriginX;
+
+    private void ColumnHandle_DragStarted(object sender, DragStartedEventArgs e)
+    {
+        _activeDragProps = null;
+        _activeDragLeft = -1;
+        _activeDragRight = -1;
+        if (sender is not Thumb thumb || thumb.Tag is not string tag) return;
+        var parts = tag.Split(':');
+        if (parts.Length < 1) return;
+        if (this.FindName(parts[0]) is not Grid grid) return;
+
+        var isSongs = parts[0].StartsWith("SongsHeader", StringComparison.Ordinal);
+        var props = isSongs ? SongsColProps : AlbumColProps;
+        var minimums = isSongs ? SongsColumnMinimums : AlbumColumnMinimums;
+        var defs = grid.ColumnDefinitions;
+        if (defs.Count < 2) return;
+
+        // Which pair of columns trades width is decided from the laid-out geometry,
+        // not from a fixed index. A hidden column is 0px wide, so its handles sit on
+        // top of a neighbour's: resolving by index would grab the hidden column and
+        // a resize would bring it straight back.
+        double handleX = Mouse.GetPosition(grid).X;
+        int edge = -1;
+        double best = double.MaxValue;
+        for (int i = 0; i < defs.Count; i++)
+        {
+            if (defs[i].ActualWidth <= 0) continue;          // hidden column
+            double d = Math.Abs(defs[i].Offset - handleX);
+            if (d < best) { best = d; edge = i; }
+        }
+        if (edge < 0) return;
+
+        // `edge` is the column whose LEFT edge carries the handle, so it is the
+        // right-hand partner; the left-hand partner is the nearest visible column
+        // before it. Scanning one column further right (the old behaviour) made a
+        // drag on a column's left edge resize the wrong pair, so the column only
+        // appeared to slide instead of changing length.
+        int leftColumn = -1;
+        for (int i = edge - 1; i >= 0; i--)
+            if (defs[i].ActualWidth > 0) { leftColumn = i; break; }
+        int rightColumn = edge;
+        if (leftColumn < 0) return;                            // outer edge
+
+        // props[j] maps to Grid column j + 1. The art cell (column 0) is fixed and
+        // the options cell (the last prop) must never move, so neither can trade.
+        int left = leftColumn - 1;
+        int right = rightColumn - 1;
+        if (left < 0) return;                                // art cell on the left
+        if (right >= props.Length - 1) return;                // options cell on the right
+
+        for (int i = 0; i < props.Length; i++)
+        {
+            var current = (GridLength)GetValue(props[i]);
+            if (!current.IsAbsolute)
+            {
+                SetValue(props[i], new GridLength(defs[i + 1].ActualWidth));
+            }
+        }
+
+        _activeDragProps = props;
+        _activeDragLeft = left;
+        _activeDragRight = right;
+        _activeDragSign = 1;
+        var natOrigin = new NativePOINT();
+        GetCursorPos(ref natOrigin);
+        _dragOriginX = natOrigin.X;
+        _origLeft = defs[leftColumn].ActualWidth;
+        _origRight = defs[rightColumn].ActualWidth;
+        _minLeft = minimums[left];
+        _minRight = minimums[right];
+    }
+
+    private void ColumnHandle_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (_activeDragProps == null || _activeDragLeft < 0 || _activeDragRight < 0) return;
+        // The drag distance comes from the OS cursor, not from WPF. Summing
+        // Thumb.DragDeltaEventArgs.HorizontalChange made a 36px drag travel
+        // 6+12+18+24+30+36 = 126px, and using that value as-is is quantised
+        // (a 60px drag reported 30), so both drifted away from the cursor.
+        var nat = new NativePOINT();
+        double offset = GetCursorPos(ref nat) ? nat.X - _dragOriginX : e.HorizontalChange;
+
+        double pair = _origLeft + _origRight;
+        double upper = Math.Max(_minLeft, pair - _minRight);
+        double wanted = _origLeft + (_activeDragSign * offset);
+        double nextLeft = Math.Min(upper, Math.Max(_minLeft, wanted));
+        double nextRight = pair - nextLeft;
+
+        SetValue(_activeDragProps[_activeDragLeft], new GridLength(nextLeft));
+        SetValue(_activeDragProps[_activeDragRight], new GridLength(nextRight));
+    }
+
+    private void ColumnHandle_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        _activeDragProps = null;
+        _activeDragLeft = -1;
+        _activeDragRight = -1;
+    }
 
     // Shared-element (hero) transition state between the artists grid and the
     // artist detail page, so the reverse animation lands on the same circle.
@@ -47,7 +640,7 @@ public partial class MainWindow : Window
     private string _artistTransitionArtistName = string.Empty;
     private bool _isAlbumTransition;
     private MusicTrack? _albumTransitionTrack;
-    // Target album/artist of the in-flight forward hero — the reveal gate waits
+    // Target album/artist of the in-flight forward hero â€” the reveal gate waits
     // until the async album load for THESE values has landed (see IsAlbumDataReady).
     private string _albumTransitionAlbumName = string.Empty;
     private string _albumTransitionArtist = string.Empty;
@@ -91,14 +684,14 @@ public partial class MainWindow : Window
         _translateCache = new();
     // Cached VirtualizingStackPanel of the QueueListBox (realized containers live here).
     private VirtualizingStackPanel? _queueVsp;
-    // Shared easing — allocated once, never recreated per animation.
+    // Shared easing â€” allocated once, never recreated per animation.
     private static readonly System.Windows.Media.Animation.QuinticEase _gapEasing =
         new() { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
-    // O(1) track→index lookup for the duration of a drag.
+    // O(1) trackâ†’index lookup for the duration of a drag.
     // Built once at DragStart (O(n)), eliminates the per-recycled-container
     // Queue.IndexOf(track) O(n) scan that fired every frame during auto-scroll.
     private readonly Dictionary<MusicTrack, int> _queueIndexCache = new(256);
-    // Cached at DragStart — QueueListBox position in QueueDragCanvas space.
+    // Cached at DragStart â€” QueueListBox position in QueueDragCanvas space.
     // Re-reading TranslatePoint every frame via layout-sensitive ScaleTransform
     // produces jitter that makes posInListBox.Y unstable (oscillation root cause).
     private double _queueListTopCache = double.NaN;
@@ -117,10 +710,10 @@ public partial class MainWindow : Window
     // Physical-cursor arbitration. GetCursorPos comes straight from the OS and
     // is always correct, unlike WPF's routed coords: once the source row's
     // container is recycled mid-drag the detached container answers
-    // e.GetPosition with its OLD slot (the source row) — feeding the card a
+    // e.GetPosition with its OLD slot (the source row) â€” feeding the card a
     // stale position even though the cursor is at the bottom. That exact read
     // (cardListY=214 = source row) is what snapped the card back. So the CARD
-    // position is derived from the OS cursor via PointFromScreen — WPF event
+    // position is derived from the OS cursor via PointFromScreen â€” WPF event
     // coords are never consulted while dragging.
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool GetCursorPos(ref NativePOINT lpPoint);
@@ -145,12 +738,12 @@ public partial class MainWindow : Window
         catch { return false; }
     }
 
-    // ── Frame-pacing: single CompositionTarget.Rendering loop drives marquee,
+    // â”€â”€ Frame-pacing: single CompositionTarget.Rendering loop drives marquee,
     //     lyrics scroll glide, and queue auto-scroll. Elapsed-time based => speed
     //     stays identical on 60/120/144 Hz. Subscription lifecycle:
-    //       - First animation starts  → subscribe
-    //       - Every vsync while active → update animation using elapsed time
-    //       - Last animation finishes → unsubscribe immediately
+    //       - First animation starts  â†’ subscribe
+    //       - Every vsync while active â†’ update animation using elapsed time
+    //       - Last animation finishes â†’ unsubscribe immediately
     private EventHandler? _perfRenderHandler;
     private long _lastPerfTicks;
     private static readonly double _perfTicksPerMs = Stopwatch.Frequency / 1000.0;
@@ -165,11 +758,33 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
-        InitializeComponent();
-        SmoothScrollHelper.Initialize();
-        DataContextChanged += OnDataContextChanged;
-        Loaded += OnWindowLoaded;
-        Deactivated += OnWindowDeactivated;
+InitializeComponent();
+   SmoothScrollHelper.Initialize();
+   DataContextChanged += OnDataContextChanged;
+   Loaded += OnWindowLoaded;
+   Deactivated += OnWindowDeactivated;
+// Keeps the table headers' column separators aligned with the row separators,
+    // which sit inside each list's scrollbar gutter.
+    _songsSync.List = AllSongsListBox;
+    _songsSync.Header = SongsHeaderGrid;
+    _songsSync.ColProps = SongsColProps;
+    _songsSync.ColMinimums = SongsColumnMinimums;
+    _albumSync.List = AlbumDetailListBox;
+    _albumSync.Header = AlbumHeaderGrid;
+    _albumSync.ColProps = AlbumColProps;
+    _albumSync.ColMinimums = AlbumColumnMinimums;
+    if (FindVisualChild<ScrollViewer>(AllSongsListBox) is ScrollViewer songsScroller)
+        songsScroller.ScrollChanged += SongsScroller_ScrollChanged;
+    // The lists' visual trees are not built yet in the constructor, and a page is
+    // only realised once it is opened, so re-sync after every layout trigger.
+    AllSongsListBox.SizeChanged += (_, _) => UpdateTracksScrollbarInset();
+    AllSongsListBox.Loaded += (_, _) => UpdateTracksScrollbarInset();
+    AllSongsListBox.IsVisibleChanged += (_, _) => UpdateTracksScrollbarInset();
+    AlbumDetailListBox.SizeChanged += (_, _) => UpdateTracksScrollbarInset();
+    AlbumDetailListBox.Loaded += (_, _) => UpdateTracksScrollbarInset();
+    AlbumDetailListBox.IsVisibleChanged += (_, _) => UpdateTracksScrollbarInset();
+    SizeChanged += (_, _) => UpdateTracksScrollbarInset();
+
         Activated += OnWindowActivated;
         StateChanged += OnWindowStateChanged;
         PreviewMouseUp += Window_PreviewMouseUp;
@@ -177,7 +792,7 @@ public partial class MainWindow : Window
         // Any real activity marks the interaction clock: background jobs
         // (wallpaper thumbs, artist face-crop upgrade) gate and cancel on it,
         // so returning to the app after a pause must be visible to those gates
-        // — previously ONLY wheel/tab/navigation marked it, which let heavy
+        // â€” previously ONLY wheel/tab/navigation marked it, which let heavy
         // jobs keep running under the user's first clicks (return-lag).
         PreviewMouseMove += (_, _) => SmoothScrollHelper.MarkInteraction();
         PreviewMouseDown += (_, _) => SmoothScrollHelper.MarkInteraction();
@@ -227,6 +842,7 @@ public partial class MainWindow : Window
         }
         if (e.NewValue is MainViewModel newVm)
         {
+            ViewModel = newVm;
             Converters.ArtistImageConverter.SharedViewModel = newVm;
             newVm.PropertyChanged += OnViewModelPropertyChanged;
             newVm.Queue.CollectionChanged += OnQueueCollectionChanged;
@@ -241,9 +857,10 @@ public partial class MainWindow : Window
     {
         if (e.PropertyName is nameof(MainViewModel.BackgroundImagePath) or nameof(MainViewModel.WallpaperBlur))
         {
+            // Coalesce rapid changes (theme switching, blur-slider drags) through
+            // the existing 200ms debounce â€” no new timers.
             _bgDirty = true;
-            _bgBlurTimer?.Stop();
-            RebuildBlurCache();
+            EnsureBlurCache();
         }
     }
 
@@ -272,59 +889,293 @@ public partial class MainWindow : Window
         _bgBlurTimer.Start();
     }
 
+    private System.Windows.Media.ImageSource? _solidWallpaperFallback;
+    // Generation guard for async wallpaper loads: only the latest requested
+    // wallpaper may apply its result â€” a stale decode finishing late must never
+    // overwrite a newer selection.
+    private long _bgGen;
+
     private void RebuildBlurCache()
     {
+        // Dispatcher affinity: settings/theme paths raise this off the UI thread
+        // (LoadSettings runs on ThreadPool). Touching live visuals from there throws
+        // and was swallowed â†’ black background until a resize rebuilt on UI thread.
+        if (!Dispatcher.CheckAccess())
+        {
+            LogHelper.LogInfo("[Wallpaper] rebuild: marshaling to UI thread");
+            Dispatcher.BeginInvoke(new Action(RebuildBlurCache));
+            return;
+        }
+        long gen = ++_bgGen;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             var vm = ViewModel;
             if (vm == null) return;
 
             string path = vm.BackgroundImagePath;
-            if (string.IsNullOrEmpty(path)) return;
-
             double blurRadius = vm.WallpaperBlur;
+            bool wantBlur = blurRadius >= 0.5;
 
-            BitmapImage source = new();
-            source.BeginInit();
-            if (path.StartsWith("pack:"))
-                source.UriSource = new Uri(path, UriKind.Absolute);
-            else
-                source.UriSource = new Uri(path, UriKind.RelativeOrAbsolute);
-            source.CacheOption = BitmapCacheOption.OnLoad;
-            source.EndInit();
-            source.Freeze();
-
-            if (blurRadius < 0.5)
+            // Resolve which URI to load (cheap stat only): user file â†’ bundled default.
+            string? primary = null;
+            string kind = "none";
+            if (!string.IsNullOrEmpty(path))
             {
-                BackgroundImage.Source = source;
-                return;
+                if (path.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
+                {
+                    primary = path;
+                    kind = "pack";
+                }
+                else if (System.IO.File.Exists(path))
+                {
+                    primary = path;
+                    kind = "file";
+                }
+                else
+                {
+                    LogHelper.LogInfo($"[Wallpaper] resolve: file not found '{DescribeWallpaperPath(path)}' â†’ trying default");
+                }
             }
+            const string fallbackPack = "pack://application:,,,/Assets/Backgrounds/bg_001.png";
+            LogHelper.LogInfo($"[Wallpaper] rebuild start: kind={kind} blur={(wantBlur ? blurRadius.ToString("0") : "off")} {DescribeWallpaperPath(path)}");
 
-            int w = Math.Max((int)ActualWidth, 256);
-            int h = Math.Max((int)ActualHeight, 256);
-
-            var target = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
-            var visual = new DrawingVisual();
-            using (var ctx = visual.RenderOpen())
+            // Heavy decode off the UI thread (4K JPEGs stall it for 100ms+).
+            // The original is decoded at full quality (sane cap); the blur works
+            // on a small render of it â€” never a downscaled replacement.
+            int decodeW = ComputeWallpaperDecodeWidth();
+            string? primaryCopy = primary;
+            string kindCopy = kind;
+            long queueTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            System.Threading.Tasks.Task.Run(() =>
             {
-                var ib = new ImageBrush(source) { Stretch = Stretch.UniformToFill };
-                ctx.DrawRectangle(ib, null, new Rect(0, 0, w, h));
+                long queueMs = (long)ElapsedMs(queueTicks);
+                string cacheKey = (primaryCopy ?? "") + "|" + decodeW;
+                BitmapImage? decoded = null;
+                if (primaryCopy != null && TryGetCachedWallpaper(cacheKey, out decoded))
+                {
+                    LogHelper.LogInfo($"[Wallpaper] cache hit: {kindCopy} {decoded!.PixelWidth}x{decoded!.PixelHeight}");
+                }
+                else
+                {
+                    decoded = (primaryCopy != null)
+                        ? TryDecodeWallpaper(primaryCopy, decodeW, kindCopy)
+                        : null;
+                    if (decoded != null) StoreCachedWallpaper(cacheKey, decoded);
+                }
+                if (decoded == null)
+                {
+                    decoded = TryDecodeWallpaper(fallbackPack, decodeW, "pack-default");
+                    if (decoded != null) kindCopy = "pack-default";
+                }
+                LogHelper.LogInfo($"[Wallpaper] decode ready: queueMs={queueMs} {kindCopy} {(decoded != null ? $"{decoded.PixelWidth}x{decoded.PixelHeight}" : "null")}");
+                BitmapImage? finalDecoded = decoded;
+                string finalKind = kindCopy;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (gen != _bgGen)
+                    {
+                        LogHelper.LogInfo($"[Wallpaper] rebuild: stale result discarded ({finalKind})");
+                        return;
+                    }
+                    if (finalDecoded == null)
+                    {
+                        LogHelper.LogInfo($"[Wallpaper] rebuild: no usable source ({DescribeWallpaperPath(path)}) â†’ solid fallback");
+                        ApplySolidWallpaperFallback();
+                        return;
+                    }
+                    if (!wantBlur)
+                    {
+                        BackgroundImage.Source = finalDecoded;
+                        LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} sharp {finalDecoded.PixelWidth}x{finalDecoded.PixelHeight} appliedMs={ElapsedMs(t0):0}");
+                        return;
+                    }
+                    int dw = (int)ActualWidth, dh = (int)ActualHeight;
+                    if (dw < 10 || dh < 10)
+                    {
+                        // Not laid out yet â€” show the sharp original now; the next
+                        // size change re-triggers the blur through the debounce.
+                        BackgroundImage.Source = finalDecoded;
+                        LogHelper.LogInfo($"[Wallpaper] rebuild: not laid out yet, showing original ({finalKind})");
+                        _bgDirty = true;
+                        EnsureBlurCache();
+                        return;
+                    }
+                    try
+                    {
+                        int w = Math.Max(dw / 3, 160);
+                        int h = Math.Max(dh / 3, 160);
+
+                        var target = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+                        var visual = new DrawingVisual();
+                        using (var ctx = visual.RenderOpen())
+                        {
+                            var ib = new ImageBrush(finalDecoded) { Stretch = Stretch.UniformToFill };
+                            ctx.DrawRectangle(ib, null, new Rect(0, 0, w, h));
+                        }
+                        target.Render(visual);
+
+                        var blurred = new BlurEffect { Radius = blurRadius / 3, RenderingBias = RenderingBias.Performance };
+                        var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
+                        wrapper.Measure(new Size(w, h));
+                        wrapper.Arrange(new Rect(0, 0, w, h));
+
+                        var result = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+                        result.Render(wrapper);
+                        result.Freeze();
+
+                        BackgroundImage.Source = result;
+                        LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {w}x{h} radius={blurRadius:0} appliedMs={ElapsedMs(t0):0}");
+                    }
+                    catch (Exception blurEx)
+                    {
+                        // Blur failure alone must never blank the background: the
+                        // decoded original is already in hand â€” show it unblurred.
+                        LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
+                        BackgroundImage.Source = finalDecoded;
+                    }
+                }));
+            });
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("[Wallpaper] rebuild failed", ex);
+            ApplySolidWallpaperFallback();
+        }
+    }
+
+    // Decode is thread-legal off-UI (frozen before crossing threads). Full quality
+    // up to a sane 3840px cap: crisp on 4K sources, bounded on larger monsters.
+    // Bounded decode cache: revisiting a recent wallpaper skips the ~0.9s JPEG
+    // redecode entirely (0ms). Frozen bitmaps are immutable and safe to share
+    // across assignments. Capped by count AND pixels; eviction is oldest-first.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (BitmapImage Image, long Ticks)> _wallpaperDecodeCache
+        = new(System.StringComparer.OrdinalIgnoreCase);
+    private const int WallpaperCacheMaxEntries = 4;
+    private const long WallpaperCacheMaxPixels = 1920L * 1200L;
+
+    private static bool TryGetCachedWallpaper(string key, out BitmapImage? image)
+    {
+        image = null;
+        try
+        {
+            if (_wallpaperDecodeCache.TryGetValue(key, out var entry) && entry.Image != null)
+            {
+                image = entry.Image;
+                _wallpaperDecodeCache[key] = (entry.Image, System.Diagnostics.Stopwatch.GetTimestamp());
+                return true;
             }
-            target.Render(visual);
+        }
+        catch { }
+        return false;
+    }
 
-            var blurred = new BlurEffect { Radius = blurRadius, RenderingBias = RenderingBias.Performance };
-            var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
-            wrapper.Measure(new Size(w, h));
-            wrapper.Arrange(new Rect(0, 0, w, h));
-
-            var result = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
-            result.Render(wrapper);
-            result.Freeze();
-
-            BackgroundImage.Source = result;
+    private static void StoreCachedWallpaper(string key, BitmapImage image)
+    {
+        try
+        {
+            if ((long)image.PixelWidth * image.PixelHeight > WallpaperCacheMaxPixels) return;
+            _wallpaperDecodeCache[key] = (image, System.Diagnostics.Stopwatch.GetTimestamp());
+            while (_wallpaperDecodeCache.Count > WallpaperCacheMaxEntries)
+            {
+                string? oldest = null;
+                long oldestTicks = long.MaxValue;
+                foreach (var kv in _wallpaperDecodeCache)
+                {
+                    if (kv.Value.Ticks < oldestTicks) { oldestTicks = kv.Value.Ticks; oldest = kv.Key; }
+                }
+                if (oldest == null) break;
+                _wallpaperDecodeCache.TryRemove(oldest, out _);
+            }
         }
         catch { }
     }
+
+    private BitmapImage? TryDecodeWallpaper(string uri, int maxWidth, string kindForLog)
+    {
+        long d0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            var bi = new BitmapImage();
+            bi.BeginInit();
+            bi.UriSource = new Uri(uri, UriKind.Absolute);
+            bi.CacheOption = BitmapCacheOption.OnLoad;
+            bi.DecodePixelWidth = maxWidth;
+            bi.EndInit();
+            bi.Freeze();
+            if (bi.PixelWidth <= 0 || bi.PixelHeight <= 0)
+            {
+                LogHelper.LogInfo($"[Wallpaper] decode: zero-size image ({kindForLog})");
+                return null;
+            }
+            LogHelper.LogInfo($"[Wallpaper] decode ok: ({kindForLog}) {bi.PixelWidth}x{bi.PixelHeight} decodeMs={ElapsedMs(d0):0}");
+            return bi;
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError($"[Wallpaper] decode failed ({kindForLog}) afterMs={ElapsedMs(d0):0}", ex);
+            return null;
+        }
+    }
+
+    // Display-sized decode target: actual background area Ã— DPI Ã— margin, capped
+    // so 8K sources stay bounded. Decoding beyond display size is invisible once
+    // stretched (UniformToFill downscales on GPU anyway); the decoder clamps to
+    // native size, so small files are unaffected.
+    private int ComputeWallpaperDecodeWidth()
+    {
+        try
+        {
+            double aw = ActualWidth;
+            if (double.IsNaN(aw) || aw < 640) aw = 640;
+            double scale = 1.0;
+            try { scale = VisualTreeHelper.GetDpi(this).DpiScaleX; } catch { }
+            if (scale <= 0 || double.IsNaN(scale)) scale = 1.0;
+            int target = (int)System.Math.Ceiling(aw * scale * 1.25);
+            if (target < 480) target = 480;
+            if (target > 3840) target = 3840;
+            LogHelper.LogInfo($"[Wallpaper] decode target: display={aw:0} scale={scale:0.##} â†’ {target}px");
+            return target;
+        }
+        catch { return 1920; }
+    }
+
+    // Last-resort background: a tiny cached bitmap stretched to a solid theme
+    // color. Cannot fail to display (no decode, no file, no GPU-heavy work).
+    private void ApplySolidWallpaperFallback()
+    {
+        try
+        {
+            if (_solidWallpaperFallback == null)
+            {
+                const int s = 2;
+                var rt = new RenderTargetBitmap(s, s, 96, 96, PixelFormats.Pbgra32);
+                var dv = new DrawingVisual();
+                using (var ctx = dv.RenderOpen())
+                    ctx.DrawRectangle(new SolidColorBrush(Color.FromRgb(0x1B, 0x2A, 0x3A)), null, new Rect(0, 0, s, s));
+                rt.Render(dv);
+                rt.Freeze();
+                _solidWallpaperFallback = rt;
+            }
+            BackgroundImage.Source = _solidWallpaperFallback;
+            LogHelper.LogInfo("[Wallpaper] rebuild: solid fallback applied");
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("[Wallpaper] solid fallback failed", ex);
+        }
+    }
+
+    private static string DescribeWallpaperPath(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return "(empty)";
+        if (path.StartsWith("pack:", StringComparison.OrdinalIgnoreCase)) return path;
+        try { return "file:" + System.IO.Path.GetFileName(path); }
+        catch { return "file:(unprintable)"; }
+    }
+
+    private static double ElapsedMs(long t0) =>
+        (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
 
     private void OnQueueCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -346,7 +1197,7 @@ public partial class MainWindow : Window
         });
     }
 
-    // ── Frame-pacing loop ────────────────────────────────────────────────────
+    // â”€â”€ Frame-pacing loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Drives the marquee (mini + full player), the lyrics scroll glide and the
     // queue auto-scroll from a single vsync-aligned CompositionTarget.Rendering
     // callback. All motion is a function of elapsed time, not timer ticks, so
@@ -447,7 +1298,7 @@ public partial class MainWindow : Window
         double loopPoint = -(singleTextWidth + 60);
         if (offset <= loopPoint)
         {
-            // One full scroll complete — reset and stop.
+            // One full scroll complete â€” reset and stop.
             offset = 0;
             transform.X = 0;
             return false;
@@ -474,7 +1325,7 @@ public partial class MainWindow : Window
         SmoothScrollHelper.AutoStartIfPerfTest();
 
         // Optional self-measured Full Player transition probe (frame pacing).
-        // Only runs when MUSICPLAYER_PERFTEST=1 — no effect on normal use.
+        // Only runs when MUSICPLAYER_PERFTEST=1 â€” no effect on normal use.
         try
         {
             if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
@@ -783,7 +1634,7 @@ public partial class MainWindow : Window
         }
 
         // NOTE: LoadTabData is intentionally called AFTER the animation below,
-        // not here — building the WrapPanel items while the slide animation runs
+        // not here â€” building the WrapPanel items while the slide animation runs
         // causes the animation to stutter. Data is loaded once the tab is visible.
 
         int newIndex = newTab switch { "songs" => 0, "artists" => 1, "albums" => 2, "genres" => 3, "folders" => 4, _ => 0 };
@@ -853,8 +1704,9 @@ public partial class MainWindow : Window
                 outgoing.RenderTransform = null;
                 incoming.RenderTransform = null;
                 _isTabSliding = false;
+                AlbumArtLoader.SetScrollingActive(false);
 
-                // Load data AFTER animation ends — avoids racing WrapPanel
+                // Load data AFTER animation ends â€” avoids racing WrapPanel
                 // item creation with the slide animation and causing stutter.
                 vm.LoadTabData(newTab);
                 if (SmoothScrollHelper.ProfilingEnabled)
@@ -887,7 +1739,7 @@ public partial class MainWindow : Window
     // Shared forward hero into the album detail page, used by the albums-grid
     // cards (AlbumRow_Click) and the artist-page album cards (ArtistAlbum_Click).
     // Captures the card's art box + in-memory image, hides the detail page, and
-    // flies the shared-element overlay to the 280px art target — all
+    // flies the shared-element overlay to the 280px art target â€” all
     // synchronously inside the click so the first rendered frame already morphs.
     private void BeginAlbumHeroFromCard(Border border, MusicTrack dataContext)
     {
@@ -902,7 +1754,7 @@ public partial class MainWindow : Window
         }
         square ??= border;
 
-        // Stash the artist hero state when detouring from the artist page — the
+        // Stash the artist hero state when detouring from the artist page â€” the
         // lines below overwrite the shared slot with album values. A null stash
         // (album entered from anywhere else) also discards an abandoned detour.
         if (string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal))
@@ -1278,7 +2130,7 @@ public partial class MainWindow : Window
 
         // Start the morph SYNCHRONOUSLY inside the click handler. DispatcherPriority.Loaded
         // sits BELOW Render priority, so a deferred start lets one frame render with the old
-        // list already Collapsed and the detail page still at Opacity=0 — the black void seen
+        // list already Collapsed and the detail page still at Opacity=0 â€” the black void seen
         // in recordings. UpdateLayout() measures the new page now, so the very first rendered
         // frame already contains the morphing overlay.
         try
@@ -1402,7 +2254,7 @@ public partial class MainWindow : Window
                     new System.Windows.Point(size / 2.0, size / 2.0),
                     size / 2.0, size / 2.0);
 
-                // Person icon (head + body) scaled from 48×48 viewBox to 256×256.
+                // Person icon (head + body) scaled from 48Ã—48 viewBox to 256Ã—256.
                 // Geometry.Parse returns frozen (read-only) geometries, so apply
                 // the scale via DrawingContext.PushTransform instead of setting
                 // .Transform (setting it throws "read-only state" -> crash).
@@ -1476,7 +2328,7 @@ public partial class MainWindow : Window
         if (ArtistDetailInfo.RenderTransform is TranslateTransform tm)
             tm.BeginAnimation(TranslateTransform.YProperty, null);
         // Staged reverse reveal (album -> artist) leaves a base offset/opacity on the
-        // content host — restore it here like EnsureDetailPageOpacity.ResetChild does.
+        // content host â€” restore it here like EnsureDetailPageOpacity.ResetChild does.
         ArtistDetailContentHost.BeginAnimation(OpacityProperty, null);
         ArtistDetailContentHost.Opacity = 1;
         if (ArtistDetailContentHost.RenderTransform is TranslateTransform rmh)
@@ -1503,7 +2355,7 @@ public partial class MainWindow : Window
             if (AlbumDetailInfo.RenderTransform is TranslateTransform rmi)
                 rmi.BeginAnimation(TranslateTransform.YProperty, null);
         }
-        // During album transitions, don't restore AlbumDetailView or art —
+        // During album transitions, don't restore AlbumDetailView or art â€”
         // the caller hides them explicitly to prevent double-image.
         if (!_isAlbumTransition)
         {
@@ -1636,7 +2488,7 @@ public partial class MainWindow : Window
                     }
                 }
                 // Reveal gate: hold the flown overlay over the art target until the
-                // async album load for THIS navigation has landed — otherwise the
+                // async album load for THIS navigation has landed â€” otherwise the
                 // provisional-art swap and the rows pop show mid-zoom. Capped at
                 // 500ms (genuinely empty albums, or a user who navigated away
                 // mid-morph, must never hold the overlay forever).
@@ -1686,7 +2538,7 @@ public partial class MainWindow : Window
 
     // True once the async album load for the in-flight forward hero has landed
     // (track list + final art published for the target album/artist). The track
-    // count is the real signal — names are published synchronously up front.
+    // count is the real signal â€” names are published synchronously up front.
     private bool IsAlbumDataReady() => ViewModel is { } vm
         && string.Equals(vm.CurrentAlbumName, _albumTransitionAlbumName, StringComparison.Ordinal)
         && string.Equals(vm.CurrentAlbumArtist, _albumTransitionArtist, StringComparison.Ordinal)
@@ -1734,7 +2586,7 @@ public partial class MainWindow : Window
     }
 
     // Reverse-flight image for album transitions: must be the SAME canonical
-    // cover the forward flight carried and the page is showing — flying the
+    // cover the forward flight carried and the page is showing â€” flying the
     // clicked track's own art instead visibly swaps covers at landing for
     // multi-art pseudo-albums ("Unknown Album").
     // 1) the on-screen detail art visual (pixel-exact, zero lag),
@@ -1769,7 +2621,7 @@ public partial class MainWindow : Window
         _navGen = NavGate.NewNavigation();
 
         // Without a genuine hero ENTRY the stored source state is stale (e.g. a
-        // list-entered album after an earlier hero transition) — fall back to a
+        // list-entered album after an earlier hero transition) â€” fall back to a
         // plain GoBack with the standard page zoom instead of flying to a wrong card.
         if (!_albumDetailEnteredViaHero || string.IsNullOrEmpty(_artistTransitionArtistName) || _artistTransitionSourceSize.Width <= 0)
         {
@@ -1956,7 +2808,7 @@ public partial class MainWindow : Window
         ArtistTransitionOverlay.BeginAnimation(OpacityProperty, overlayFade);
 
         // Reveal the hidden source card the moment the overlay starts fading, so the
-        // card is already back underneath the fading pixels — no gap, no double image.
+        // card is already back underneath the fading pixels â€” no gap, no double image.
         if (_hiddenReverseCard != null)
         {
             long revealGen = _navGen;
@@ -1987,7 +2839,7 @@ public partial class MainWindow : Window
                 TransitionInputBlocker.Visibility = Visibility.Collapsed;
             // Safety net: if the view never actually changed (silent no-op GoBack
             // on a duplicate history top), the detail page hidden for the flight
-            // would stay invisible forever — restore it so a ghost empty page is
+            // would stay invisible forever â€” restore it so a ghost empty page is
             // impossible. Harmless otherwise (already visible pages ignore it).
             if (string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal))
             {
@@ -1998,7 +2850,7 @@ public partial class MainWindow : Window
         ArtistTransitionTranslate.BeginAnimation(TranslateTransform.YProperty, morphAnim);
 
         // If this reverse returns from an album detour to the artist page, the album
-        // entry overwrote the shared hero slot — restore the stashed artist state now
+        // entry overwrote the shared hero slot â€” restore the stashed artist state now
         // that ReMeasureReverseSource (which needs the album state) has run, so the
         // NEXT back (artist -> grid) still has its own reverse animation.
         if (_isAlbumTransition && _stashedArtistHero != null &&
@@ -2046,7 +2898,7 @@ public partial class MainWindow : Window
         }
 
         if (card == null || circle == null || !circle.IsVisible || circle.ActualWidth <= 0)
-            return; // Card not realized (scrolled out) — keep the stored position.
+            return; // Card not realized (scrolled out) â€” keep the stored position.
 
         try
         {
@@ -2055,7 +2907,7 @@ public partial class MainWindow : Window
         }
         catch
         {
-            return; // Disconnected visual — keep the stored position.
+            return; // Disconnected visual â€” keep the stored position.
         }
 
         _hiddenReverseCard = card;
@@ -2081,7 +2933,7 @@ public partial class MainWindow : Window
 
                 // Artist cards clip their square with an ellipse; album cards do not.
                 // Album and genre cards are structurally identical (Grid 150 +
-                // ClipToBounds), but only album cards hold the artwork Image — the
+                // ClipToBounds), but only album cards hold the artwork Image â€” the
                 // discriminator that keeps a genre card from stealing the match.
                 if (album)
                 {
@@ -2108,7 +2960,7 @@ public partial class MainWindow : Window
                 artBox.Child is Image &&
                 string.Equals(t2.Album, name, StringComparison.OrdinalIgnoreCase))
             {
-                // Artist-page album card (140x140 art box holding the Image) — the
+                // Artist-page album card (140x140 art box holding the Image) â€” the
                 // reverse morph re-measures here so it lands back on the same card.
                 return (b2, artBox);
             }
@@ -2242,7 +3094,7 @@ public partial class MainWindow : Window
         // Cache the routed pointer position for the (rare) no-GetCursorPos
         // fallback and for swipe initiation. This is skipped once the drag is
         // live: a recycled container under capture answers e.GetPosition with
-        // its OLD slot — the source row — and would feed a stale position.
+        // its OLD slot â€” the source row â€” and would feed a stale position.
         if (QueueDragCanvas != null && !_queueIsDragging)
             _queueDragCanvasMouse = e.GetPosition(QueueDragCanvas);
 
@@ -2266,7 +3118,7 @@ public partial class MainWindow : Window
         if (!_queueIsDragging && !_queueIsSwiping)
         {
             // Initiation needs a live press: after any cleanup (commit/cancel)
-            // the physical button may still be held while the gesture is over —
+            // the physical button may still be held while the gesture is over â€”
             // without this guard those moves re-arm phantom drags/swipes from
             // the stale anchor (double cancels, ghost visuals, stray removes).
             if (!_queuePressActive) return;
@@ -2289,8 +3141,8 @@ public partial class MainWindow : Window
                 // and swipe to remove are object-based and stay enabled).
                 if (ViewModel != null && !string.IsNullOrWhiteSpace(ViewModel.QueueFilterText))
                     return;
-                // If the drawer open animation (scale 0.88→1) is still running,
-                // do NOT snap to 1.0 instantly — that pop reads as "the queue
+                // If the drawer open animation (scale 0.88â†’1) is still running,
+                // do NOT snap to 1.0 instantly â€” that pop reads as "the queue
                 // grew the moment I grabbed it". Spring the remaining distance
                 // smoothly instead; a panel that is already at 1.0 just stays.
                 if (QueueDrawerScale != null)
@@ -2338,14 +3190,14 @@ public partial class MainWindow : Window
                 _queueDragFromIndex = resolvedIndex;
                 _queueCurrentDropIndex = resolvedIndex;
                 _lastDisplacedTargetIndex = resolvedIndex;
-                // Build O(1) track→index cache once — used by RehydrateQueueContainerDisplacement
+                // Build O(1) trackâ†’index cache once â€” used by RehydrateQueueContainerDisplacement
                 // to avoid O(n) Queue.IndexOf on every recycled container during auto-scroll.
                 BuildQueueIndexCache();
 
                 // Cache QueueListBox position in canvas space once at DragStart.
                 // TranslatePoint goes through the ScaleTransform and is sensitive
                 // to every layout pass (ScrollToVerticalOffset triggers one per
-                // frame) — reading it each frame made posInListBox.Y jitter by
+                // frame) â€” reading it each frame made posInListBox.Y jitter by
                 // 1-3px even with a motionless cursor, flipping the gap index.
                 if (QueueListBox != null && QueueDragCanvas != null)
                 {
@@ -2361,7 +3213,7 @@ public partial class MainWindow : Window
                 fe.Cursor = Cursors.SizeAll;
                 // Transfer capture from the row-border to QueueListBox (a permanent
                 // non-virtualizing element). The Release fires QueueItem_LostMouseCapture
-                // synchronously — suppress its recapture logic during this transfer.
+                // synchronously â€” suppress its recapture logic during this transfer.
                 _isTransferringCapture = true;
                 if (fe.IsMouseCaptured) fe.ReleaseMouseCapture();
                 if (QueueListBox != null && !QueueListBox.IsMouseCaptured)
@@ -2372,7 +3224,7 @@ public partial class MainWindow : Window
                 _isTransferringCapture = false;
                 // Keep the drag cursor over the whole drawer surface (the row
                 // border's SizeAll only applies while the pointer is over the
-                // row itself — past the bottom edge it reverts to the default
+                // row itself â€” past the bottom edge it reverts to the default
                 // arrow right where the gap keeps scrolling).
                 if (QueueDrawerOverlay != null) QueueDrawerOverlay.Cursor = Cursors.SizeAll;
                 SetQueueItemVisibility(resolvedIndex, hidden: true);
@@ -2479,13 +3331,13 @@ public partial class MainWindow : Window
         if (_isCommittingDrop || _isCleaningUpDrag) return;
         // Suppress during deliberate capture transfer to QueueListBox at DragStart.
         if (_isTransferringCapture) return;
-        // While inactive the OS owns capture churn — verdict belongs to OnWindowActivated.
+        // While inactive the OS owns capture churn â€” verdict belongs to OnWindowActivated.
         if (!IsActive) return;
         if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
         {
             // If QueueListBox already holds capture, this LostCapture fired because
             // we deliberately released the row-border during the DragStart transfer.
-            // Do NOT recapture to the border — QueueListBox is the intended owner.
+            // Do NOT recapture to the border â€” QueueListBox is the intended owner.
             if (_queueIsDragging && QueueListBox != null && QueueListBox.IsMouseCaptured)
             {
                 _queueCapturedElement = QueueListBox;
@@ -2493,7 +3345,7 @@ public partial class MainWindow : Window
             }
 
             // Button still down: capture died because virtualization recycled
-            // the source row — re-capture to QueueListBox (stable, non-virtualizing).
+            // the source row â€” re-capture to QueueListBox (stable, non-virtualizing).
             if (_queueIsDragging && Mouse.LeftButton == MouseButtonState.Pressed &&
                 _queueDraggedTrack != null && QueueListBox != null)
             {
@@ -2533,12 +3385,12 @@ public partial class MainWindow : Window
     {
         if (_isCommittingDrop || _isCleaningUpDrag) return;
         // While inactive (Alt-Tabbed away) capture loss is expected OS behavior,
-        // not a user abort — leave the verdict to OnWindowActivated.
+        // not a user abort â€” leave the verdict to OnWindowActivated.
         if (!IsActive) return;
         if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
         {
             // A live drag whose button is still down is owned by the row-level
-            // handler (re-capture or cancel) — never double-cancel from here.
+            // handler (re-capture or cancel) â€” never double-cancel from here.
             if (_queueIsDragging && Mouse.LeftButton == MouseButtonState.Pressed) return;
             LogHelper.LogInfo("[QUEUE_DRAG] DragCancel.LostCapture (Window)");
             CancelQueueDrag("LostCapture");
@@ -2553,7 +3405,7 @@ public partial class MainWindow : Window
         // which cancels only if the button was released while away.
         if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
         {
-            LogHelper.LogInfo("[QUEUE_DRAG] Deactivated during drag — verdict deferred to Activated");
+            LogHelper.LogInfo("[QUEUE_DRAG] Deactivated during drag â€” verdict deferred to Activated");
         }
     }
 
@@ -2586,7 +3438,7 @@ public partial class MainWindow : Window
             // Same as deactivation: defer the verdict to OnWindowActivated.
             if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
             {
-                LogHelper.LogInfo("[QUEUE_DRAG] Minimized during drag — verdict deferred to Activated");
+                LogHelper.LogInfo("[QUEUE_DRAG] Minimized during drag â€” verdict deferred to Activated");
             }
         }
     }
@@ -2602,7 +3454,7 @@ public partial class MainWindow : Window
         {
             // A release always commits where the CARD points: recompute the gap
             // fresh from the clamped aim point (same ClampDropY the visual uses),
-            // so a drop past the edge lands at the edge — never snaps back.
+            // so a drop past the edge lands at the edge â€” never snaps back.
             // Genuine aborts stay explicit: Escape key, drawer close, or a
             // release while away ( arbitrated on re-activation).
             if (QueueListBox != null)
@@ -2642,7 +3494,7 @@ public partial class MainWindow : Window
     }
 
     // The card is clamped inside the list (see dragTop clamp) while the cursor
-    // may run past the panel edge on a fast flick. The gap — and the drop —
+    // may run past the panel edge on a fast flick. The gap â€” and the drop â€”
     // must follow the CARD (what the user sees), so clamp the aim point to the
     // card's travel range: [18, listH-30] mirrors cardTop in [listTop-10,
     // listBottom-58] plus the 28px cursor-to-card offset.
@@ -2697,7 +3549,7 @@ public partial class MainWindow : Window
         int rawTarget = newIndex > fromIndex ? newIndex - 1 : newIndex;
         rawTarget = Math.Clamp(rawTarget, 0, Math.Max(0, ViewModel.Queue.Count - 1));
 
-        // Rate-limiter: only commit rawTarget after it has been stable for ≥2 calls during auto-scroll
+        // Rate-limiter: only commit rawTarget after it has been stable for â‰¥2 calls during auto-scroll
         int targetIndex;
         if (rawTarget == _queuePendingTargetIndex)
         {
@@ -2816,7 +3668,7 @@ public partial class MainWindow : Window
             }
         }
 
-        // O(1) track→index lookup from pre-built drag cache.
+        // O(1) trackâ†’index lookup from pre-built drag cache.
         // Falls back to IndexFromContainer + Queue.IndexOf only on a cache miss
         // (first-frame edge case before BuildQueueIndexCache completes).
         int itemIndex;
@@ -2835,7 +3687,7 @@ public partial class MainWindow : Window
         int targetIndex = _lastDisplacedTargetIndex;
         double expectedY = CalculateExpectedDisplacement(itemIndex, fromIndex, targetIndex);
 
-        // Use cached TranslateTransform — avoids repeated VisualTree walks
+        // Use cached TranslateTransform â€” avoids repeated VisualTree walks
         var translate = GetOrCacheTranslateTransform(border);
         if (translate == null) return;
 
@@ -2854,7 +3706,7 @@ public partial class MainWindow : Window
 
         if (canAnimate && Math.Abs(translate.Y - expectedY) > 0.5)
         {
-            // Shared QuinticEaseOut — no GC allocation per animation
+            // Shared QuinticEaseOut â€” no GC allocation per animation
             var anim = new System.Windows.Media.Animation.DoubleAnimation(translate.Y, expectedY,
                 TimeSpan.FromMilliseconds(170))
             {
@@ -2870,7 +3722,7 @@ public partial class MainWindow : Window
         }
     }
 
-    // Build O(1) track→index lookup table. Called once at DragStart.
+    // Build O(1) trackâ†’index lookup table. Called once at DragStart.
     // During the drag, Queue order is frozen (commit only on drop), so
     // this snapshot stays valid for the entire drag session.
     private void BuildQueueIndexCache()
@@ -2883,7 +3735,7 @@ public partial class MainWindow : Window
     }
 
     // Returns only realized (visible) ListBoxItem containers from the VirtualizingStackPanel.
-    // This is ~16× faster than iterating all items via ContainerFromIndex(i).
+    // This is ~16Ã— faster than iterating all items via ContainerFromIndex(i).
     private IEnumerable<ListBoxItem> GetRealizedQueueContainers()
     {
         _queueVsp ??= FindDescendant<VirtualizingStackPanel>(QueueListBox);
@@ -2896,7 +3748,7 @@ public partial class MainWindow : Window
         }
     }
 
-    // Returns a cached TranslateTransform for a border — walks VisualTree only on first access.
+    // Returns a cached TranslateTransform for a border â€” walks VisualTree only on first access.
     private TranslateTransform? GetOrCacheTranslateTransform(Border border)
     {
         if (_translateCache.TryGetValue(border, out var cached)) return cached;
@@ -2908,7 +3760,7 @@ public partial class MainWindow : Window
     private void ApplyNeighborDisplacement(int fromIndex, int targetIndex, bool animate)
     {
         if (QueueListBox == null || ViewModel == null) return;
-        // Only iterate realized (visible) containers — skips all virtualized rows
+        // Only iterate realized (visible) containers â€” skips all virtualized rows
         foreach (var container in GetRealizedQueueContainers())
         {
             RehydrateQueueContainerDisplacement(container, animateIfTrackMatches: animate);
@@ -3004,7 +3856,7 @@ public partial class MainWindow : Window
             MusicTrack trackToMove = _queueDraggedTrack;
             var capturedFe = _queueCapturedElement;
 
-            // ── Release capture BEFORE starting any animation so that the flood of
+            // â”€â”€ Release capture BEFORE starting any animation so that the flood of
             //    MouseMove events generated by ReleaseMouseCapture is handled while
             //    _isCommittingDrop = true (suppressed) rather than after the flag
             //    is cleared by the Completed callback, which was causing an
@@ -3432,7 +4284,7 @@ public partial class MainWindow : Window
     // Geometric gap index: returns the insertion gap [0..Count] where the
     // dragged row should land. Rows are uniform (56px + 2px margins = 60px
     // pitch, no top padding), so the gap maps directly from the cursor Y plus
-    // the scroll offset — valid for realized AND unrealized regions. Probing
+    // the scroll offset â€” valid for realized AND unrealized regions. Probing
     // realized containers capped the gap at the realization edge, so fast
     // drops below the visible rows landed too shallow. Convention matches the
     // old midpoint rule: gap = first row whose midpoint is below the cursor.
@@ -3490,7 +4342,7 @@ public partial class MainWindow : Window
     {
         if (_queueAutoScrollActive) return;
         _queueAutoScrollActive = true;
-        _queueScrollVelocity = 0.0; // start fresh — velocity accelerates from zero
+        _queueScrollVelocity = 0.0; // start fresh â€” velocity accelerates from zero
         EnsurePerfRenderActive();
     }
 
@@ -3522,9 +4374,9 @@ public partial class MainWindow : Window
         bool horizInRange = mousePos.X >= -60 && mousePos.X <= listW + 60;
 
         // Velocity-based acceleration: starts slow, ramps up the longer the pointer
-        // stays at the edge — AND faster the deeper the mouse is into the edge zone.
+        // stays at the edge â€” AND faster the deeper the mouse is into the edge zone.
         // edgeFactor 0..1 = how far into the zone (0=boundary, 1=extreme edge/outside).
-        // AccelPerSec is multiplied by (0.4 + edgeFactor * 1.6) → 0.4×..2.0× base rate.
+        // AccelPerSec is multiplied by (0.4 + edgeFactor * 1.6) â†’ 0.4Ã—..2.0Ã— base rate.
         const double VelocityMin   = 0.8;   // initial speed (rows/25ms)
         const double VelocityMax   = 9.0;   // cap (~540 px/s at 60 Hz)
         const double AccelPerSec   = 4.5;   // base velocity gained per second at edge
@@ -3638,7 +4490,7 @@ public partial class MainWindow : Window
         }
         else if (_queueScrollVelocity <= 0.01)
         {
-            // Velocity fully drained and not at edge — stop auto-scroll
+            // Velocity fully drained and not at edge â€” stop auto-scroll
             StopAutoScroll();
         }
         // else: still decelerating with remaining velocity, continue next frame
@@ -3745,7 +4597,7 @@ public partial class MainWindow : Window
     // A recycled container keeps its visuals (Recycling reuses the whole subtree
     // including RenderTransforms). Without this, rows that scrolled out mid-drag
     // re-enter later with stale displacement offsets / hidden opacity / stale gap
-    // Tags — overlapping text, invisible rows, poisoned drop math. Clean EVERY
+    // Tags â€” overlapping text, invisible rows, poisoned drop math. Clean EVERY
     // container as it leaves realization so reuse always starts pristine. The
     // dragged row's own hide is re-applied independently on every pump by
     // ApplyNeighborDisplacement, so no container ever carries or loses it here.
@@ -3815,15 +4667,15 @@ public partial class MainWindow : Window
         {
             QueueDrawerOverlay.Visibility = Visibility.Visible;
 
-            // Scale: 0.88 → 1
+            // Scale: 0.88 â†’ 1
             var scaleAnim = new DoubleAnimation(0.88, 1.0, TimeSpan.FromMilliseconds(280)) { EasingFunction = ease };
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnim);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnim);
 
-            // Fade panel in: 0 → 1
+            // Fade panel in: 0 â†’ 1
             QueueDrawerPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(250)) { EasingFunction = ease });
 
-            // Backdrop fade: 0 → 1
+            // Backdrop fade: 0 â†’ 1
             QueueDrawerBackdrop.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
 
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
@@ -3841,12 +4693,12 @@ public partial class MainWindow : Window
             var closeEase = new CubicEase { EasingMode = EasingMode.EaseIn };
             var dur = TimeSpan.FromMilliseconds(200);
 
-            // Scale: 1 → 0.88
+            // Scale: 1 â†’ 0.88
             var scaleOut = new DoubleAnimation(1.0, 0.88, dur) { EasingFunction = closeEase };
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleOut);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleOut);
 
-            // Fade panel out: 1 → 0
+            // Fade panel out: 1 â†’ 0
             var fadeOut = new DoubleAnimation(QueueDrawerPanel.Opacity, 0, dur) { EasingFunction = closeEase };
             fadeOut.Completed += (_, _) =>
             {
@@ -3971,13 +4823,13 @@ public partial class MainWindow : Window
         if (ViewModel == null || ViewModel.Duration.TotalSeconds <= 0) return;
         var slider = (Slider)sender;
 
-        // Grabbing the thumb itself → normal drag (handled by DragStarted/DragCompleted)
+        // Grabbing the thumb itself â†’ normal drag (handled by DragStarted/DragCompleted)
         if (TryGetSeekThumb(slider, out var thumb) && IsPointInElement(thumb, e.GetPosition(thumb)))
             return;
 
-        // Click anywhere on the bar → jump there, and scrub (with pause) if the user drags.
+        // Click anywhere on the bar â†’ jump there, and scrub (with pause) if the user drags.
         var pct = Math.Clamp(e.GetPosition(slider).X / Math.Max(1, slider.ActualWidth) * 100.0, 0, 100);
-        slider.Value = pct; // TwoWay binding → PlaybackProgress setter → Seek()
+        slider.Value = pct; // TwoWay binding â†’ PlaybackProgress setter â†’ Seek()
         _seekScrubStart = e.GetPosition(slider);
         _seekScrubActive = true;
         _seekScrubPaused = false;
@@ -4006,7 +4858,7 @@ public partial class MainWindow : Window
         if (_seekScrubPaused)
         {
             var pct = Math.Clamp(pos.X / Math.Max(1, slider.ActualWidth) * 100.0, 0, 100);
-            slider.Value = pct; // IsSeeking setter → live Position preview only
+            slider.Value = pct; // IsSeeking setter â†’ live Position preview only
         }
     }
 
@@ -4211,7 +5063,51 @@ public partial class MainWindow : Window
     private void WallpaperItem_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is FrameworkElement { Tag: MusicPlayer.Models.WallpaperItem item })
+        {
+            ShowWallpaperPreview(item);
             ViewModel?.SelectWallpaperCommand.Execute(item);
+        }
+    }
+
+    // Instant feedback: the gallery thumbnail (240px, already in memory) is shown
+    // synchronously (~ms), then the full async path replaces it. With blur on, a
+    // tiny blurred render keeps the look consistent. Best-effort only â€” the full
+    // path (with generation guard + fallbacks) remains authoritative.
+    private void ShowWallpaperPreview(MusicPlayer.Models.WallpaperItem item)
+    {
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            var thumb = item.ThumbnailSource;
+            if (thumb == null) return;
+            double blur = ViewModel?.WallpaperBlur ?? 0;
+            if (blur < 0.5)
+            {
+                BackgroundImage.Source = thumb;
+            }
+            else
+            {
+                const int w = 320, h = 180;
+                var target = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+                var visual = new DrawingVisual();
+                using (var ctx = visual.RenderOpen())
+                {
+                    var ib = new ImageBrush(thumb) { Stretch = Stretch.UniformToFill };
+                    ctx.DrawRectangle(ib, null, new Rect(0, 0, w, h));
+                }
+                target.Render(visual);
+                var blurred = new BlurEffect { Radius = System.Math.Max(2, blur / 6), RenderingBias = RenderingBias.Performance };
+                var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
+                wrapper.Measure(new Size(w, h));
+                wrapper.Arrange(new Rect(0, 0, w, h));
+                var result = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+                result.Render(wrapper);
+                result.Freeze();
+                BackgroundImage.Source = result;
+            }
+            LogHelper.LogInfo($"[Wallpaper] preview applied: previewMs={ElapsedMs(t0):0}");
+        }
+        catch { }
     }
 
     private void WallpaperCategory_Click(object sender, MouseButtonEventArgs e)
@@ -4225,7 +5121,7 @@ public partial class MainWindow : Window
         MessageBox.Show("Audio Editor: Select a track and use Trim start/end to export a 10s clip (demo: uses NAudio WaveFileWriter).", "Audio Editor");
     }
 
-    // ─── More options popup (⋮ button) ────────────────────────────────
+    // â”€â”€â”€ More options popup (â‹® button) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private void MoreOptionsBtn_Click(object sender, RoutedEventArgs e)
     {
         MoreOptionsPanel.BeginAnimation(OpacityProperty, null);
@@ -4486,7 +5382,7 @@ public partial class MainWindow : Window
     {
         if (sender is not System.Windows.FrameworkElement grid || !(bool)e.NewValue) return;
 
-        // إعادة تعيين الحالة الأولية
+        // Ø¥Ø¹Ø§Ø¯Ø© ØªØ¹ÙŠÙŠÙ† Ø§Ù„Ø­Ø§Ù„Ø© Ø§Ù„Ø£ÙˆÙ„ÙŠØ©
         grid.Opacity = 0;
         var tf = grid.RenderTransform as System.Windows.Media.TranslateTransform;
         if (tf == null)
@@ -4496,7 +5392,7 @@ public partial class MainWindow : Window
         }
         tf.Y = 14;
 
-        // إنشاء Storyboard بـ 60fps وتشغيله
+        // Ø¥Ù†Ø´Ø§Ø¡ Storyboard Ø¨Ù€ 60fps ÙˆØªØ´ØºÙŠÙ„Ù‡
         var sb = new System.Windows.Media.Animation.Storyboard();
         System.Windows.Media.Animation.Timeline.SetDesiredFrameRate(sb, 60);
 
@@ -4529,7 +5425,7 @@ public partial class MainWindow : Window
             ViewModel?.HideTrackCommand.Execute(track);
     }
 
-    // ─── Currently Playing swipe page gesture ─────────────────────────
+    // â”€â”€â”€ Currently Playing swipe page gesture â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private Point _swipeStart;
     private bool _swiping;
     private bool _swallowClick;
@@ -4599,7 +5495,7 @@ public partial class MainWindow : Window
         if (ViewModel != null) ViewModel.CurrentlyPlayingPage = CurrentlyPlayingPage.Lyrics;
     }
 
-    // ─── Lyrics auto-scroll + slide animation ─────────────────────────
+    // â”€â”€â”€ Lyrics auto-scroll + slide animation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private CurrentlyPlayingPage _previousPlayingPage = CurrentlyPlayingPage.AlbumArt;
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -4853,7 +5749,7 @@ public partial class MainWindow : Window
 
     private void RunFullPlayerTransitionProbe()
     {
-        // Self-measured frame-pacing probe for Mini ⇄ Full Player. Records the real
+        // Self-measured frame-pacing probe for Mini â‡„ Full Player. Records the real
         // per-frame interval (with absolute timestamps), slices the capture into
         // BEFORE/DURING/AFTER windows of the actual transition and reports avg/p95/
         // worst frame + counts of missed (16.67ms) and janky (>33.33ms) frames, plus
@@ -5136,57 +6032,54 @@ public partial class MainWindow : Window
                 img.Opacity = 1;
             }
         }
+        // CacheMode was removed from AnimatePageEnter; guard left for safety only.
+        if (ContentGrid != null && ContentGrid.CacheMode != null)
+            ContentGrid.CacheMode = null;
         LogHelper.LogInfo($"EnsureDetailPageOpacity: reset detail page + inner children");
     }
 
 
     // Page zoom-out for plain view changes (both directions: home -> ALL SONGS
     // and ALL SONGS -> home). The page starts slightly zoomed-in (1.05) and dim,
-    // and settles to 1.0 / full opacity — a clean "camera pulls out" feel.
+    // and settles to 1.0 / full opacity â€” a clean "camera pulls out" feel.
     //
     // Two rules make this look right (the old implementation violated both and
     // read as a "grows then shrinks" bounce):
     //  1. Callers must invoke this SYNCHRONOUSLY with the CurrentView change,
     //     so the FIRST presented frame is already at 1.05/dim. Deferring one
-    //     frame lets the swap render at full size first — that jump is the bounce.
+    //     frame lets the swap render at full size first â€” that jump is the bounce.
     //  2. ClipToBounds while scaled, so the oversized page never bleeds over
     //     the fixed header bar above ContentGrid.
     // Arrival-side navigation choreographies. Hero/reverse flights own their own
     // reveal and skip this entirely (see the guards at the call site).
-    private void RunSongsEntryChoreography()
-    {
-        // First-time songs entry: pay the visible page's one-time container
-        // generation + full-subtree layout SYNCHRONOUSLY BEFORE starting
-        // the zoom-out. Deferring it (or letting it land inside the
-        // animation) makes the UI thread stall mid-animation — the first
-        // entry played at a visibly reduced frame count. The click → first
-        // frame is a little later on the very first entry only; every
-        // later entry is already laid out and starts instantly.
-        // ContentGrid (not TabContent_Songs) so whichever tab was last
-        // active (tracks list / artists grid / ...) gets pre-laid-out too.
-        try { ContentGrid.UpdateLayout(); } catch { }
-        AnimatePageEnter();
-    }
+    private void RunSongsEntryChoreography() => AnimatePageEnterZoom();
 
-    private void RunPageZoomChoreography() => AnimatePageEnter();
+    private void RunPageZoomChoreography() => AnimatePageEnterZoom();
 
-    private void AnimatePageEnter()
+    // Full zoom + fade entrance â€” camera pulls out (1.05 -> 1.0) with smooth fade-in (0.55 -> 1.0).
+    // Zero BitmapCache backing ensures GPU never stalls on Intel HD Graphics.
+    private void AnimatePageEnterZoom()
     {
         if (ContentGrid == null) return;
-        var st = EnsureZoomTransform();
-        var dur = MotionTokens.PageEnter;
+        var st   = EnsureZoomTransform();
+        var dur  = MotionTokens.PageEnter;
         var ease = MotionTokens.EaseOut;
 
         ContentGrid.ClipToBounds = true;
-        st.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.05, 1, dur) { EasingFunction = ease });
-        st.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.05, 1, dur) { EasingFunction = ease });
-        var fade = new DoubleAnimation(0.55, 1, dur) { EasingFunction = ease };
+        st.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        st.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        st.ScaleX = 1.05;
+        st.ScaleY = 1.05;
+        ContentGrid.BeginAnimation(OpacityProperty, null);
+        ContentGrid.Opacity = 0.55;
+
+        st.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.05, 1.0, dur) { EasingFunction = ease });
+        st.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.05, 1.0, dur) { EasingFunction = ease });
+        var fade = new DoubleAnimation(0.55, 1.0, dur) { EasingFunction = ease };
         long gen = _navGen;
         fade.Completed += (_, _) =>
         {
             if (!NavGate.IsCurrent(gen)) return;
-            // Only the latest navigation's completion clears the clip; a replaced
-            // animation's Completed never fires, so this can't unclip mid-flight.
             ContentGrid.ClipToBounds = false;
         };
         ContentGrid.BeginAnimation(OpacityProperty, fade);
@@ -5194,10 +6087,10 @@ public partial class MainWindow : Window
 
     private ScaleTransform EnsureZoomTransform()
     {
+        ContentGrid.RenderTransformOrigin = new Point(0.5, 0.5);
         if (ContentGrid.RenderTransform is ScaleTransform st) return st;
         st = new ScaleTransform(1, 1);
         ContentGrid.RenderTransform = st;
-        ContentGrid.RenderTransformOrigin = new Point(0.5, 0.5);
         return st;
     }
 
@@ -5597,7 +6490,7 @@ public partial class MainWindow : Window
     {
         if (_lyricsScrollProgrammatic) return;
 
-        // Single reused timer (created in the constructor) — no per-event allocation.
+        // Single reused timer (created in the constructor) â€” no per-event allocation.
         _lyricsUserScrollPause?.Stop();
         _lyricsUserScrollPause?.Start();
     }
@@ -5957,4 +6850,5 @@ public partial class MainWindow : Window
         }
         return null;
     }
+}
 }

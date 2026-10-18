@@ -181,6 +181,7 @@ public partial class MainViewModel : ViewModelBase
 	private double _wallpaperAlpha = 51.0;
 	private string _themeEditWallpaperPath = string.Empty;
 	private double _themeEditBlur = 0.0;
+	private System.Windows.Threading.DispatcherTimer? _themeEditBlurTimer;
 	private double _themeEditAlpha = 51.0;
 	private bool _isStatusBarLyricsEnabled;
 
@@ -1449,6 +1450,7 @@ public partial class MainViewModel : ViewModelBase
 				OnPropertyChanging(nameof(ThemeEditWallpaperPath));
 				_themeEditWallpaperPath = value;
 				OnPropertyChanged(nameof(ThemeEditWallpaperPath));
+				RebakeThemePreview();
 			}
 		}
 	}
@@ -1462,9 +1464,120 @@ public partial class MainViewModel : ViewModelBase
 			{
 				OnPropertyChanging(nameof(ThemeEditBlur));
 				_themeEditBlur = value;
-				OnPropertyChanged(nameof(ThemeEditBlur));
+				// Coalesce preview notifications while dragging: the editor preview
+				// re-blurs per tick. The getter stays live (slider thumb + save both
+				// read the field), only the broadcast is throttled to ~8Hz.
+				if (_themeEditBlurTimer == null)
+				{
+					_themeEditBlurTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+					_themeEditBlurTimer.Tick += (_, _) =>
+					{
+						_themeEditBlurTimer?.Stop();
+						PublishThemeEditBlur();
+					};
+					PublishThemeEditBlur();
+					_themeEditBlurTimer.Start();
+				}
+				else if (!_themeEditBlurTimer.IsEnabled)
+				{
+					PublishThemeEditBlur();
+					_themeEditBlurTimer.Start();
+				}
 			}
 		}
+	}
+
+	private void PublishThemeEditBlur()
+	{
+		OnPropertyChanged(nameof(ThemeEditBlur));
+		RebakeThemePreview();
+	}
+
+	private System.Windows.Media.ImageSource? _themePreviewImage;
+	public System.Windows.Media.ImageSource? ThemePreviewImage
+	{
+		get => _themePreviewImage;
+		private set
+		{
+			if (!ReferenceEquals(_themePreviewImage, value))
+			{
+				_themePreviewImage = value;
+				OnPropertyChanged(nameof(ThemePreviewImage));
+			}
+		}
+	}
+
+	// Rebakes the editor preview at half resolution (~336x189, upscaled on
+	// display): ~4x cheaper per refresh than re-rendering the live 672px blur
+	// effect, visually identical for a blurred preview. Runs on the throttled
+	// ticks (and path changes), never per-frame. Any failure keeps the previous
+	// frame — never blanks the preview.
+	private void RebakeThemePreview()
+	{
+		try
+		{
+			string? path = ThemeEditWallpaperPath;
+			if (string.IsNullOrWhiteSpace(path)) { ThemePreviewImage = null; return; }
+			if (Converters.WallpaperThumbnailConverter.IsCached(path, 700))
+			{
+				FinishRebake(path);
+				return;
+			}
+			// Cold first view: decode off the UI thread so entry never stalls on a
+			// synchronous JPEG decode; the baked frame lands (path-guarded) inside
+			// the entry zoom instead. Previous frame (if any) stays meanwhile.
+			string wantPath = path;
+			double wantBlur = _themeEditBlur;
+			Task.Run(() =>
+			{
+				try
+				{
+					var thumb = Converters.WallpaperThumbnailConverter.GetThumbnail(wantPath, 700);
+					if (thumb == null) return;
+					Dispatch(delegate
+					{
+						if (!string.Equals(ThemeEditWallpaperPath, wantPath, StringComparison.OrdinalIgnoreCase)) return;
+						if (Math.Abs(_themeEditBlur - wantBlur) > 0.01 && wantBlur >= 0.5)
+						{
+							RebakeThemePreview();
+							return;
+						}
+						FinishRebake(wantPath);
+					});
+				}
+				catch { }
+			});
+		}
+		catch { }
+	}
+
+	private void FinishRebake(string path)
+	{
+		try
+		{
+			var thumb = Converters.WallpaperThumbnailConverter.GetThumbnail(path, 700);
+			if (thumb == null) return;
+			double blur = _themeEditBlur;
+			if (blur < 0.5) { ThemePreviewImage = thumb; return; }
+			const int w = 336, h = 189;
+			var target = new System.Windows.Media.Imaging.RenderTargetBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+			var visual = new System.Windows.Media.DrawingVisual();
+			using (var ctx = visual.RenderOpen())
+			{
+				var ib = new System.Windows.Media.ImageBrush(thumb) { Stretch = System.Windows.Media.Stretch.UniformToFill };
+				ctx.DrawRectangle(ib, null, new System.Windows.Rect(0, 0, w, h));
+			}
+			target.Render(visual);
+			var blurred = new System.Windows.Media.Effects.BlurEffect { Radius = System.Math.Max(2, blur / 2), RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance };
+			var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
+			wrapper.Measure(new System.Windows.Size(w, h));
+			wrapper.Arrange(new System.Windows.Rect(0, 0, w, h));
+			var result = new System.Windows.Media.Imaging.RenderTargetBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+			result.Render(wrapper);
+			result.Freeze();
+			ThemePreviewImage = result;
+		}
+		catch { }
 	}
 
 	public double ThemeEditAlpha
@@ -3382,6 +3495,39 @@ public partial class MainViewModel : ViewModelBase
 	[ExcludeFromCodeCoverage]
 	public IRelayCommand<HomeCard?> HomeCardClickCommand => homeCardClickCommand ?? (homeCardClickCommand = new RelayCommand<HomeCard>(OnHomeCardClick));
 
+	private string _selectedSettingsSection = "All";
+	public string SelectedSettingsSection
+	{
+		get => _selectedSettingsSection;
+		set
+		{
+			if (!string.Equals(_selectedSettingsSection, value, StringComparison.Ordinal))
+			{
+				_selectedSettingsSection = string.IsNullOrEmpty(value) ? "All" : value;
+				OnPropertyChanged(nameof(SelectedSettingsSection));
+			}
+		}
+	}
+
+	private string _settingsSearchText = string.Empty;
+	public string SettingsSearchText
+	{
+		get => _settingsSearchText;
+		set
+		{
+			if (!string.Equals(_settingsSearchText, value, StringComparison.Ordinal))
+			{
+				_settingsSearchText = value ?? string.Empty;
+				OnPropertyChanged(nameof(SettingsSearchText));
+			}
+		}
+	}
+
+	private RelayCommand<string>? selectSettingsSectionCommand;
+	public IRelayCommand<string?> SelectSettingsSectionCommand => selectSettingsSectionCommand ?? (selectSettingsSectionCommand = new RelayCommand<string>(s => { if (!string.IsNullOrEmpty(s)) SelectedSettingsSection = s; }));
+
+	public string AppVersion => System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? string.Empty;
+
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.RelayCommandGenerator", "8.4.0.0")]
 	[ExcludeFromCodeCoverage]
 	public IRelayCommand<string> NavigateCommand => navigateCommand ?? (navigateCommand = new RelayCommand<string>(Navigate));
@@ -4077,23 +4223,19 @@ public partial class MainViewModel : ViewModelBase
 				PreloadArtistImages(preloadedImages);
 			});
 		}
+		if (sortedTracks != null && sortedTracks.Count > 0)
+		{
+			await _albumArt.PreloadTrackArtwork(sortedTracks.Take(60));
+		}
 		GC.Collect(0);
 		LoadPlaylists();
 		RestoreQueueOnStartup();
 		Queue.CollectionChanged += (_, _) => UpdateQueueSummary();
 		UpdateQueueSummary();
 		IsInitializing = false;
-		// Row-thumbnail warmup starts almost immediately (short grace so the
-		// window finishes its first paint): decoding thumbnails during the
-		// user's FIRST scroll allocates ~1MB per row (LOH) and provokes gen2 GC
-		// storms that ruin scroll cadence (cold measurement: sMed 23.7ms with 9
-		// gen2 collections vs 16.3ms / 0 gen2 once the cache is warm). Running
-		// it during the idle window keeps that work off the first interaction.
-		// The heavier jobs below (wallpaper thumbs, artist face-crop re-process)
-		// still wait for the user to pause.
+		// Row-thumbnail warmup runs immediately in background so the entire library is cached in RAM.
 		_ = Task.Run(async delegate
 		{
-			await Task.Delay(1200);
 			await WarmUpAndRefreshAsync(sortedTracks);
 		});
 		_ = Task.Run(async delegate
@@ -5689,7 +5831,10 @@ public partial class MainViewModel : ViewModelBase
 		await Task.Run(delegate
 		{
 			foreach (MusicTrack t in sortedAlbums)
+			{
+				AlbumArtLoader.Instance?.LoadMediumAlbumArt(t);
 				AlbumArtLoader.Instance?.LoadAlbumArt(t);
+			}
 		});
 		await ReplaceAllChunkedAsync(Albums, sortedAlbums);
 		PerfTabData("albums", Albums.Count);
@@ -7494,6 +7639,19 @@ private async void LoadFolders()
 	}
 	private void OpenThemeGallery()
 	{
+		// Warm the current wallpaper's editor-size decode in the background: the
+		// editor's first paint needs it, and this avoids a cold synchronous decode
+		// inside the entry window. Fire-and-forget, cached, bounded (one file).
+		string wp = BackgroundImagePath;
+		Task.Run(() =>
+		{
+			try
+			{
+				if (!string.IsNullOrWhiteSpace(wp))
+					Converters.WallpaperThumbnailConverter.GetThumbnail(wp, 700);
+			}
+			catch { }
+		});
 		Navigate("theme");
 	}
 	private void ApplyTheme(string? t)
@@ -7701,13 +7859,40 @@ private async void LoadFolders()
 		}
 		FilteredWallpapers.ReplaceAll(list);
 	}
+	private readonly object _settingsSaveLock = new();
+	private Task _settingsSaveChain = Task.CompletedTask;
+	private long _settingsSaveSeq;
+
 	private void SelectWallpaper(WallpaperItem? item)
 	{
 		if (item == null) return;
-		foreach (var wp in Wallpapers) wp.IsSelected = false;
-		item.IsSelected = true;
+		foreach (var wp in Wallpapers)
+		{
+			bool should = ReferenceEquals(wp, item);
+			if (wp.IsSelected != should) wp.IsSelected = should;
+		}
 		BackgroundImagePath = item.FilePath;
-		_db.SetSetting("app_wallpaper", item.FilePath);
+		SaveWallpaperSettingOrdered(item.FilePath);
+	}
+
+	// Ordered, non-blocking settings persistence: chained FIFO on pool threads so
+	// rapid selections can never persist out of order (stale-after-newer), with a
+	// sequence guard as backstop. Same read-modify-write as before, just off-UI.
+	private void SaveWallpaperSettingOrdered(string filePath)
+	{
+		long seq = System.Threading.Interlocked.Increment(ref _settingsSaveSeq);
+		Task prev;
+		lock (_settingsSaveLock) { prev = _settingsSaveChain; _settingsSaveChain = prev.ContinueWith(_ => SaveWallpaperSettingNow(filePath, seq), TaskScheduler.Default); }
+	}
+
+	private void SaveWallpaperSettingNow(string filePath, long seq)
+	{
+		try
+		{
+			if (seq != System.Threading.Volatile.Read(ref _settingsSaveSeq)) return;
+			_db.SetSetting("app_wallpaper", filePath);
+		}
+		catch { }
 	}
 	private void SelectWallpaperCategory(string? category)
 	{

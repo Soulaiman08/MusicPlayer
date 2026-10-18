@@ -34,9 +34,8 @@ public static class LogHelper
         try
         {
             var logFile = Path.Combine(AppPaths.LogsPath, $"error_{DateTime.Now:yyyyMMdd}.log");
-            var entry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{context}] {ex.Message}\n{ex.StackTrace}\n\n";
-            _logQueue.Enqueue((logFile, null, entry));
-            _wake.Set();
+            var entry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{context}] {ex}\n\n";
+            File.AppendAllText(logFile, entry);
         }
         catch { }
     }

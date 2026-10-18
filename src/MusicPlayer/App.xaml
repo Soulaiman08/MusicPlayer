@@ -34,16 +34,21 @@
       <conv:ThemeCardHeightConverter x:Key="ThemeCardHeightConverter" />
       <conv:ThemeColumnsConverter x:Key="ThemeColumnsConverter" />
       <conv:FallbackIfEmptyConverter x:Key="FallbackIfEmptyConverter" />
+      <conv:YearToTextConverter x:Key="YearToTextConverter" />
+      <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibilityConverter" />
+      <conv:FractionOfWidthConverter x:Key="FractionOfWidthConverter" />
+      <conv:RightInsetConverter x:Key="RightInsetConverter" />
+      <conv:HiddenRowConverter x:Key="HiddenRowConverter" />
+      <conv:NonZeroToVisibilityConverter x:Key="NonZeroToVisibilityConverter" />
+      <conv:ActiveBoundaryConverter x:Key="ActiveBoundaryConverter" />
+      <conv:ActiveColumnConverter x:Key="ActiveColumnConverter" />
+    <conv:ColumnHoverConverter x:Key="ColumnHoverConverter" />
+      <conv:SettingsSectionMatchConverter x:Key="SettingsSectionMatchConverter" />
+      <conv:SettingsCardVisibilityConverter x:Key="SettingsCardVisibilityConverter" />
 
+      <RectangleGeometry x:Key="RoundedClip4" Rect="0,0,42,42" RadiusX="4" RadiusY="4" />
       <Style x:Key="RoundedImage4" TargetType="Image">
-        <Setter Property="Clip">
-          <Setter.Value>
-            <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="4">
-              <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
-              <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
-            </MultiBinding>
-          </Setter.Value>
-        </Setter>
+        <Setter Property="Clip" Value="{StaticResource RoundedClip4}" />
       </Style>
       <Style x:Key="RoundedImage6" TargetType="Image">
         <Setter Property="Clip">

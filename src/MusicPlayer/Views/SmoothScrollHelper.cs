@@ -46,7 +46,9 @@ namespace MusicPlayer.Views;
 public static class SmoothScrollHelper
 {
 // ── Scroll feel ────────────────────────────────────────────────
-    private const double PixelsPerNotch = 130.0;
+    // Reference physics aligned with Harmonoid (48px row height):
+    // 48px per notch gives exactly 1 natural row displacement per gentle wheel tick.
+    private const double PixelsPerNotch = 48.0;
 
     // ── Refresh-rate-adaptive frame interval ──────────────────────
     // Default = 60 Hz. Updated at startup by App.xaml.cs once the real
@@ -85,32 +87,29 @@ public static class SmoothScrollHelper
     //  FEEL TUNING — all scroll-character knobs in ONE place.
     //  Adjust these to reshape the motion; no other code needs edits.
     // ═══════════════════════════════════════════════════════════════
-    // Wheel: INPUT-LOCKED CONSTANT VELOCITY. The interval between wheel
-    // notches is smoothed into an interval estimate, and the motion
-    // velocity is seeded as notchPx / interval — so the content travels
-    // exactly at the wheel's cadence (no lag buildup, no ease-out decay,
-    // hard stop when the target is reached).
-    // Cadence of a lone/first notch (cold seed) — one notch per ~55ms
-    // ≈ 2180 px/s: full speed from the first frame, done in ~3 notches.
     private const double SeedNotchIntervalMs = 55.0;
     // EMA smoothing (τ) of the notch interval — larger = steadier speed.
     private const double RateEmaTauMs        = 70.0;
     // Cadence clamps: never seed faster than one notch per frame (16ms)
-    // nor slower than one notch per 150ms (beyond that a wheel is a new
-    // cold start, not a slow cadence).
+    // nor slower than one notch per 150ms.
     private const double MinRateIntervalMs   = 16.0;
     private const double MaxRateIntervalMs   = 150.0;
     // Drag (press + hold + pull): movement (px) needed to tell a drag
     // apart from a click. Also requires |dy| ≥ |dx| (vertical dominance)
     // so horizontal gestures (page swipes) stay untouched.
     private const double DragThresholdPx   = 8.0;
-    // Velocity cap for the seeded wheel speed (px/s).
-    private const double MaxVelocityPxS    = 4000.0;
+
+    // Natural deceleration time-constant for position approach.
+    // tau = 75ms at 60Hz gives a smooth, organic glide matching Harmonoid's Flutter curve
+    // while small single ticks settle within ~250ms with no lingering crawl.
+    private const double ApproachTauS      = 0.075;
+
+    // Per-frame step cap: allows fast flicks to reach up to ~5760 px/s while maintaining smooth flow.
+    private const double MaxFrameStepPx    = 96.0;
 
     // ── Safety / infra (not feel) ────────────────────────────────
-    // Absolute safety net: a motion that cannot converge is force-frozen
-    // after this long so the layout gate can never stick.
-    private const double MaxFlightMs       = 700.0;
+    // Absolute safety net: extended to 1200ms to allow long continuous glides to settle naturally.
+    private const double MaxFlightMs       = 1200.0;
 
     // Micro-pixel guard: offsets changing by less than this are not pushed
     // into ScrollToVerticalOffset — redundant sub-pixel measure/arrange passes
@@ -250,22 +249,15 @@ public static class SmoothScrollHelper
         VirtualizingPanel.SetIsVirtualizing(sv, true);
         VirtualizingPanel.SetVirtualizationMode(sv, VirtualizationMode.Recycling);
         VirtualizingPanel.SetScrollUnit(sv, ScrollUnit.Pixel);
-        VirtualizingPanel.SetCacheLengthUnit(sv, VirtualizationCacheLengthUnit.Page);
-
-        // Cache length: 1 page before and 1 page after provides ample smooth buffer
-        // without realizing 70+ offscreen rows that stall layout during 60fps scrolling.
-        VirtualizingPanel.SetCacheLength(sv, new VirtualizationCacheLength(1, 1));
+        VirtualizingPanel.SetCacheLengthUnit(sv, VirtualizationCacheLengthUnit.Item);
+        VirtualizingPanel.SetCacheLength(sv, new VirtualizationCacheLength(4, 4));
 
         // Instant response — no deferred ghost scroll (keeps the animation clock
         // the single source of truth for the offset).
         sv.IsDeferredScrollingEnabled = false;
 
-        // 2. Zero-VRAM guard: NO BitmapCache backing. Only the visible rows are
-        //    materialized, so the only per-frame GPU cost is painting the rows
-        //    actually on screen. (Scaling mode / ClearType hints are per-element
-        //    render hints, not cached VRAM surfaces — kept for crisp text.)
+        // Hardware-accelerated HighQuality bilinear scaling for crisp images without GPU downsampling stall.
         RenderOptions.SetBitmapScalingMode(sv, BitmapScalingMode.HighQuality);
-        RenderOptions.SetClearTypeHint(sv, ClearTypeHint.Enabled);
 
         _configured.Add(sv, new object());
     }
@@ -327,14 +319,26 @@ public static class SmoothScrollHelper
             state.Velocity = 0.0;
         }
 
-        // 2. TARGET ACCUMULATION WITH NATURAL BURST HEADROOM:
-        // Allows sustained continuous rolls ("لفة الطويلة") to lead smoothly by up to 4.5 notches (~540px),
-        // preventing artificial clamping walls and velocity resets during fast spins.
-        double rawTarget  = state.Target - pixelDelta;
-        double maxLead    = PixelsPerNotch * 4.5;
-        double leadMin    = Math.Max(0.0, currentOffset - maxLead);
-        double leadMax    = Math.Min(maxOffset, currentOffset + maxLead);
-        double newTarget  = Math.Clamp(rawTarget, leadMin, leadMax);
+        // Measure interval between wheel ticks to scale velocity on rapid flicks
+        double intervalMs = state.LastInputTicks != 0L
+            ? (nowTicks - state.LastInputTicks) * 1000.0 / Stopwatch.Frequency
+            : 200.0;
+
+        // Acceleration on rapid rolling (<150ms): allows long spins/flicks to travel deep
+        // into the list with natural momentum, matching Harmonoid desktop feel.
+        double accel = 1.0;
+        if (intervalMs < 150.0)
+        {
+            accel = 1.0 + Math.Min(2.8, Math.Pow((150.0 - intervalMs) / 45.0, 1.25));
+        }
+
+        double rawTarget = state.Target - (pixelDelta * accel);
+
+        // Generous lead cap for long flicks (up to 120 rows ≈ 5760px)
+        double maxLead   = PixelsPerNotch * 120.0;
+        double leadMin   = Math.Max(0.0, currentOffset - maxLead);
+        double leadMax   = Math.Min(maxOffset, currentOffset + maxLead);
+        double newTarget = Math.Clamp(rawTarget, leadMin, leadMax);
 
         if (ProfilingEnabled)
         {
@@ -378,7 +382,6 @@ public static class SmoothScrollHelper
     private static DispatcherTimer? _paceTimer;
     private static double _paceMult = 0.83;
     private static bool   _paceMultRead;
-    private static bool   _paceMultEnvForced;
     private static double _achievedGapMs; // EWMA of accepted step gaps (SSCB diagnostics)
 
     private static double PaceMult()
@@ -391,7 +394,6 @@ public static class SmoothScrollHelper
                     System.Globalization.CultureInfo.InvariantCulture, out var m) && m > 0.3 && m < 1.5)
             {
                 _paceMult = m;
-                _paceMultEnvForced = true;
             }
         }
         return _paceMult;
@@ -403,11 +405,6 @@ public static class SmoothScrollHelper
 
     private static void EnsureMotionRendering(ScrollViewer sv)
     {
-        // Any wheel must be allowed to step on the very next render event —
-        // even if a previous motion is nominally still active: the pump can
-        // fall silent when tail steps stop changing pixels (no invalidation
-        // → no Rendering event → no step → settle never runs). Resetting the
-        // pace gate here guarantees the kick below always produces a step.
         _lastMotionStepTicks = 0L;
         _paceTimer?.Stop();
         if (!_motionRenderingActive)
@@ -416,13 +413,6 @@ public static class SmoothScrollHelper
             CompositionTarget.Rendering += OnMotionRendering;
             EnsureHighPrecisionTimer(true);
         }
-        // Force exactly one render pass: the wheel handler deliberately does
-        // not write the offset (all writes go through the loop), so without
-        // this kick no render would be pending and the loop would never
-        // start — or never resume after a silent tail. From the first step
-        // on, every step also invalidates (ApplyOffset + the explicit
-        // InvalidateVisual in StepState), so the loop self-sustains.
-        sv.InvalidateVisual();
     }
 
     // Layout-engine execution gate: while true a wheel burst exclusively owns
@@ -524,21 +514,11 @@ public static class SmoothScrollHelper
         // offset no older than that, so motion never stalls. Rate stays bounded
         // by MinStepGapMs + render duration; StepState integrates REAL elapsed
         // dt, so a higher tick rate changes no motion kinematics.
-        // Set MUSICPLAYER_PACE_MULT to restore explicit refresh-rate gating.
         double elapsedMs = _lastMotionStepTicks != 0L
             ? (nowTicks - _lastMotionStepTicks) * 1000.0 / Stopwatch.Frequency
             : 0.0;
         if (_lastMotionStepTicks != 0L)
         {
-            double mult = PaceMult(); // lazy env read; may mark _paceMultEnvForced
-            double dueMs = _paceMultEnvForced ? _refreshIntervalMs * mult : MinStepGapMs;
-            if (elapsedMs < dueMs)
-            {
-                if (ProfilingEnabled) Profiler.MarkPaceSkip();
-                ArmPaceTimer(dueMs - elapsedMs);
-                return;
-            }
-            // EWMA of accepted step gaps — diagnostics only (SSCB line).
             _achievedGapMs = _achievedGapMs <= 1.0
                 ? elapsedMs
                 : _achievedGapMs + 0.3 * (elapsedMs - _achievedGapMs);
@@ -573,13 +553,25 @@ public static class SmoothScrollHelper
     private static bool StepState(ViewerState s, long nowTicks)
     {
         // dt: use actual elapsed time between ticks for frame-rate-independent
-        // integration. First tick after wake-up uses the nominal frame interval
-        // (prevents a giant first step if the wheel event itself took time).
-        double rawGapMs = s.LastStepTicks == 0L
-            ? 0.0
-            : (nowTicks - s.LastStepTicks) * 1000.0 / Stopwatch.Frequency;
-        double dtMs = s.LastStepTicks == 0L ? _refreshIntervalMs : rawGapMs;
+        // integration.
+        // First step: always use the nominal frame interval as dt.
+        // Using the real elapsed from the wheel event (sinceWheelMs) causes a
+        // jump on cold start: if the renderer was busy (20-50ms late), the
+        // first step covers an outsized distance — the perceived stutter when
+        // starting wheel scrolling after idle. A fixed nominal dt means the
+        // first frame always covers the same fraction of distance as every
+        // subsequent frame, so the motion feels connected from frame 1.
+        double rawGapMs;
+        if (s.LastStepTicks == 0L)
+        {
+            rawGapMs = _refreshIntervalMs; // nominal dt — consistent, no jump
+        }
+        else
+        {
+            rawGapMs = (nowTicks - s.LastStepTicks) * 1000.0 / Stopwatch.Frequency;
+        }
         if (ProfilingEnabled && rawGapMs > 0.0) Profiler.RecordStepGap(rawGapMs, s.Position);
+        double dtMs = rawGapMs;
         if (dtMs > MaxStepMs) dtMs = MaxStepMs;
         if (dtMs < 0.1)       dtMs = _refreshIntervalMs;
         double dt = dtMs / 1000.0;
@@ -589,33 +581,53 @@ public static class SmoothScrollHelper
         double dist = s.Target - s.Position;
         bool arrived;
 
-        if (Math.Abs(dist) <= 0.8)
+        if (Math.Abs(dist) <= 0.4)
         {
-            s.Position     = s.Target;
-            s.Velocity     = 0.0;
-            arrived        = true;
+            s.Position = s.Target;
+            s.Velocity = 0.0;
+            arrived    = true;
         }
         else
         {
-            // Responsive, critically-damped exponential approach (Harmonoid / desktop standard):
-            // Time constant tau = 42ms.
-            // At 60fps (dt = 16.6ms), advances ~33% of remaining distance per frame.
-            // During long continuous rolls ("لفة الطويلة"), motion is continuous, unbroken, and buttery-smooth.
-            // As soon as the wheel stops rotating, remaining distance decays to < 0.8px in ~110ms and stops dead!
-            double factor = 1.0 - Math.Exp(-dt / 0.042);
+            // VSync-locked natural approach: position converges toward target
+            // with tau = 48ms matching Harmonoid's deceleration curve.
+            double factor = 1.0 - Math.Exp(-dt / ApproachTauS);
             double step   = dist * factor;
 
-            if (Math.Abs(dist) <= 1.2 || Math.Abs(step) < 0.25)
+            double absDist = Math.Abs(dist);
+            if (Math.Abs(step) > MaxFrameStepPx)
+                step = Math.Sign(step) * MaxFrameStepPx;
+
+            if (absDist <= 0.5 || Math.Abs(step) < 0.15)
             {
-                s.Position     = s.Target;
-                s.Velocity     = 0.0;
-                arrived        = true;
+                s.Position = s.Target;
+                s.Velocity = 0.0;
+                arrived    = true;
             }
             else
             {
-                s.Position    += step;
-                s.Velocity     = step / dt;
-                arrived        = false;
+                double newPos = s.Position + step;
+                double maxOff = s.Owner.ScrollableHeight;
+                if (newPos <= 0.0)
+                {
+                    newPos     = 0.0;
+                    s.Target   = 0.0;
+                    s.Velocity = 0.0;
+                    arrived    = true;
+                }
+                else if (newPos >= maxOff)
+                {
+                    newPos     = maxOff;
+                    s.Target   = maxOff;
+                    s.Velocity = 0.0;
+                    arrived    = true;
+                }
+                else
+                {
+                    s.Velocity = step / dt;
+                    arrived    = false;
+                }
+                s.Position = newPos;
             }
         }
 
@@ -815,6 +827,25 @@ public static class SmoothScrollHelper
         StopMotionPumpIfIdle();
     }
 
+    /// <summary>
+    /// Safely halts any active smooth-scrolling animations across all tracked viewers,
+    /// releases the layout gate, and detaches the CompositionTarget.Rendering hook.
+    /// Called on tab change, window deactivation, or view transition.
+    /// </summary>
+    public static void CancelActiveMotions()
+    {
+        foreach (var kv in _states)
+        {
+            if (kv.Value.MotionActive)
+            {
+                kv.Value.MotionActive = false;
+                kv.Value.Velocity = 0.0;
+                kv.Value.Target = kv.Value.Position;
+            }
+        }
+        StopMotionPumpIfIdle();
+    }
+
     // End-of-motion cleanup when nothing is left to animate: drop the
     // layout/scroll gates and unsubscribe the render pump + high-precision
     // timer so a hard-stopped drag can't leave them latched (the pump's own
@@ -926,6 +957,7 @@ public static class SmoothScrollHelper
 
     internal static void BeginTabSlide(string tab)
     {
+        CancelActiveMotions();
         MarkInteraction();
         if (!ProfilingEnabled) return;
         try

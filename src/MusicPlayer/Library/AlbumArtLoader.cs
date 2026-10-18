@@ -1,10 +1,12 @@
 using System.Windows.Media.Imaging;
 using System.Windows.Media;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Collections.Concurrent;
 using System.Threading;
+using System.Threading.Tasks;
 using MusicPlayer.Database;
 using MusicPlayer.Models;
 using MusicPlayer.Utilities;
@@ -35,12 +37,12 @@ public class AlbumArtLoader
 
     public static void SetScrollingActive(bool active) => _scrollingActive = active;
 
-    private const int MaxCacheSize = 250;
+    private const int MaxCacheSize = 2500;
     private const int DecodePixelSize = 80;   // list thumbnails: 2× the ~40px display slot
     private const int MediumDecodeSize = 220; // album cards and mini-player: crisp and fast at 150px display slot
     private const int ThumbEncodeSize = 512;
     private const int MaxThumbFileBytes = 1024 * 1024;
-    private const int MaxMediumCacheSize = 150; // Increased to 150 so albums view does not aggressively evict
+    private const int MaxMediumCacheSize = 500; // Increased to 500 so albums view does not aggressively evict
 
     // Caps simultaneous background TagLib decodes so the post-scroll catch-up
     // backlog (measured: dozens of parses flushing at once after a wheel burst
@@ -81,6 +83,7 @@ public class AlbumArtLoader
         if (_cache.TryGetValue(filePath, out var cached) && cached != null)
             return cached;
 
+        // While scrolling is active, return placeholder immediately — never block the UI thread on disk IO during scroll!
         if (_scrollingActive)
             return GetDefaultAlbumArt();
 
@@ -88,13 +91,12 @@ public class AlbumArtLoader
         {
             var hash = GetMd5Hash(filePath);
             var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var metaPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.meta");
+            var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
 
-            if (InvalidateStaleCache(filePath, cachedImagePath, metaPath))
-                _cache.TryRemove(filePath, out _);
-            else if (File.Exists(cachedImagePath))
+            var existing = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
+            if (existing != null)
             {
-                var img = LoadThumbnailFromFile(cachedImagePath);
+                var img = LoadThumbnailFromFile(existing);
                 if (img != null)
                 {
                     _cache[filePath] = img;
@@ -103,8 +105,9 @@ public class AlbumArtLoader
                 }
             }
 
-            // Do NOT do TagLib I/O on UI thread — return default art.
-            // WarmUpArtCacheAsync (background) populates the disk cache.
+            // If not found in disk cache, NEVER block the UI thread parsing with TagLib!
+            // Queue a background parse and return default placeholder immediately.
+            EnqueueFullArtParse(filePath);
         }
         catch { }
 
@@ -221,19 +224,15 @@ public class AlbumArtLoader
         if (_mediumCache.TryGetValue(path, out var cached) && cached != null)
             return cached;
 
-        if (_scrollingActive)
-            return GetDefaultAlbumArt();
-
-        // 1. Try disk cache first at MediumDecodeSize (380px)
+        // 1. Try disk cache first at MediumDecodeSize (220px)
         try
         {
             var hash = GetMd5Hash(path);
             var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
             var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-            var metaPath        = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.meta");
 
             var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null && !InvalidateStaleCache(path, existingPath, metaPath))
+            if (existingPath != null)
             {
                 var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
                 if (img != null)
@@ -245,6 +244,16 @@ public class AlbumArtLoader
             }
         }
         catch { }
+
+        // If thumbnail cache already has it in memory, use that instantly
+        if (_cache.TryGetValue(path, out var thumb) && thumb != null && thumb != _defaultArt)
+        {
+            _mediumCache[path] = thumb;
+            return thumb;
+        }
+
+        if (_scrollingActive)
+            return GetDefaultAlbumArt();
 
         // 2. If disk cache miss or not yet created, decode from track at medium size
         var mediumArt = DecodeMediumValidPicture(track);
@@ -274,19 +283,15 @@ public class AlbumArtLoader
         if (_mediumCache.TryGetValue(filePath, out var cached) && cached != null)
             return cached;
 
-        if (_scrollingActive)
-            return GetDefaultAlbumArt();
-
         // Try loading from disk cache at medium decode size
         try
         {
             var hash = GetMd5Hash(filePath);
             var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
             var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-            var metaPath        = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.meta");
 
             var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null && !InvalidateStaleCache(filePath, existingPath, metaPath))
+            if (existingPath != null)
             {
                 var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
                 if (img != null)
@@ -298,6 +303,16 @@ public class AlbumArtLoader
             }
         }
         catch { }
+
+        // If thumbnail cache already has it in memory, use that instantly
+        if (_cache.TryGetValue(filePath, out var thumb) && thumb != null && thumb != _defaultArt)
+        {
+            _mediumCache[filePath] = thumb;
+            return thumb;
+        }
+
+        if (_scrollingActive)
+            return GetDefaultAlbumArt();
 
         // Fallback: decode directly from file
         var dummy = new MusicTrack { FilePath = filePath };
@@ -620,14 +635,14 @@ public class AlbumArtLoader
 
     public Task PreloadTrackArtwork(IEnumerable<MusicTrack> tracks)
     {
-        // Lightweight: only checks disk cache, no TagLib. Instant startup.
+        // Lightweight: checks disk cache in parallel. Loads instantly into memory.
         return Task.Run(() =>
         {
-            foreach (var track in tracks)
+            var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
+            if (list.Count == 0) return;
+            Parallel.ForEach(list, new ParallelOptions { MaxDegreeOfParallelism = 4 }, track =>
             {
-                if (track == null || string.IsNullOrEmpty(track.FilePath)) continue;
-                if (_cache.ContainsKey(track.FilePath)) continue;
-                if (_scrollingActive) return; // defer CPU work until layout settles
+                if (_cache.ContainsKey(track.FilePath)) return;
                 try
                 {
                     var art = LoadAlbumArtCore(track.FilePath);
@@ -635,22 +650,25 @@ public class AlbumArtLoader
                         _cache[track.FilePath] = art;
                 }
                 catch { }
-            }
+            });
         });
     }
 
-    // Background warm-up: runs AFTER the UI is visible. Does TagLib parses
-    // to populate the disk cache + memory cache. Throttled to avoid starving
-    // the UI thread.
+    // Background warm-up: loads disk cache in parallel, then extracts missing with TagLib.
     public Task WarmUpArtCacheAsync(IEnumerable<MusicTrack> tracks)
     {
-        return Task.Run(() =>
+        return Task.Run(async () =>
         {
-            foreach (var track in tracks)
+            var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
+            if (list.Count == 0) return;
+
+            // Phase 1: fast parallel memory load of already-cached disk thumbnails
+            await PreloadTrackArtwork(list);
+
+            // Phase 2: any tracks without a disk thumbnail can be extracted via TagLib in the background
+            foreach (var track in list)
             {
-                if (track == null || string.IsNullOrEmpty(track.FilePath)) continue;
                 if (_cache.ContainsKey(track.FilePath)) continue;
-                if (_scrollingActive) return; // defer CPU work until layout settles
                 try { WarmUpArtCore(track.FilePath); } catch { }
             }
         });
@@ -757,11 +775,8 @@ public class AlbumArtLoader
     {
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            using var ms = new MemoryStream();
-            stream.CopyTo(ms);
-            ms.Position = 0;
-            return LoadThumbnailFromStream(ms);
+            var bytes = File.ReadAllBytes(path);
+            return LoadThumbnailFromBytes(bytes);
         }
         catch { return null; }
     }
@@ -814,10 +829,8 @@ public class AlbumArtLoader
     {
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            using var ms = new MemoryStream();
-            stream.CopyTo(ms);
-            ms.Position = 0;
+            var bytes = File.ReadAllBytes(path);
+            using var ms = new MemoryStream(bytes);
             return LoadSizedImageFromStream(ms, decodeSize);
         }
         catch { return null; }
@@ -825,21 +838,33 @@ public class AlbumArtLoader
 
     private void TrimCache()
     {
-        while (_cache.Count > MaxCacheSize)
+        if (_cache.Count > MaxCacheSize)
         {
-            var oldest = _cache.Keys.FirstOrDefault();
-            if (oldest != null) _cache.TryRemove(oldest, out _);
-            else break;
+            int toRemove = _cache.Count - MaxCacheSize + 100;
+            int removed = 0;
+            foreach (var key in _cache.Keys)
+            {
+                if (_cache.TryRemove(key, out _))
+                {
+                    if (++removed >= toRemove) break;
+                }
+            }
         }
 
-        while (_mediumCache.Count > MaxMediumCacheSize)
+        if (_mediumCache.Count > MaxMediumCacheSize)
         {
-            var oldest = _mediumCache.Keys.FirstOrDefault();
-            if (oldest != null) _mediumCache.TryRemove(oldest, out _);
-            else break;
+            int toRemove = _mediumCache.Count - MaxMediumCacheSize + 50;
+            int removed = 0;
+            foreach (var key in _mediumCache.Keys)
+            {
+                if (_mediumCache.TryRemove(key, out _))
+                {
+                    if (++removed >= toRemove) break;
+                }
+            }
         }
 
-        while (_fullQualityCache.Count > 8)
+        while (_fullQualityCache.Count > 12)
         {
             var oldest = _fullQualityCache.Keys.FirstOrDefault();
             if (oldest != null) _fullQualityCache.TryRemove(oldest, out _);
@@ -847,13 +872,20 @@ public class AlbumArtLoader
         }
     }
 
+    private static readonly ConcurrentDictionary<string, string> _hashCache = new(StringComparer.OrdinalIgnoreCase);
+
     private static string GetMd5Hash(string input)
     {
+        if (string.IsNullOrEmpty(input)) return string.Empty;
+        if (_hashCache.TryGetValue(input, out var cached)) return cached;
+
         using var md5 = MD5.Create();
         var bytes = md5.ComputeHash(Encoding.UTF8.GetBytes(input));
-        var sb = new StringBuilder();
-        foreach (var b in bytes) sb.Append(b.ToString("x2"));
-        return sb.ToString();
+        var sb = new StringBuilder(32);
+        for (int i = 0; i < bytes.Length; i++) sb.Append(bytes[i].ToString("x2"));
+        var hash = sb.ToString();
+        _hashCache.TryAdd(input, hash);
+        return hash;
     }
 
     private static bool InvalidateStaleCache(string sourcePath, string cachedImagePath, string? metaPath)

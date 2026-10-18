@@ -235,8 +235,22 @@ public class PlayModeToVisibilityConverter : IValueConverter
 // ─────────────────────────────────────────────────────────────────────────────
 public class IntEqualityToBrushConverter : IValueConverter
 {
-    public Brush ActiveBrush   { get; set; } = new SolidColorBrush(Color.FromRgb(0x49, 0x95, 0xF3));
-    public Brush InactiveBrush { get; set; } = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
+    private static readonly Brush DefaultActiveBrush;
+    private static readonly Brush DefaultInactiveBrush;
+
+    static IntEqualityToBrushConverter()
+    {
+        var ab = new SolidColorBrush(Color.FromRgb(0x49, 0x95, 0xF3));
+        ab.Freeze();
+        DefaultActiveBrush = ab;
+
+        var ib = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
+        ib.Freeze();
+        DefaultInactiveBrush = ib;
+    }
+
+    public Brush ActiveBrush   { get; set; } = DefaultActiveBrush;
+    public Brush InactiveBrush { get; set; } = DefaultInactiveBrush;
 
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
     {
@@ -256,8 +270,22 @@ public class IntEqualityToBrushConverter : IValueConverter
 // ─────────────────────────────────────────────────────────────────────────────
 public class EqualityToBrushConverter : IValueConverter
 {
-    public Brush ActiveBrush   { get; set; } = new SolidColorBrush(Color.FromRgb(0xFF, 0xCF, 0x4D)); // APK Accent Yellow
-    public Brush InactiveBrush { get; set; } = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)); // Subtle White
+    private static readonly Brush DefaultActiveBrush;
+    private static readonly Brush DefaultInactiveBrush;
+
+    static EqualityToBrushConverter()
+    {
+        var ab = new SolidColorBrush(Color.FromRgb(0xFF, 0xCF, 0x4D)); // APK Accent Yellow
+        ab.Freeze();
+        DefaultActiveBrush = ab;
+
+        var ib = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)); // Subtle White
+        ib.Freeze();
+        DefaultInactiveBrush = ib;
+    }
+
+    public Brush ActiveBrush   { get; set; } = DefaultActiveBrush;
+    public Brush InactiveBrush { get; set; } = DefaultInactiveBrush;
 
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
     {
@@ -271,8 +299,15 @@ public class EqualityToBrushConverter : IValueConverter
 
 public class PlayingTrackHighlightConverter : IMultiValueConverter
 {
-    private static readonly Brush ActiveBrush   = new SolidColorBrush(Color.FromArgb(0x35, 0x49, 0x95, 0xF3));
+    private static readonly Brush ActiveBrush;
     private static readonly Brush InactiveBrush = Brushes.Transparent;
+
+    static PlayingTrackHighlightConverter()
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(0x35, 0x49, 0x95, 0xF3));
+        brush.Freeze();
+        ActiveBrush = brush;
+    }
 
     public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
     {
@@ -321,14 +356,23 @@ public class StringToFontWeightConverter : IValueConverter
 // StringToBrushConverter — converts hex color string to Brush
 public class StringToBrushConverter : IValueConverter
 {
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Brush> _hexCache = new(StringComparer.OrdinalIgnoreCase);
+
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
     {
         if (value is string hex && !string.IsNullOrEmpty(hex))
         {
-            try { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
+            if (_hexCache.TryGetValue(hex, out var cached)) return cached;
+            try
+            {
+                var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+                brush.Freeze();
+                if (_hexCache.Count < 200) _hexCache[hex] = brush;
+                return brush;
+            }
             catch { }
         }
-        return new SolidColorBrush(Colors.White);
+        return Brushes.White;
     }
     public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
         => throw new NotImplementedException();
@@ -625,10 +669,14 @@ public class WallpaperThumbnailConverter : IValueConverter
     {
         if (string.IsNullOrWhiteSpace(thumbPath)) return null;
 
-        if (_cache.TryGetValue(thumbPath, out var cached))
+        // Cache key includes width: the same file serves 240px gallery thumbs and
+        // the ~700px theme-editor preview — they must not collide.
+        string cacheKey = thumbPath + "|" + decodeWidth;
+        if (_cache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        if (!System.IO.File.Exists(thumbPath)) return null;
+        bool isPack = thumbPath.StartsWith("pack:", StringComparison.OrdinalIgnoreCase);
+        if (!isPack && !System.IO.File.Exists(thumbPath)) return null;
 
         try
         {
@@ -643,7 +691,7 @@ public class WallpaperThumbnailConverter : IValueConverter
             bi.Freeze();
 
             if (_cache.Count < MaxCacheEntries)
-                _cache.TryAdd(thumbPath, bi);
+                _cache.TryAdd(cacheKey, bi);
 
             return bi;
         }
@@ -653,12 +701,20 @@ public class WallpaperThumbnailConverter : IValueConverter
         }
     }
 
+    // Non-decoding probe: lets callers decide between the synchronous fast path
+    // (cached) and an off-UI slow path without paying a decode to find out.
+    public static bool IsCached(string thumbPath, int decodeWidth = 240)
+    {
+        if (string.IsNullOrWhiteSpace(thumbPath)) return false;
+        return _cache.ContainsKey(thumbPath + "|" + decodeWidth);
+    }
+
     public static void PreloadThumbnails(System.Collections.Generic.IEnumerable<string> paths, int decodeWidth = 240)
     {
         foreach (var path in paths)
         {
             if (string.IsNullOrWhiteSpace(path)) continue;
-            if (_cache.ContainsKey(path)) continue;
+            if (_cache.ContainsKey(path + "|" + decodeWidth)) continue;
             GetThumbnail(path, decodeWidth);
         }
     }
@@ -671,10 +727,16 @@ public class WallpaperThumbnailConverter : IValueConverter
         if (value is not string thumbPath || string.IsNullOrWhiteSpace(thumbPath))
             return DependencyProperty.UnsetValue;
 
-        if (_cache.TryGetValue(thumbPath, out var cached))
+        // Optional width override (e.g. ConverterParameter=700 for the theme-editor
+        // preview); defaults to gallery thumbnail size. Kept in the cache key.
+        int width = 240;
+        if (parameter != null && int.TryParse(parameter.ToString(), out int parsed) && parsed > 0)
+            width = parsed;
+
+        if (_cache.TryGetValue(thumbPath + "|" + width, out var cached))
             return cached;
 
-        var loaded = GetThumbnail(thumbPath, 240);
+        var loaded = GetThumbnail(thumbPath, width);
         return loaded ?? DependencyProperty.UnsetValue;
     }
 
@@ -701,3 +763,227 @@ public class FallbackIfEmptyConverter : IValueConverter
         => throw new NotImplementedException();
 }
 
+// ─────────────────────────────────────────────���───────────────────────────────
+// InverseBoolToVisibilityConverter — Visible when false, Collapsed when true
+// ─────────────────────────────────────────────────────────────────────────────
+public class InverseBoolToVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+        => value is bool flag && !flag ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YearToTextConverter — renders a track year, or a fallback when missing (0)
+// ─────────────────────────────────────────────────────────────────────────────
+public class YearToTextConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is int year && year > 0)
+        {
+            return year.ToString(CultureInfo.InvariantCulture);
+        }
+        return parameter?.ToString() ?? "Unknown Year";
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FractionOfWidthConverter — returns a fraction of the bound width, so grid
+// cards keep a constant column count at any window size.
+// ─────────────────────────────────────────────────────────────────────────────
+public class FractionOfWidthConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        double fraction = 0.25;
+        if (parameter is string s && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var f))
+        {
+            fraction = f;
+        }
+        if (value is not double width || width < 50) return 240.0;
+        return Math.Max(140.0, Math.Round((width - 32.0) * fraction, MidpointRounding.AwayFromZero));
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ActiveBoundaryConverter — shows a resize handle only when it touches the
+// column the user selected: parameter = this handle's boundary index.
+// ─────────────────────────────────────────────────────────────────────────────
+public class ActiveBoundaryConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is not int active || active < 0) return Visibility.Collapsed;
+        if (!int.TryParse(parameter?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int boundary))
+        {
+            return Visibility.Collapsed;
+        }
+        return boundary == active || boundary == active + 1 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ActiveColumnConverter — visible only on the selected column: parameter = index.
+// ─────────────────────────────────────────────────────────────────────────────
+public class ActiveColumnConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is not int active || active < 0) return Visibility.Collapsed;
+        if (!int.TryParse(parameter?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int index))
+        {
+            return Visibility.Collapsed;
+        }
+        return active == index ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NonZeroToVisibilityConverter — Visible only when the bound count is > 0
+// ─────────────────────────────────────────────────────────────────────────────
+public class NonZeroToVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        int count = value is int i ? i : 0;
+        return count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HiddenRowConverter — hides a table row whose id is in the list, without
+// touching the track itself. values[0] = track id, values[1] = hidden ids.
+// ─────────────────────────────────────────────────────────────────────────────
+public class HiddenRowConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (values.Length < 2 || values[0] is not int trackId || values[1] is not System.Collections.IEnumerable hidden)
+        {
+            return Visibility.Visible;
+        }
+        foreach (var item in hidden)
+        {
+            if (item is int hiddenId && hiddenId == trackId) return Visibility.Collapsed;
+        }
+        return Visibility.Visible;
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RightInsetConverter — turns a width into a right-only Thickness, used to keep
+// the table header aligned with rows that sit inside a scrollbar.
+// ─────────────────────────────────────────────────────────────────────────────
+public class RightInsetConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        double width = value is double d && !double.IsNaN(d) ? Math.Max(0, d) : 0;
+        return new Thickness(0, 0, width, 0);
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SettingsSectionMatchConverter — true when the bound section key equals the
+// ConverterParameter key (case-insensitive). Drives settings rail highlight.
+// ─────────────────────────────────────────────────────────────────────────────
+public class SettingsSectionMatchConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+        => string.Equals(value?.ToString(), parameter?.ToString(), StringComparison.OrdinalIgnoreCase);
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SettingsCardVisibilityConverter — MultiBinding (SelectedSection, SearchText,
+// CardKey): shows a settings group card when its section is selected (or All)
+// and the search query matches the group's keywords. Fail-open: never hides on
+// error so a converter bug can't blank the whole page.
+// ─────────────────────────────────────────────────────────────────────────────
+public class SettingsCardVisibilityConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+    {
+        try
+        {
+            string section = values.Length > 0 ? values[0]?.ToString() ?? "All" : "All";
+            string query = values.Length > 1 ? values[1]?.ToString()?.Trim().ToLowerInvariant() ?? "" : "";
+            string key = values.Length > 2 ? values[2]?.ToString() ?? "" : "";
+            bool sectionOk = section.Equals("All", StringComparison.OrdinalIgnoreCase)
+                || section.Equals(key, StringComparison.OrdinalIgnoreCase);
+            if (!sectionOk) return Visibility.Collapsed;
+            if (query.Length == 0) return Visibility.Visible;
+            string keywords = key switch
+            {
+                "Playback" => "playback eq equalizer bass boost virtualizer virtualiser fade gapless sound audio",
+                "Library" => "library hidden folders ignore short tracks files folders",
+                "Lyrics" => "lyrics show text sing panel",
+                "About" => "about version app music player",
+                _ => "",
+            };
+            if (keywords.Length == 0) return Visibility.Visible;
+            return keywords.Contains(query) ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch { return Visibility.Visible; }
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+
+// ============================================================================
+// ColumnHoverConverter - tint for the whole column under the pointer.
+// value = the window's hovered column index (-1 when nothing is hovered),
+// parameter = the index of the column this cell belongs to.
+// ============================================================================
+public class ColumnHoverConverter : IValueConverter
+{
+    private static readonly Brush Idle = System.Windows.Media.Brushes.Transparent;
+    private static readonly Brush Hover = MakeHover();
+
+    private static Brush MakeHover()
+    {
+        var brush = new System.Windows.Media.SolidColorBrush(
+            System.Windows.Media.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF));
+        brush.Freeze();
+        return brush;
+    }
+
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is not int hover || hover < 0) return Idle;
+        if (!int.TryParse(parameter?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int column))
+            return Idle;
+        return hover == column ? Hover : Idle;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
