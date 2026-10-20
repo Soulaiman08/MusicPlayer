@@ -1,4 +1,4 @@
-<Window x:Class="MusicPlayer.Views.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:local="clr-namespace:MusicPlayer.Views" xmlns:vm="clr-namespace:MusicPlayer.ViewModels" xmlns:conv="clr-namespace:MusicPlayer.Converters" Title="Music Player" Icon="/Assets/app_logo.png" Width="1280" Height="720" MinWidth="1024" MinHeight="650" WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" Background="#FF15181F" SnapsToDevicePixels="True" UseLayoutRounding="True" AllowDrop="True" ShowInTaskbar="True" PreviewKeyDown="Window_PreviewKeyDown" PreviewMouseLeftButtonDown="Window_PreviewMouseLeftDown" Drop="Window_Drop" DragOver="Window_DragOver" Closing="Window_Closing">
+<Window x:Class="MusicPlayer.Views.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:local="clr-namespace:MusicPlayer.Views" xmlns:vm="clr-namespace:MusicPlayer.ViewModels" xmlns:conv="clr-namespace:MusicPlayer.Converters" xmlns:views="clr-namespace:MusicPlayer.Views.Controls" xmlns:controls="clr-namespace:MusicPlayer.Views.Controls" Title="Music Player" Icon="/Assets/app_logo.png" Width="1280" Height="720" MinWidth="1024" MinHeight="650" WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" Background="#FF15181F" SnapsToDevicePixels="True" UseLayoutRounding="True" AllowDrop="True" ShowInTaskbar="True" PreviewKeyDown="Window_PreviewKeyDown" PreviewMouseLeftButtonDown="Window_PreviewMouseLeftDown" Drop="Window_Drop" DragOver="Window_DragOver" Closing="Window_Closing">
   <Border Name="RootBorder" Background="#FF15181F" ClipToBounds="True">
     <Grid>
       <Image Name="BackgroundImage" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -62,7 +62,7 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="SearchResult_Click" SnapsToDevicePixels="True">
+                        <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="SearchResult_Click" SnapsToDevicePixels="True">
                           <Border.Background>
                             <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                               <Binding Path="Id" />
@@ -85,8 +85,9 @@
                               <ColumnDefinition Width="1.4*" MinWidth="100" />
                               <ColumnDefinition Width="40" />
                             </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="#26FFFFFF" HorizontalAlignment="Left" VerticalAlignment="Center">
-                              <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                            <Border Grid.Column="0" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                            <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
+                              <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -361,7 +362,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                   </Grid.RowDefinitions>
-                  <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True" Visibility="{Binding IsSongsGridView, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolToVisibilityConverter}}">
+                  <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True" Visibility="{Binding IsSongsGridView, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolToVisibilityConverter}}">
                     <Grid Height="38" x:Name="SongsHeaderGrid">
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="48" />
@@ -372,6 +373,7 @@
                         <ColumnDefinition Width="{Binding SongsCol5Width, RelativeSource={RelativeSource AncestorType=Window}}" MinWidth="0" />
                         <ColumnDefinition Width="{Binding SongsOptionsWidth, RelativeSource={RelativeSource AncestorType=Window}}" MinWidth="0" />
                       </Grid.ColumnDefinitions>
+                      <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
                       <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
                       <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
                       <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
@@ -478,10 +480,18 @@
 </Border>
                           </Button>
                       </Grid>
-                      <Button Grid.Column="6" Style="{StaticResource APK_IconButton}" Width="32" Height="32" ToolTip="Bring back the hidden columns" Click="SongsColumns_Restore_Click" Visibility="{Binding SongsHiddenColumnCount, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource NonZeroToVisibilityConverter}}">
-                          <Path Data="{StaticResource Icon.Refresh}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" />
-                      </Button>
-                      <Thumb x:Name="SongsHeaderGrid_B1" Panel.ZIndex="90" Grid.Column="2" Tag="SongsHeaderGrid:1" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" Visibility="{Binding SongsActiveColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ActiveBoundaryConverter}, ConverterParameter=1}" ToolTip="Drag to resize">
+                      <Button x:Name="SongsColumnsButton" Grid.Column="6" Style="{StaticResource APK_IconButton}" Width="32" Height="32" ToolTip="Show or hide columns" Click="SongsColumnsButton_Click" Visibility="{Binding SongsHiddenColumnCount, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource NonZeroToVisibilityConverter}}">                           <Path Data="M3.5,4.5 H8 V19.5 H3.5 Z M10,4.5 H14.5 V19.5 H10 Z M16.5,4.5 H21 V19.5 H16.5 Z" Fill="#B4FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />                       </Button>
+                      <Thumb x:Name="SongsHeaderGrid_B1" Panel.ZIndex="90" Grid.Column="2" Tag="SongsHeaderGrid:1" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" ToolTip="Drag to resize">
+                         <Thumb.Visibility>
+                             <MultiBinding Converter="{StaticResource ColumnHandleVisibilityConverter}" ConverterParameter="1">
+                                 <Binding Path="SongsActiveColumn" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol1Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol2Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol3Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol4Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol5Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                             </MultiBinding>
+                         </Thumb.Visibility>
                         <Thumb.Template>
                           <ControlTemplate TargetType="Thumb">
                             <Border Background="#00000000">
@@ -492,7 +502,17 @@
                           </ControlTemplate>
                         </Thumb.Template>
                       </Thumb>
-                      <Thumb x:Name="SongsHeaderGrid_B2" Panel.ZIndex="90" Grid.Column="3" Tag="SongsHeaderGrid:2" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" Visibility="{Binding SongsActiveColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ActiveBoundaryConverter}, ConverterParameter=2}" ToolTip="Drag to resize">
+                      <Thumb x:Name="SongsHeaderGrid_B2" Panel.ZIndex="90" Grid.Column="3" Tag="SongsHeaderGrid:2" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" ToolTip="Drag to resize">
+                         <Thumb.Visibility>
+                             <MultiBinding Converter="{StaticResource ColumnHandleVisibilityConverter}" ConverterParameter="2">
+                                 <Binding Path="SongsActiveColumn" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol1Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol2Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol3Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol4Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol5Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                             </MultiBinding>
+                         </Thumb.Visibility>
                         <Thumb.Template>
                           <ControlTemplate TargetType="Thumb">
                             <Border Background="#00000000">
@@ -503,7 +523,17 @@
                           </ControlTemplate>
                         </Thumb.Template>
                       </Thumb>
-                      <Thumb x:Name="SongsHeaderGrid_B3" Panel.ZIndex="90" Grid.Column="4" Tag="SongsHeaderGrid:3" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" Visibility="{Binding SongsActiveColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ActiveBoundaryConverter}, ConverterParameter=3}" ToolTip="Drag to resize">
+                      <Thumb x:Name="SongsHeaderGrid_B3" Panel.ZIndex="90" Grid.Column="4" Tag="SongsHeaderGrid:3" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" ToolTip="Drag to resize">
+                         <Thumb.Visibility>
+                             <MultiBinding Converter="{StaticResource ColumnHandleVisibilityConverter}" ConverterParameter="3">
+                                 <Binding Path="SongsActiveColumn" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol1Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol2Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol3Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol4Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol5Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                             </MultiBinding>
+                         </Thumb.Visibility>
                         <Thumb.Template>
                           <ControlTemplate TargetType="Thumb">
                             <Border Background="#00000000">
@@ -514,7 +544,17 @@
                           </ControlTemplate>
                         </Thumb.Template>
                       </Thumb>
-                      <Thumb x:Name="SongsHeaderGrid_B4" Panel.ZIndex="90" Grid.Column="5" Tag="SongsHeaderGrid:4" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" Visibility="{Binding SongsActiveColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ActiveBoundaryConverter}, ConverterParameter=4}" ToolTip="Drag to resize">
+                      <Thumb x:Name="SongsHeaderGrid_B4" Panel.ZIndex="90" Grid.Column="5" Tag="SongsHeaderGrid:4" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" ToolTip="Drag to resize">
+                         <Thumb.Visibility>
+                             <MultiBinding Converter="{StaticResource ColumnHandleVisibilityConverter}" ConverterParameter="4">
+                                 <Binding Path="SongsActiveColumn" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol1Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol2Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol3Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol4Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="SongsCol5Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                             </MultiBinding>
+                         </Thumb.Visibility>
                         <Thumb.Template>
                           <ControlTemplate TargetType="Thumb">
                             <Border Background="#00000000">
@@ -527,10 +567,10 @@
                       </Thumb>
                     </Grid>
                   </Border>
-                  <ListBox x:Name="AllSongsListBox" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding DisplayedTracks}" Visibility="{Binding IsSongsGridView, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolToVisibilityConverter}}">
+                  <ListBox x:Name="AllSongsListBox" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" Visibility="{Binding IsSongsGridView, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBoolToVisibilityConverter}}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
+                        <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
                           <Border.Background>
                             <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                               <Binding Path="Id" />
@@ -556,13 +596,15 @@
                               <ColumnDefinition Width="{Binding SongsCol5Width, RelativeSource={RelativeSource AncestorType=Window}}" MinWidth="0" />
                               <ColumnDefinition Width="{Binding SongsOptionsWidth, RelativeSource={RelativeSource AncestorType=Window}}" MinWidth="0" />
                             </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Grid.ColumnSpan="7" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                            <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="6" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" Foreground="#FFFFFFFF" FontSize="12.5" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
@@ -798,31 +840,13 @@
                 <TextBlock Text="No results found" FontSize="16" FontWeight="SemiBold" Foreground="#80FFFFFF" HorizontalAlignment="Center" />
                 <TextBlock Text="Try a different keyword" FontSize="13" Foreground="#50FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" />
               </StackPanel>
-              <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-                <Grid Height="38">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="48" />
-                    <ColumnDefinition Width="2.8*" MinWidth="130" />
-                    <ColumnDefinition Width="2.6*" MinWidth="110" />
-                    <ColumnDefinition Width="2.0*" MinWidth="110" />
-                    <ColumnDefinition Width="1.0*" MinWidth="80" />
-                    <ColumnDefinition Width="40" />
-                  </Grid.ColumnDefinitions>
-                  <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                </Grid>
+              <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                <views:TrackTableHeader x:Name="RecentPlayHeader" Table="{Binding RecentPlayTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding DisplayedTracks}">
+              <ListBox x:Name="RecentPlayList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding RecentPlayTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Name="recentRow" Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
+                    <Border Name="recentRow" Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
                       <Border.Background>
                         <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                           <Binding Path="Id" />
@@ -841,18 +865,20 @@
                       <Grid>
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="48" />
-                          <ColumnDefinition Width="2.8*" MinWidth="130" />
-                          <ColumnDefinition Width="2.6*" MinWidth="110" />
-                          <ColumnDefinition Width="2.0*" MinWidth="110" />
-                          <ColumnDefinition Width="1.0*" MinWidth="80" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
                           <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                        <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                          <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                          <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                         </Border>
                         <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                         <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -922,31 +948,13 @@
                 <TextBlock Text="No results found" FontSize="16" FontWeight="SemiBold" Foreground="#80FFFFFF" HorizontalAlignment="Center" />
                 <TextBlock Text="Try a different keyword" FontSize="13" Foreground="#50FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" />
               </StackPanel>
-              <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-                <Grid Height="38">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="48" />
-                    <ColumnDefinition Width="2.8*" MinWidth="130" />
-                    <ColumnDefinition Width="2.6*" MinWidth="110" />
-                    <ColumnDefinition Width="2.0*" MinWidth="110" />
-                    <ColumnDefinition Width="1.0*" MinWidth="80" />
-                    <ColumnDefinition Width="40" />
-                  </Grid.ColumnDefinitions>
-                  <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                </Grid>
+              <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                <views:TrackTableHeader x:Name="RecentAddHeader" Table="{Binding RecentAddTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding DisplayedTracks}">
+              <ListBox x:Name="RecentAddList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding RecentAddTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
+                    <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
                       <Border.Background>
                         <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                           <Binding Path="Id" />
@@ -965,18 +973,20 @@
                       <Grid>
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="48" />
-                          <ColumnDefinition Width="2.8*" MinWidth="130" />
-                          <ColumnDefinition Width="2.6*" MinWidth="110" />
-                          <ColumnDefinition Width="2.0*" MinWidth="110" />
-                          <ColumnDefinition Width="1.0*" MinWidth="80" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
                           <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                        <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                          <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                          <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                         </Border>
                         <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                         <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -1046,31 +1056,13 @@
                 <TextBlock Text="No results found" FontSize="16" FontWeight="SemiBold" Foreground="#80FFFFFF" HorizontalAlignment="Center" />
                 <TextBlock Text="Try a different keyword" FontSize="13" Foreground="#50FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" />
               </StackPanel>
-              <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-                <Grid Height="38">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="48" />
-                    <ColumnDefinition Width="2.8*" MinWidth="130" />
-                    <ColumnDefinition Width="2.6*" MinWidth="110" />
-                    <ColumnDefinition Width="2.0*" MinWidth="110" />
-                    <ColumnDefinition Width="1.0*" MinWidth="80" />
-                    <ColumnDefinition Width="40" />
-                  </Grid.ColumnDefinitions>
-                  <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                </Grid>
+              <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                <views:TrackTableHeader x:Name="MostPlayedHeader" Table="{Binding MostPlayedTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding DisplayedTracks}">
+              <ListBox x:Name="MostPlayedList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding MostPlayedTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
+                    <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
                       <Border.Background>
                         <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                           <Binding Path="Id" />
@@ -1089,18 +1081,20 @@
                       <Grid>
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="48" />
-                          <ColumnDefinition Width="2.8*" MinWidth="130" />
-                          <ColumnDefinition Width="2.6*" MinWidth="110" />
-                          <ColumnDefinition Width="2.0*" MinWidth="110" />
-                          <ColumnDefinition Width="1.0*" MinWidth="80" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
                           <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                        <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                          <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                          <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                         </Border>
                         <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                         <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -1171,31 +1165,13 @@
                 <TextBlock Text="No results found" FontSize="16" FontWeight="SemiBold" Foreground="#80FFFFFF" HorizontalAlignment="Center" />
                 <TextBlock Text="Try a different keyword" FontSize="13" Foreground="#50FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" />
               </StackPanel>
-              <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-                <Grid Height="38">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="48" />
-                    <ColumnDefinition Width="2.8*" MinWidth="130" />
-                    <ColumnDefinition Width="2.6*" MinWidth="110" />
-                    <ColumnDefinition Width="2.0*" MinWidth="110" />
-                    <ColumnDefinition Width="1.0*" MinWidth="80" />
-                    <ColumnDefinition Width="40" />
-                  </Grid.ColumnDefinitions>
-                  <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                </Grid>
+              <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                <views:TrackTableHeader x:Name="FavoritesHeader" Table="{Binding FavoritesTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding DisplayedTracks}">
+              <ListBox x:Name="FavoritesList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding FavoritesTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
+                    <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
                       <Border.Background>
                         <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                           <Binding Path="Id" />
@@ -1222,18 +1198,20 @@
                       <Grid>
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="48" />
-                          <ColumnDefinition Width="2.8*" MinWidth="130" />
-                          <ColumnDefinition Width="2.6*" MinWidth="110" />
-                          <ColumnDefinition Width="2.0*" MinWidth="110" />
-                          <ColumnDefinition Width="1.0*" MinWidth="80" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
                           <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                        <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                          <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                          <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                         </Border>
                         <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                         <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -1507,31 +1485,13 @@
                       <RowDefinition Height="Auto" />
                       <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-                      <Grid Height="38">
-                        <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="48" />
-                          <ColumnDefinition Width="2.8*" MinWidth="130" />
-                          <ColumnDefinition Width="2.6*" MinWidth="110" />
-                          <ColumnDefinition Width="2.0*" MinWidth="110" />
-                          <ColumnDefinition Width="1.0*" MinWidth="80" />
-                          <ColumnDefinition Width="40" />
-                        </Grid.ColumnDefinitions>
-<Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                        <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                        <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                        <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                      </Grid>
+                    <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                      <views:TrackTableHeader x:Name="ArtistDetailHeader" Table="{Binding ArtistDetailTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
                     </Border>
-                    <ListBox Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding ArtistDetailTracks}">
+                    <ListBox x:Name="ArtistDetailList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding ArtistDetailTracks}" controls:TrackTable.State="{Binding ArtistDetailTable, RelativeSource={RelativeSource AncestorType=Window}}">
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                          <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
+                          <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
                             <Border.Background>
                               <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                                 <Binding Path="Id" />
@@ -1550,18 +1510,20 @@
                             <Grid>
                               <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="48" />
-                                <ColumnDefinition Width="2.8*" MinWidth="130" />
-                                <ColumnDefinition Width="2.6*" MinWidth="110" />
-                                <ColumnDefinition Width="2.0*" MinWidth="110" />
-                                <ColumnDefinition Width="1.0*" MinWidth="80" />
+                                <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                                <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                                <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                                <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
                                 <ColumnDefinition Width="40" />
                               </Grid.ColumnDefinitions>
+                              <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                              <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                               <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                               <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                               <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                               <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                               <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                               </Border>
                               <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                               <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -1612,7 +1574,7 @@
                 <TextBlock Grid.Row="1" FontSize="15" Foreground="#80FFFFFF" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" Text="{Binding CurrentAlbumArtist}" />
                 <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,12">
                   <TextBlock FontSize="13" Foreground="#60FFFFFF" Text="{Binding CurrentAlbumYear}" />
-                  <TextBlock Text=" · " FontSize="13" Foreground="#60FFFFFF" />
+                  <TextBlock Text=" ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· " FontSize="13" Foreground="#60FFFFFF" />
                   <TextBlock FontSize="13" Foreground="#60FFFFFF" Text="{Binding AlbumDetailTrackCount, StringFormat={}{0} Track{1}}" />
                 </StackPanel>
                 <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,0,12">
@@ -1631,7 +1593,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                   </Grid.RowDefinitions>
-                  <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                  <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
                     <Grid Height="38" x:Name="AlbumHeaderGrid">
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="48" />
@@ -1641,6 +1603,7 @@
                         <ColumnDefinition Width="{Binding AlbumCol4Width, RelativeSource={RelativeSource AncestorType=Window}}" MinWidth="0" />
                         <ColumnDefinition Width="{Binding AlbumOptionsWidth, RelativeSource={RelativeSource AncestorType=Window}}" MinWidth="0" />
                       </Grid.ColumnDefinitions>
+                      <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
                       <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
                       <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
                       <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
@@ -1726,10 +1689,17 @@
 </Border>
                           </Button>
                       </Grid>
-                      <Button Grid.Column="5" Style="{StaticResource APK_IconButton}" Width="32" Height="32" ToolTip="Bring back the hidden columns" Click="AlbumColumns_Restore_Click" Visibility="{Binding AlbumHiddenColumnCount, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource NonZeroToVisibilityConverter}}">
-                          <Path Data="{StaticResource Icon.Refresh}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" />
-                      </Button>
-                      <Thumb x:Name="AlbumHeaderGrid_B1" Panel.ZIndex="90" Grid.Column="2" Tag="AlbumHeaderGrid:1" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" Visibility="{Binding AlbumActiveColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ActiveBoundaryConverter}, ConverterParameter=1}" ToolTip="Drag to resize">
+                      <Button x:Name="AlbumColumnsButton" Grid.Column="5" Style="{StaticResource APK_IconButton}" Width="32" Height="32" ToolTip="Show or hide columns" Click="AlbumColumnsButton_Click" Visibility="{Binding AlbumHiddenColumnCount, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource NonZeroToVisibilityConverter}}">                           <Path Data="M3.5,4.5 H8 V19.5 H3.5 Z M10,4.5 H14.5 V19.5 H10 Z M16.5,4.5 H21 V19.5 H16.5 Z" Fill="#B4FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />                       </Button>
+                      <Thumb x:Name="AlbumHeaderGrid_B1" Panel.ZIndex="90" Grid.Column="2" Tag="AlbumHeaderGrid:1" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" ToolTip="Drag to resize">
+                         <Thumb.Visibility>
+                             <MultiBinding Converter="{StaticResource ColumnHandleVisibilityConverter}" ConverterParameter="1">
+                                 <Binding Path="AlbumActiveColumn" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol1Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol2Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol3Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol4Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                             </MultiBinding>
+                         </Thumb.Visibility>
                         <Thumb.Template>
                           <ControlTemplate TargetType="Thumb">
                             <Border Background="#00000000">
@@ -1740,7 +1710,16 @@
                           </ControlTemplate>
                         </Thumb.Template>
                       </Thumb>
-                      <Thumb x:Name="AlbumHeaderGrid_B2" Panel.ZIndex="90" Grid.Column="3" Tag="AlbumHeaderGrid:2" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" Visibility="{Binding AlbumActiveColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ActiveBoundaryConverter}, ConverterParameter=2}" ToolTip="Drag to resize">
+                      <Thumb x:Name="AlbumHeaderGrid_B2" Panel.ZIndex="90" Grid.Column="3" Tag="AlbumHeaderGrid:2" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" ToolTip="Drag to resize">
+                         <Thumb.Visibility>
+                             <MultiBinding Converter="{StaticResource ColumnHandleVisibilityConverter}" ConverterParameter="2">
+                                 <Binding Path="AlbumActiveColumn" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol1Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol2Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol3Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol4Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                             </MultiBinding>
+                         </Thumb.Visibility>
                         <Thumb.Template>
                           <ControlTemplate TargetType="Thumb">
                             <Border Background="#00000000">
@@ -1751,7 +1730,16 @@
                           </ControlTemplate>
                         </Thumb.Template>
                       </Thumb>
-                      <Thumb x:Name="AlbumHeaderGrid_B3" Panel.ZIndex="90" Grid.Column="4" Tag="AlbumHeaderGrid:3" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" Visibility="{Binding AlbumActiveColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ActiveBoundaryConverter}, ConverterParameter=3}" ToolTip="Drag to resize">
+                      <Thumb x:Name="AlbumHeaderGrid_B3" Panel.ZIndex="90" Grid.Column="4" Tag="AlbumHeaderGrid:3" Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-14,0,0,-14" Cursor="SizeWE" Focusable="False" DragStarted="ColumnHandle_DragStarted" DragDelta="ColumnHandle_DragDelta" DragCompleted="ColumnHandle_DragCompleted" ToolTip="Drag to resize">
+                         <Thumb.Visibility>
+                             <MultiBinding Converter="{StaticResource ColumnHandleVisibilityConverter}" ConverterParameter="3">
+                                 <Binding Path="AlbumActiveColumn" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol1Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol2Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol3Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                 <Binding Path="AlbumCol4Width" RelativeSource="{RelativeSource AncestorType=Window}" />
+                             </MultiBinding>
+                         </Thumb.Visibility>
                         <Thumb.Template>
                           <ControlTemplate TargetType="Thumb">
                             <Border Background="#00000000">
@@ -1764,10 +1752,10 @@
                       </Thumb>
                     </Grid>
                   </Border>
-                  <ListBox x:Name="AlbumDetailListBox" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding AlbumDetailTracks}">
+                  <ListBox x:Name="AlbumDetailListBox" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding AlbumDetailTracks}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="AlbumDetailTrack_Click" SnapsToDevicePixels="True">
+                        <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="AlbumDetailTrack_Click" SnapsToDevicePixels="True">
                           <Border.Background>
                             <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                               <Binding Path="Id" />
@@ -1792,12 +1780,14 @@
                               <ColumnDefinition Width="{Binding AlbumCol4Width, RelativeSource={RelativeSource AncestorType=Window}}" MinWidth="0" />
                               <ColumnDefinition Width="{Binding AlbumOptionsWidth, RelativeSource={RelativeSource AncestorType=Window}}" MinWidth="0" />
                             </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                            <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" Foreground="#FFFFFFFF" FontSize="12.5" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
@@ -1957,31 +1947,13 @@
                 <TextBlock Text="No results found" FontSize="16" FontWeight="SemiBold" Foreground="#80FFFFFF" HorizontalAlignment="Center" />
                 <TextBlock Text="Try a different keyword" FontSize="13" Foreground="#50FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" />
               </StackPanel>
-              <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-                <Grid Height="38">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="48" />
-                    <ColumnDefinition Width="2.8*" MinWidth="130" />
-                    <ColumnDefinition Width="2.6*" MinWidth="110" />
-                    <ColumnDefinition Width="2.0*" MinWidth="110" />
-                    <ColumnDefinition Width="1.0*" MinWidth="80" />
-                    <ColumnDefinition Width="40" />
-                  </Grid.ColumnDefinitions>
-                  <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                  <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                  <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                </Grid>
+              <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                <views:TrackTableHeader x:Name="FolderDetailHeader" Table="{Binding FolderDetailTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding DisplayedTracks}">
+              <ListBox x:Name="FolderDetailList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding FolderDetailTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
+                    <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
                       <Border.Background>
                         <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                           <Binding Path="Id" />
@@ -2008,18 +1980,20 @@
                       <Grid>
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="48" />
-                          <ColumnDefinition Width="2.8*" MinWidth="130" />
-                          <ColumnDefinition Width="2.6*" MinWidth="110" />
-                          <ColumnDefinition Width="2.0*" MinWidth="110" />
-                          <ColumnDefinition Width="1.0*" MinWidth="80" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
                           <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                        <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                          <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                          <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                         </Border>
                         <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                         <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -2525,29 +2499,11 @@
                 <TextBlock Grid.Column="1" Text="ALBUM TRACKS" Style="{StaticResource APK_TextSectionTitle}" VerticalAlignment="Center" />
               </Grid>
             </Border>
-            <Border Grid.Row="1" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-              <Grid Height="38">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="48" />
-                  <ColumnDefinition Width="2.8*" MinWidth="130" />
-                  <ColumnDefinition Width="2.6*" MinWidth="110" />
-                  <ColumnDefinition Width="2.0*" MinWidth="110" />
-                  <ColumnDefinition Width="1.0*" MinWidth="80" />
-                  <ColumnDefinition Width="40" />
-                </Grid.ColumnDefinitions>
-                <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-              </Grid>
+            <Border Grid.Row="1" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+              <views:TrackTableHeader x:Name="AlbumMusicHeader" Table="{Binding AlbumMusicTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
             </Border>
             <ScrollViewer Grid.Row="2" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
-              <ItemsControl ItemsSource="{Binding Tracks}">
+              <ItemsControl x:Name="AlbumMusicList" ItemsSource="{Binding Tracks}" controls:TrackTable.State="{Binding AlbumMusicTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
                     <VirtualizingStackPanel VirtualizingPanel.ScrollUnit="Pixel" />
@@ -2555,7 +2511,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
+                    <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
                       <Border.Background>
                         <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                           <Binding Path="Id" />
@@ -2574,18 +2530,20 @@
                       <Grid>
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="48" />
-                          <ColumnDefinition Width="2.8*" MinWidth="130" />
-                          <ColumnDefinition Width="2.6*" MinWidth="110" />
-                          <ColumnDefinition Width="2.0*" MinWidth="110" />
-                          <ColumnDefinition Width="1.0*" MinWidth="80" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ItemsControl}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ItemsControl}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ItemsControl}}" MinWidth="0" />
+                          <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ItemsControl}}" MinWidth="0" />
                           <ColumnDefinition Width="40" />
                         </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                        <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                         <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                          <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                          <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                         </Border>
                         <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                         <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -2680,7 +2638,7 @@
                 <Button Style="{StaticResource APK_AccentButton}" Content="Search Online" Margin="12,0,0,0" Command="{Binding SearchAlbumArtCommand}" />
               </StackPanel>
               <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,16,0,0" TextWrapping="Wrap" Text="{Binding AlbumArtStatus}" />
-              <TextBlock Text="Opens Google search for album art â€” Windows equivalent of online getter" Style="{StaticResource APK_TextLowStyle}" Margin="0,8,0,0" />
+              <TextBlock Text="Opens Google search for album art ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Windows equivalent of online getter" Style="{StaticResource APK_TextLowStyle}" Margin="0,8,0,0" />
             </StackPanel>
           </Grid>
           <Grid Visibility="{Binding CurrentView, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=album_save}">
@@ -2725,7 +2683,7 @@
             </Border>
             <StackPanel Grid.Row="1" Margin="24,16" MaxWidth="600" HorizontalAlignment="Left">
               <Border Height="120" Background="#1AFFFFFF" CornerRadius="8" Padding="16">
-                <TextBlock Text="Waveform preview â€” Windows equivalent trims via NAudio (placeholder for clip export). Full trim requires selecting start/end and re-encoding." Style="{StaticResource APK_TextMediumStyle}" TextWrapping="Wrap" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                <TextBlock Text="Waveform preview ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Windows equivalent trims via NAudio (placeholder for clip export). Full trim requires selecting start/end and re-encoding." Style="{StaticResource APK_TextMediumStyle}" TextWrapping="Wrap" VerticalAlignment="Center" HorizontalAlignment="Center" />
               </Border>
               <StackPanel Orientation="Horizontal" Margin="0,16">
                 <TextBlock Text="Trim: 10s" Style="{StaticResource APK_TextBodyStyle}" VerticalAlignment="Center" />
@@ -2972,31 +2930,13 @@
                     <TextBlock Text="Playlist is empty" FontSize="16" FontWeight="SemiBold" Foreground="#99FFFFFF" HorizontalAlignment="Center" />
                     <TextBlock Text="Add songs from the library using the three-dot menu on any track" FontSize="13" Foreground="#60FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="300" />
                   </StackPanel>
-                  <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-                    <Grid Height="38">
-                      <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="48" />
-                        <ColumnDefinition Width="2.8*" MinWidth="130" />
-                        <ColumnDefinition Width="2.6*" MinWidth="110" />
-                        <ColumnDefinition Width="2.0*" MinWidth="110" />
-                        <ColumnDefinition Width="1.0*" MinWidth="80" />
-                        <ColumnDefinition Width="40" />
-                      </Grid.ColumnDefinitions>
-                      <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                      <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                      <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                      <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                      <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                     </Grid>
+                  <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                    <views:TrackTableHeader x:Name="PlaylistDetailHeader" Table="{Binding PlaylistDetailTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
                   </Border>
-                  <ListBox Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding PlaylistDetailTracks}">
+                  <ListBox x:Name="PlaylistDetailList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding PlaylistDetailTracks}" controls:TrackTable.State="{Binding PlaylistDetailTable, RelativeSource={RelativeSource AncestorType=Window}}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="PlaylistDetailTrack_Click" SnapsToDevicePixels="True">
+                        <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="PlaylistDetailTrack_Click" SnapsToDevicePixels="True">
                           <Border.Background>
                             <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                               <Binding Path="Id" />
@@ -3023,18 +2963,20 @@
                           <Grid>
                             <Grid.ColumnDefinitions>
                               <ColumnDefinition Width="48" />
-                              <ColumnDefinition Width="2.8*" MinWidth="130" />
-                              <ColumnDefinition Width="2.6*" MinWidth="110" />
-                              <ColumnDefinition Width="2.0*" MinWidth="110" />
-                              <ColumnDefinition Width="1.0*" MinWidth="80" />
+                              <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                              <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                              <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                              <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
                               <ColumnDefinition Width="40" />
                             </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                            <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                              <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                              <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -3095,31 +3037,13 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                   </Grid.RowDefinitions>
-                  <Border Grid.Row="0" Margin="0,4,0,2" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
-                    <Grid Height="38">
-                      <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="48" />
-                        <ColumnDefinition Width="2.8*" MinWidth="130" />
-                        <ColumnDefinition Width="2.6*" MinWidth="110" />
-                        <ColumnDefinition Width="2.0*" MinWidth="110" />
-                        <ColumnDefinition Width="1.0*" MinWidth="80" />
-                        <ColumnDefinition Width="40" />
-                      </Grid.ColumnDefinitions>
-                      <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,-4,0,-4" IsHitTestVisible="False" />
-                      <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                      <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                      <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                      <TextBlock Grid.Column="3" Text="Album" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                      <TextBlock Grid.Column="4" Text="Genres" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-                    </Grid>
+                  <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                    <views:TrackTableHeader x:Name="GenreDetailHeader" Table="{Binding GenreDetailTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
                   </Border>
-                  <ListBox Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0,0,0,8" ItemsSource="{Binding GenreDetailTracks}">
+                  <ListBox x:Name="GenreDetailList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding GenreDetailTracks}" controls:TrackTable.State="{Binding GenreDetailTable, RelativeSource={RelativeSource AncestorType=Window}}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="GenreDetailTrack_Click" SnapsToDevicePixels="True">
+                        <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="GenreDetailTrack_Click" SnapsToDevicePixels="True">
                           <Border.Background>
                             <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                               <Binding Path="Id" />
@@ -3145,18 +3069,20 @@
                           <Grid>
                             <Grid.ColumnDefinitions>
                               <ColumnDefinition Width="48" />
-                              <ColumnDefinition Width="2.8*" MinWidth="130" />
-                              <ColumnDefinition Width="2.6*" MinWidth="110" />
-                              <ColumnDefinition Width="2.0*" MinWidth="110" />
-                              <ColumnDefinition Width="1.0*" MinWidth="80" />
+                              <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[0], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                              <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[1], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                              <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[2], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
+                              <ColumnDefinition Width="{Binding Path=(controls:TrackTable.State).Widths[3], RelativeSource={RelativeSource AncestorType=ListBox}}" MinWidth="0" />
                               <ColumnDefinition Width="40" />
                             </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
+                            <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                              <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                              <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -4192,20 +4118,20 @@
             <WrapPanel Grid.Row="1" Margin="24,16">
               <Border Width="180" Height="100" Background="#1AFFFFFF" CornerRadius="10" Margin="6" Padding="12">
                 <StackPanel>
-                  <TextBlock Text="4Ã—1 Large" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Bold" />
+                  <TextBlock Text="4ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â1 Large" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Bold" />
                   <TextBlock Text="Title + Artist + Play controls" Style="{StaticResource APK_TextLowStyle}" Margin="0,6,0,0" />
                   <TextBlock Text="Windows: Mini Player pinned" Style="{StaticResource APK_TextLowStyle}" FontSize="10" />
                 </StackPanel>
               </Border>
               <Border Width="180" Height="100" Background="#1AFFFFFF" CornerRadius="10" Margin="6" Padding="12">
                 <StackPanel>
-                  <TextBlock Text="4Ã—1 Small" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Bold" />
+                  <TextBlock Text="4ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â1 Small" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Bold" />
                   <TextBlock Text="Compact bar" Style="{StaticResource APK_TextLowStyle}" />
                 </StackPanel>
               </Border>
               <Border Width="180" Height="100" Background="#1AFFFFFF" CornerRadius="10" Margin="6" Padding="12">
                 <StackPanel>
-                  <TextBlock Text="4Ã—2 Artwork" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Bold" />
+                  <TextBlock Text="4ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â2 Artwork" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Bold" />
                   <TextBlock Text="Large album art widget" Style="{StaticResource APK_TextLowStyle}" />
                 </StackPanel>
               </Border>
@@ -4326,7 +4252,7 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <Border Height="48" BorderThickness="0,0,0,1" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="SearchResult_Click" SnapsToDevicePixels="True">
+                        <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="SearchResult_Click" SnapsToDevicePixels="True">
                           <Border.Background>
                             <MultiBinding Converter="{StaticResource PlayingTrackHighlightConverter}">
                               <Binding Path="Id" />
@@ -4351,12 +4277,13 @@
                               <ColumnDefinition Width="1.0*" MinWidth="80" />
                               <ColumnDefinition Width="40" />
                             </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Grid.ColumnSpan="6" Height="1" VerticalAlignment="Bottom" Background="#12FFFFFF" IsHitTestVisible="False" />
                             <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                              <Image Width="48" Height="48" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                              <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" FontWeight="Medium" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12.5" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
@@ -5461,7 +5388,7 @@
                         <TextBlock Text="{Binding QueueSummaryText}" FontSize="11" FontWeight="Medium" Foreground="{StaticResource APK_AccentBrush}" />
                       </Border>
                     </StackPanel>
-                    <TextBlock Text="Drag tracks to reorder • Swipe right to remove" FontSize="11" Foreground="#66FFFFFF" Margin="0,4,0,0" />
+                    <TextBlock Text="Drag tracks to reorder ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ Swipe right to remove" FontSize="11" Foreground="#66FFFFFF" Margin="0,4,0,0" />
                   </StackPanel>
                   <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Style="{StaticResource APK_IconButton}" Width="32" Height="32" ToolTip="Jump to currently playing track" Margin="0,0,4,0" Command="{Binding ScrollToCurrentTrackCommand}">
@@ -5543,11 +5470,11 @@
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <Border Grid.Row="0" Margin="18,2,18,6">
-                  <Grid>
-                    <TextBlock Text="UPCOMING" FontSize="11" FontWeight="Bold" Foreground="#66FFFFFF" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding Queue.Count, StringFormat='{}{0} tracks'}" FontSize="11" Foreground="#44FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                  </Grid>
+                <Border Grid.Row="0" Margin="18,4,18,10">
+                  <StackPanel>
+                    <TextBlock Text="UPCOMING" FontSize="17" FontWeight="Bold" Foreground="#FFFFFFFF" FontFamily="Segoe UI" />
+                    <TextBlock Text="{Binding Queue.Count, StringFormat='{}{0} tracks'}" FontSize="12" Foreground="#80FFFFFF" Margin="0,3,0,0" />
+                  </StackPanel>
                 </Border>
 
                 <Grid Grid.Row="1" ClipToBounds="True">
@@ -5558,12 +5485,12 @@
                     <TextBlock Text="Play a song or right-click to 'Play Next'" FontSize="12" Foreground="#40FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0" />
                   </StackPanel>
 
-                  <!-- Virtualized Queue ListBox -->
-                  <ListBox x:Name="QueueListBox" Style="{StaticResource APK_VirtualListBox}" ItemsSource="{Binding Queue}" Padding="10,0,10,12" AllowDrop="True" DragOver="QueueListBox_DragOver" Drop="QueueListBox_Drop" PreviewMouseMove="QueueListBox_PreviewMouseMove" PreviewKeyDown="QueueListBox_PreviewKeyDown" VirtualizingStackPanel.CleanUpVirtualizedItem="QueueListBox_CleanUpVirtualizedItem" FocusVisualStyle="{x:Null}" IsTabStop="False" SelectionMode="Single">
+                  <!-- Virtualized Queue ListBox - own style, see APK_QueueListBox -->
+                  <ListBox x:Name="QueueListBox" Style="{StaticResource APK_QueueListBox}" ItemsSource="{Binding Queue}" AllowDrop="True" DragOver="QueueListBox_DragOver" Drop="QueueListBox_Drop" PreviewMouseMove="QueueListBox_PreviewMouseMove" PreviewKeyDown="QueueListBox_PreviewKeyDown" VirtualizingStackPanel.CleanUpVirtualizedItem="QueueListBox_CleanUpVirtualizedItem" FocusVisualStyle="{x:Null}" IsTabStop="False" SelectionMode="Single">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <Border x:Name="QueueItemBorder" Height="56" CornerRadius="10" Margin="0,2" Padding="6,4" Cursor="Hand" Background="Transparent"
-                                BorderBrush="Transparent" BorderThickness="0"
+                        <Border x:Name="QueueItemBorder" Height="48" Margin="8,0,8,0" Padding="0" Cursor="Hand" Background="Transparent"
+                                BorderBrush="Transparent" BorderThickness="0" CornerRadius="0"
                                 PreviewMouseLeftButtonDown="QueueItem_PreviewMouseLeftButtonDown"
                                 MouseMove="QueueItem_MouseMove"
                                 MouseLeftButtonUp="QueueItem_MouseLeftButtonUp"
@@ -5574,37 +5501,49 @@
                           </Border.RenderTransform>
                           <Grid>
                             <Grid.ColumnDefinitions>
-                              <ColumnDefinition Width="20" />
-                              <ColumnDefinition Width="44" />
-                              <ColumnDefinition Width="*" />
-                              <ColumnDefinition Width="Auto" />
+                              <ColumnDefinition Width="48" />
+                              <ColumnDefinition Width="2.6*" />
+                              <ColumnDefinition Width="2.2*" />
+                              <ColumnDefinition Width="46" />
+                              <ColumnDefinition Width="36" />
+                              <ColumnDefinition Width="32" />
                             </Grid.ColumnDefinitions>
 
+                            <!-- Row rule, like the track tables: it runs under the artwork -->
+                            <Border Grid.Column="0" Grid.ColumnSpan="6" VerticalAlignment="Bottom" Height="1" Background="#12FFFFFF" IsHitTestVisible="False" />
+
+                            <!-- Column rules -->
+                            <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
+                            <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
+                            <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
+                            <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
+                            <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
+
+                            <!-- Album art: the same cell as the track tables - 48px square, flush, no halo -->
+                            <Grid Grid.Column="0">
+                              <Border Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                              </Border>
+                              <!-- Now-playing badge, bottom-left of the artwork -->
+                              <Path x:Name="QueueEqIcon" Data="{StaticResource Icon.Equalizer}" Fill="{StaticResource APK_AccentBrush}" Stretch="Uniform" Width="14" Height="14" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="3,0,0,3" Visibility="Collapsed" />
+                            </Grid>
+
+                            <!-- Title -->
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="12,0,8,0" FontSize="13" FontWeight="Medium" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
+
+                            <!-- Artist -->
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="12,0,8,0" FontSize="12.5" Foreground="#D8FFFFFF" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
+
+                            <!-- Duration -->
+                            <TextBlock Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,10,0" FontSize="11.5" Foreground="#99FFFFFF" Text="{Binding Duration, Converter={StaticResource DurationConverter}}" />
+
                             <!-- Grip icon -->
-                            <Path Grid.Column="0" Data="{StaticResource Icon.Menu}" Fill="#33FFFFFF" Stretch="Uniform" Width="10" Height="12" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" />
+                            <Path Grid.Column="4" Data="{StaticResource Icon.Menu}" Fill="#59FFFFFF" Stretch="Uniform" Width="11" Height="13" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
 
-                            <!-- Album Art -->
-                            <Border Grid.Column="1" Width="40" Height="40" CornerRadius="6" ClipToBounds="True" Background="#26FFFFFF" VerticalAlignment="Center">
-                              <Image Stretch="UniformToFill" Style="{StaticResource RoundedImage6}" Source="{Binding Converter={StaticResource AlbumArtConverter}}" RenderOptions.BitmapScalingMode="HighQuality" />
-                            </Border>
-
-                            <!-- Text info -->
-                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="10,0,8,0">
-                              <TextBlock Style="{StaticResource APK_TextBodyStyle}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="150" Text="{Binding Title}" />
-                              <TextBlock Style="{StaticResource APK_TextMediumStyle}" FontSize="11" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" MaxWidth="150" Text="{Binding Artist}" />
-                            </StackPanel>
-
-                            <!-- Right Controls: Duration, Playing EQ & Action Buttons -->
-                            <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,4,0">
-                              <Path x:Name="QueueEqIcon" Data="{StaticResource Icon.Equalizer}" Fill="{StaticResource APK_AccentBrush}" Stretch="Uniform" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center" Visibility="Collapsed" />
-                              <TextBlock Text="{Binding Duration, Converter={StaticResource DurationConverter}}" FontSize="11" Foreground="#66FFFFFF" VerticalAlignment="Center" Margin="0,0,6,0" />
-                              <Button x:Name="QueueBtnPlay" Style="{StaticResource APK_IconButton}" Width="26" Height="26" ToolTip="Play Now" Command="{Binding DataContext.PlayQueueTrackCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
-                                <Path Data="{StaticResource Icon.Play}" Fill="#99FFFFFF" Stretch="Uniform" Width="9" Height="9" />
-                              </Button>
-                              <Button x:Name="QueueBtnRemove" Style="{StaticResource APK_IconButton}" Width="26" Height="26" ToolTip="Remove from Queue" Command="{Binding DataContext.RemoveFromQueueCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Margin="2,0,0,0">
-                                <Path Data="{StaticResource Icon.Close}" Fill="#77FFFFFF" Stretch="Uniform" Width="9" Height="9" />
-                              </Button>
-                            </StackPanel>
+                            <!-- Remove from queue -->
+                            <Button x:Name="QueueBtnRemove" Grid.Column="5" Style="{StaticResource APK_IconButton}" Width="28" Height="28" ToolTip="Remove from Queue" Command="{Binding DataContext.RemoveFromQueueCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" HorizontalAlignment="Center" VerticalAlignment="Center">
+                              <Path Data="{StaticResource Icon.Close}" Fill="#77FFFFFF" Stretch="Uniform" Width="9" Height="9" />
+                            </Button>
                           </Grid>
                         </Border>
                       </DataTemplate>
@@ -6132,6 +6071,281 @@
           </StackPanel>
         </Border>
       </Grid>
+      <Popup x:Name="SongsColumnsMenu" PlacementTarget="{Binding ElementName=SongsColumnsButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="None" Opened="SongsColumnsMenu_Opened">
+        <Border Background="#FF1E222A" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="12" Padding="6,8" MinWidth="184">
+          <StackPanel>
+            <TextBlock Text="Columns" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" Margin="10,2,0,8" />
+            <CheckBox x:Name="SongsChk1" Tag="SongsCol1Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Title
+            </CheckBox>
+            <CheckBox x:Name="SongsChk2" Tag="SongsCol2Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Artists
+            </CheckBox>
+            <CheckBox x:Name="SongsChk3" Tag="SongsCol3Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Album
+            </CheckBox>
+            <CheckBox x:Name="SongsChk4" Tag="SongsCol4Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Genres
+            </CheckBox>
+            <CheckBox x:Name="SongsChk5" Tag="SongsCol5Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Year
+            </CheckBox>
+          </StackPanel>
+        </Border>
+      </Popup>
+      <Popup x:Name="AlbumColumnsMenu" PlacementTarget="{Binding ElementName=AlbumColumnsButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="None" Opened="AlbumColumnsMenu_Opened">
+        <Border Background="#FF1E222A" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="12" Padding="6,8" MinWidth="184">
+          <StackPanel>
+            <TextBlock Text="Columns" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" Margin="10,2,0,8" />
+            <CheckBox x:Name="AlbumChk1" Tag="AlbumCol1Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Title
+            </CheckBox>
+            <CheckBox x:Name="AlbumChk2" Tag="AlbumCol2Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Artists
+            </CheckBox>
+            <CheckBox x:Name="AlbumChk3" Tag="AlbumCol3Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Genres
+            </CheckBox>
+            <CheckBox x:Name="AlbumChk4" Tag="AlbumCol4Width" Checked="ColumnOption_Checked" Unchecked="ColumnOption_Unchecked" Foreground="#E6FFFFFF" FontSize="13" Height="32" Cursor="Hand">
+              <CheckBox.Template>
+                <ControlTemplate TargetType="CheckBox">
+                  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="8,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border x:Name="Box" Grid.Column="0" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="#66FFFFFF" Background="Transparent" VerticalAlignment="Center">
+                        <Path x:Name="Tick" Data="{StaticResource Icon.Check}" Fill="#FF15181F" Stretch="Uniform" Width="9" Height="9" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" />
+                      </Border>
+                      <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Row" Property="Background" Value="#1FFFFFFF" />
+                    </Trigger>
+                    <Trigger Property="IsChecked" Value="True">
+                      <Setter TargetName="Box" Property="Background" Value="#E6EAF2FF" />
+                      <Setter TargetName="Box" Property="BorderBrush" Value="#E6EAF2FF" />
+                      <Setter TargetName="Tick" Property="Opacity" Value="1" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </CheckBox.Template>
+              Year
+            </CheckBox>
+          </StackPanel>
+        </Border>
+      </Popup>
     </Grid>
   </Border>
 </Window>

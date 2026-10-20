@@ -110,6 +110,93 @@
         <Setter Property="VirtualizingPanel.CacheLengthUnit" Value="Item"/>
     </Style>
 
+    <!-- ===== UP NEXT QUEUE LISTBOX STYLE (own identity, drag-to-reorder) ===== -->
+    <!--
+        The queue is NOT a track table. It is a drag-to-reorder list: the rows are
+        picked up with the mouse, dropped on another row, and the list auto-scrolls
+        while a drag is near its edge. That makes its geometry load-bearing - the
+        drop indicator, the auto-scroll bounds and the dragged ghost are all
+        measured against the list - so it gets its own style instead of sharing
+        APK_VirtualListBox with the tables. A change to the table list (padding,
+        inset, item container) can therefore never move the queue, and a change
+        here can never move the tables.
+
+        It deliberately does NOT inset its content through the list: the rows carry
+        their own margin, so the vertical scrollbar stays flush with the edge of
+        the queue card instead of floating inside it.
+    -->
+    <Style x:Key="APK_QueueListBox" TargetType="ListBox">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+        <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True"/>
+        <Setter Property="VirtualizingStackPanel.VirtualizationMode" Value="Recycling"/>
+        <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel"/>
+        <Setter Property="VirtualizingPanel.CacheLength" Value="3,3"/>
+        <Setter Property="VirtualizingPanel.CacheLengthUnit" Value="Item"/>
+        <Setter Property="ItemsPanel">
+            <Setter.Value>
+                <ItemsPanelTemplate>
+                    <VirtualizingStackPanel
+                        VirtualizingStackPanel.IsVirtualizing="True"
+                        VirtualizingStackPanel.VirtualizationMode="Recycling"
+                        VirtualizingStackPanel.ScrollUnit="Pixel"
+                        VirtualizingPanel.CacheLengthUnit="Item"
+                        VirtualizingPanel.CacheLength="3,3" />
+                </ItemsPanelTemplate>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBox">
+                    <Border x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="0"
+                            SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ItemsHost"
+                                      Focusable="False"
+                                      Padding="0"
+                                      CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}"
+                                      HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                                      VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}">
+                            <ScrollViewer.PanningMode>VerticalOnly</ScrollViewer.PanningMode>
+                            <ItemsPresenter />
+                        </ScrollViewer>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="ItemContainerStyle">
+            <Setter.Value>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="Margin" Value="0"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+                    <Setter Property="Focusable" Value="False"/>
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListBoxItem">
+                                <Border Background="Transparent" BorderThickness="0" BorderBrush="Transparent">
+                                    <ContentPresenter />
+                                </Border>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ===== VIRTUALIZED LISTBOX STYLE (high-performance, instant rendering, recycling) ===== -->
     <Style x:Key="APK_VirtualListBox" TargetType="ListBox">
         <Setter Property="Background" Value="Transparent"/>
@@ -131,6 +218,36 @@
                         VirtualizingPanel.CacheLengthUnit="Item"
                         VirtualizingPanel.CacheLength="3,3" />
                 </ItemsPanelTemplate>
+            </Setter.Value>
+        </Setter>
+        <!--
+            WPF's built-in ListBox template puts a hard-coded Padding="1" on its
+            inner Border, so every list - and every table built on one - is inset
+            one pixel on the left, top and right. That pixel is what stops the
+            album artwork from reaching the window edge, and it drags the whole
+            row grid one pixel off the header. This template is the same one
+            without that inset, so the list content starts exactly at the edge.
+        -->
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBox">
+                    <Border x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="0"
+                            SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ItemsHost"
+                                      Focusable="False"
+                                      Padding="{TemplateBinding Padding}"
+                                      CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}"
+                                      HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                                      VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}">
+                            <ScrollViewer.PanningMode>VerticalOnly</ScrollViewer.PanningMode>
+                            <ItemsPresenter />
+                        </ScrollViewer>
+                    </Border>
+                </ControlTemplate>
             </Setter.Value>
         </Setter>
         <Setter Property="ItemContainerStyle">

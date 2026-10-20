@@ -43,6 +43,7 @@
       <conv:ActiveBoundaryConverter x:Key="ActiveBoundaryConverter" />
       <conv:ActiveColumnConverter x:Key="ActiveColumnConverter" />
     <conv:ColumnHoverConverter x:Key="ColumnHoverConverter" />
+    <conv:ColumnHandleVisibilityConverter x:Key="ColumnHandleVisibilityConverter" />
       <conv:SettingsSectionMatchConverter x:Key="SettingsSectionMatchConverter" />
       <conv:SettingsCardVisibilityConverter x:Key="SettingsCardVisibilityConverter" />
 

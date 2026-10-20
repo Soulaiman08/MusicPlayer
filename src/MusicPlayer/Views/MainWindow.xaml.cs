@@ -25,6 +25,7 @@ using MusicPlayer.Models;
 using MusicPlayer.Services;
 using MusicPlayer.Utilities;
 using MusicPlayer.ViewModels;
+using MusicPlayer.Views.Controls;
 
 namespace MusicPlayer.Views
 {
@@ -44,8 +45,7 @@ namespace MusicPlayer.Views
 
         /// <summary>The shell view model this window drives.</summary>
         public MainViewModel? ViewModel { get; set; }
-    private void HideTableColumn_Click(object sender, RoutedEventArgs e)
-    {
+    private void HideTableColumn_Click(object sender, RoutedEventArgs e)    {
         if (sender is not FrameworkElement element || element.Tag is not string key) return;
         var dp = ColumnPropertyFor(key);
         if (dp == null) return;
@@ -174,24 +174,97 @@ namespace MusicPlayer.Views
         return -1;
     }
 
-    /// <summary>Selects the nearest column that still has a width.</summary>
-    private void MoveSelectionOff(DependencyProperty[] props, int hidden, bool isSongs)
+    private void SongsColumns_Restore_Click(object sender, RoutedEventArgs e) => RestoreColumns(SongsColumnKeys, SongsHiddenColumns);
+
+    private void SongsColumnsButton_Click(object sender, RoutedEventArgs e)
     {
-        int text = props.Length - 1;
-        for (int step = 1; step < text; step++)
-        {
-            foreach (int i in new[] { hidden + step, hidden - step })
-            {
-                if (i < 0 || i >= text) continue;
-                if (((GridLength)GetValue(props[i])).Value <= 0) continue;
-                SetValue(isSongs ? SongsActiveColumnProperty : AlbumActiveColumnProperty, i);
-                return;
-            }
-        }
-        SetValue(isSongs ? SongsActiveColumnProperty : AlbumActiveColumnProperty, -1);
+        SongsColumnsMenu.IsOpen = false;
+        SongsColumnsMenu.IsOpen = true;
+        e.Handled = true;
     }
 
-    private void SongsColumns_Restore_Click(object sender, RoutedEventArgs e) => RestoreColumns(SongsColumnKeys, SongsHiddenColumns);
+    private void AlbumColumnsButton_Click(object sender, RoutedEventArgs e)
+    {
+        AlbumColumnsMenu.IsOpen = false;
+        AlbumColumnsMenu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    /// <summary>Ticks every box to match the columns that are actually shown.</summary>
+    private void SongsColumnsMenu_Opened(object sender, EventArgs e)
+    {
+        SongsChk1.IsChecked = IsColumnVisible(SongsCol1WidthProperty);
+        SongsChk2.IsChecked = IsColumnVisible(SongsCol2WidthProperty);
+        SongsChk3.IsChecked = IsColumnVisible(SongsCol3WidthProperty);
+        SongsChk4.IsChecked = IsColumnVisible(SongsCol4WidthProperty);
+        SongsChk5.IsChecked = IsColumnVisible(SongsCol5WidthProperty);
+    }
+
+    private void AlbumColumnsMenu_Opened(object sender, EventArgs e)
+    {
+        AlbumChk1.IsChecked = IsColumnVisible(AlbumCol1WidthProperty);
+        AlbumChk2.IsChecked = IsColumnVisible(AlbumCol2WidthProperty);
+        AlbumChk3.IsChecked = IsColumnVisible(AlbumCol3WidthProperty);
+        AlbumChk4.IsChecked = IsColumnVisible(AlbumCol4WidthProperty);
+    }
+
+    private bool IsColumnVisible(DependencyProperty dp)
+        => ((GridLength)GetValue(dp)).Value > 0;
+
+    /// <summary>Ticking a box shows that column, unticking hides it - same as the X.</summary>
+    private void ColumnOption_Checked(object sender, RoutedEventArgs e) => SetColumnFromPicker(sender, show: true);
+    private void ColumnOption_Unchecked(object sender, RoutedEventArgs e) => SetColumnFromPicker(sender, show: false);
+
+    private void SetColumnFromPicker(object sender, bool show)
+    {
+        if (sender is not FrameworkElement element || element.Tag is not string key) return;
+        if (ColumnPropertyFor(key) is not { } dp) return;
+        bool isSongs = key.StartsWith("SongsCol", StringComparison.Ordinal);
+        bool visible = ((GridLength)GetValue(dp)).Value > 0;
+
+        if (show && !visible)
+        {
+            if (!_savedColumnWidths.TryGetValue(key, out var saved) || saved.Value <= 0)
+                saved = new GridLength(DefaultColumnWidth(isSongs, key));
+            SetValue(dp, saved);
+            _savedColumnWidths.Remove(key);
+            RemoveHidden(isSongs, key);
+        }
+        else if (!show && visible)
+        {
+            if (!_savedColumnWidths.ContainsKey(key)) _savedColumnWidths[key] = (GridLength)GetValue(dp);
+            SetValue(dp, new GridLength(0));
+            var list = isSongs ? SongsHiddenColumns : AlbumHiddenColumns;
+            if (!list.Contains(key)) list.Add(key);
+        }
+        else return;
+
+        RaiseHiddenColumnsChanged();
+    }
+
+    private void RemoveHidden(bool isSongs, string key)
+    {
+        var list = isSongs ? SongsHiddenColumns : AlbumHiddenColumns;
+        if (list.Remove(key)) { /* count refreshed by RaiseHiddenColumnsChanged */ }
+    }
+
+    private double DefaultColumnWidth(bool isSongs, string key)
+    {
+        var props = isSongs ? SongsColProps : AlbumColProps;
+        if (ColumnPropertyFor(key) is not { } dp) return 120;
+        for (int i = 0; i < props.Length - 1; i++)
+            if (ReferenceEquals(props[i], dp)) return DefaultColumnWeights(isSongs, i);
+        return 120;
+    }
+
+    private static readonly double[] SongsColumnWeights = { 2.8, 2.6, 2.0, 1.0, 0.9 };
+    private static readonly double[] AlbumColumnWeights = { 2.6, 2.4, 1.6, 0.9 };
+
+    private static double DefaultColumnWeights(bool isSongs, int index)
+    {
+        var w = isSongs ? SongsColumnWeights : AlbumColumnWeights;
+        return index >= 0 && index < w.Length ? w[index] * 110.0 : 120.0;
+    }
 
     private void AlbumColumns_Restore_Click(object sender, RoutedEventArgs e) => RestoreColumns(AlbumColumnKeys, AlbumHiddenColumns);
 
@@ -231,6 +304,7 @@ namespace MusicPlayer.Views
         // take it back up once the layout has applied the new widths.
         _songsSync.NeedsRefit = true;
         _albumSync.NeedsRefit = true;
+        foreach (var st in _sharedSyncs) st.NeedsRefit = true;
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(UpdateTracksScrollbarInset));
     }
 
@@ -267,9 +341,11 @@ namespace MusicPlayer.Views
         private set => SetValue(TracksScrollbarWidthProperty, value);
     }
 
-    private void SongsScroller_ScrollChanged(object sender, ScrollChangedEventArgs e)
+private void SongsScroller_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        UpdateTracksScrollbarInset();
+    UpdateTracksScrollbarInset();
+    // Scrolling carries the user away from the header they were editing.
+    ClearColumnSelection();
     }
 
     /// <summary>
@@ -291,24 +367,48 @@ namespace MusicPlayer.Views
     {
         SyncHeaderToViewport(_songsSync);
         SyncHeaderToViewport(_albumSync);
+        foreach (var st in _sharedSyncs) SyncHeaderToViewport(st);
+    }
+
+    /// <summary>
+    /// Puts a shared table's header under the same sync as the two hand-written ones:
+    /// the header adopts the exact rectangle the rows are laid out in, so the column
+    /// separators line up instead of drifting by the scrollbar's width.
+    /// </summary>
+    private void RegisterSharedSync(TrackTableHeader? header, FrameworkElement? list, TrackTableState state)
+    {
+        if (header is null || list is null) return;
+
+        var st = new HeaderSync
+        {
+            List = list,
+            Header = header,
+            Access = new ColumnAccess { State = state, Owner = this },
+        };
+        _sharedSyncs.Add(st);
+
+        list.SizeChanged += (_, _) => SyncHeaderToViewport(st);
+        list.Loaded += (_, _) => SyncHeaderToViewport(st);
+        list.IsVisibleChanged += (_, _) => SyncHeaderToViewport(st);
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() => SyncHeaderToViewport(st)));
     }
 
     /// <summary>Per-table state for <see cref="SyncHeaderToViewport"/>.</summary>
     private sealed class HeaderSync
     {
-        public ListBox? List;
-        public Grid? Header;
+        public FrameworkElement? List;      // the row container (ListBox / ItemsControl)
+        public FrameworkElement? Header;    // the header (Grid or TrackTableHeader)
         public ScrollViewer? Scroller;
         public bool Hooked, Pending;
         public int Retries;
-        public DependencyProperty[]? ColProps;
-        public double[]? ColMinimums;
+        public ColumnAccess? Access;
         public double LastViewport = double.NaN;
         public bool NeedsRefit;
     }
 
     private readonly HeaderSync _songsSync = new();
     private readonly HeaderSync _albumSync = new();
+    private readonly List<HeaderSync> _sharedSyncs = new();
 
     /// <summary>
     /// A table's header sits outside its list, so it has to adopt the exact
@@ -318,6 +418,12 @@ namespace MusicPlayer.Views
     /// and the line visibly jogs where the header meets the first row.
     /// </summary>
     private void SyncHeaderToViewport(HeaderSync st)
+    {
+        try { SyncHeaderToViewportCore(st); }
+        catch (Exception ex) { LogHelper.LogError("Header sync failed", ex); }
+    }
+
+    private void SyncHeaderToViewportCore(HeaderSync st)
     {
         if (st.List is null || st.Header is null) return;
         st.Scroller ??= FindVisualChild<ScrollViewer>(st.List);
@@ -337,6 +443,7 @@ namespace MusicPlayer.Views
             // Creating the scrollbar is reported as a viewport change, which is the
             // only signal that ViewportWidth just got smaller.
             scroller.ScrollChanged += (_, _) => SyncHeaderToViewport(st);
+            scroller.ScrollChanged += (_, _) => ClearColumnSelection();
         }
         double viewport = st.Scroller.ViewportWidth;
         if (viewport <= 0)
@@ -380,32 +487,26 @@ namespace MusicPlayer.Views
     /// </summary>
     private void RefitFrozenColumns(HeaderSync st, double viewport)
     {
-        if (st.ColProps is null || st.ColMinimums is null || st.Header is null) return;
-        var props = st.ColProps;
-        var minimums = st.ColMinimums;
-        int text = props.Length - 1;              // the last entry is the options cell
+        var access = st.Access;
+        if (access is null || st.Header is null) return;
+        int text = access.TextCount;                // the options cell is not a text column
 
         // Only act once the widths really are pixels; star widths self-refit.
         double sum = 0;
         for (int i = 0; i < text; i++)
         {
-            if (!((GridLength)GetValue(props[i])).IsAbsolute) return;
-            double v = ((GridLength)GetValue(props[i])).Value;
+            if (!access.Get(i).IsAbsolute) return;
+            double v = access.Get(i).Value;
             if (v <= 0) continue;                 // hidden column: keep it collapsed
             sum += v;
         }
         if (sum <= 0) return;
 
-        double fixedCells = 0;
-        if (st.Header.ColumnDefinitions.Count > 0)
-        {
-            var art = (GridLength)st.Header.ColumnDefinitions[0].Width;
-            if (art.IsAbsolute) fixedCells += art.Value;
-        }
+        double fixedCells = ArtColumnWidth(st.Header);
         // The options cell is excluded from `sum`, so its width has to come off the
         // available space as well - otherwise the text columns creep ~3% wider on
         // every window resize.
-        var options = (GridLength)GetValue(props[text]);
+        var options = access.Get(text);
         if (options.IsAbsolute) fixedCells += options.Value;
         double avail = viewport - fixedCells;
         if (avail <= 0) return;
@@ -413,11 +514,57 @@ namespace MusicPlayer.Views
         double k = avail / sum;
         for (int i = 0; i < text; i++)
         {
-            var current = (GridLength)GetValue(props[i]);
+            var current = access.Get(i);
             if (current.Value <= 0) continue;      // hidden column stays at zero
             double w = current.Value * k;
-            SetValue(props[i], new GridLength(Math.Max(minimums[i], w)));
+            access.Set(i, new GridLength(Math.Max(access.State.Minimums[i], w)));
         }
+    }
+
+    /// <summary>
+    /// Width of the fixed art cell. The legacy headers keep it in their first grid
+    /// column; the shared header always uses the same 48px cell.
+    /// </summary>
+    private static double ArtColumnWidth(FrameworkElement? header)
+        => header is Grid g && g.ColumnDefinitions.Count > 0
+            ? ((GridLength)g.ColumnDefinitions[0].Width).Value
+            : 48.0;
+
+    /// <summary>
+    /// Drops the column selection on both tables. The arrows and the hide "X" are a
+    /// live editing affordance, so anything that takes the user out of the header -
+    /// navigating, switching tab, scrolling, Esc, clicking a row - ends it.
+    /// </summary>
+    internal void ClearColumnSelection()
+    {
+        // A live resize owns the selection: dropping it now would collapse the
+        // handle the user is holding and abort the gesture.
+        if (_isResizing) return;
+        if (SongsActiveColumn >= 0) SongsActiveColumn = -1;
+        if (AlbumActiveColumn >= 0) AlbumActiveColumn = -1;
+        foreach (var table in TrackTables) table.ClearSelection();
+    }
+
+    /// <summary>True when the press landed on a header cell, a resize handle or the hide button.</summary>
+    private static bool IsInsideColumnHeader(object? source)
+    {
+        for (DependencyObject? node = source as DependencyObject; node is not null;)
+        {
+            if (node is Thumb) return true;
+            if (node is TrackTableHeader) return true;
+            if (node is FrameworkElement { Name: "SongsHeaderGrid" or "AlbumHeaderGrid" }) return true;
+            if (node is FrameworkElement fe && fe.Tag is string t
+                && (t.StartsWith("SongsHeaderGrid", StringComparison.Ordinal)
+                 || t.StartsWith("AlbumHeaderGrid", StringComparison.Ordinal))) return true;
+            node = VisualTreeHelper.GetParent(node) ?? (node as FrameworkElement)?.Parent;
+        }
+        return false;
+    }
+
+    /// <summary>Clicking anywhere outside the header row ends the column selection.</summary>
+    private void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!IsInsideColumnHeader(e.OriginalSource)) ClearColumnSelection();
     }
 
     private void SongsHeaderCell_MouseEnter(object sender, MouseEventArgs e)
@@ -498,11 +645,29 @@ namespace MusicPlayer.Views
         if (sender is not FrameworkElement element || element.Tag is not string tag) return;
         if (!int.TryParse(tag, NumberStyles.Integer, CultureInfo.InvariantCulture, out int columnIndex)) return;
 
-        bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
-        var property = isSongs ? SongsActiveColumnProperty : AlbumActiveColumnProperty;
-        int current = (int)GetValue(property);
-        SetValue(property, current == columnIndex ? -1 : columnIndex);
+bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
+    var property = isSongs ? SongsActiveColumnProperty : AlbumActiveColumnProperty;
+    int current = (int)GetValue(property);
+
+    // Guard: a hidden column is 0px wide, so it has no cell to click and no edge to
+    // anchor its handles to - selecting one is what produced the half-clipped arrow.
+    // Checked here, inside the setter, so every path that can set it is covered.
+    if (IsColumnHidden(isSongs, columnIndex))
+    {
+        SetValue(property, -1);
         e.Handled = true;
+        return;
+    }
+
+    SetValue(property, current == columnIndex ? -1 : columnIndex);
+    e.Handled = true;
+    }
+
+    private bool IsColumnHidden(bool isSongs, int index)
+    {
+        var props = isSongs ? SongsColProps : AlbumColProps;
+        if (index < 0 || index >= props.Length - 1) return true;   // options cell never selects
+        return ((GridLength)GetValue(props[index])).Value <= 0;
     }
 
 
@@ -513,123 +678,463 @@ namespace MusicPlayer.Views
     private void SongsRows_Restore_Click(object sender, RoutedEventArgs e) => SongsColumns_Restore_Click(sender, e);
     private void AlbumRows_Restore_Click(object sender, RoutedEventArgs e) => AlbumColumns_Restore_Click(sender, e);
 
-    private DependencyProperty[]? _activeDragProps;
-    private int _activeDragLeft = -1;
-    private int _activeDragRight = -1;
-    private double _origLeft;
-    private double _origRight;
-    private double _minLeft;
-    private double _minRight;
-    private int _activeDragSign = 1;
-
     private static readonly double[] SongsColumnMinimums = { 130, 110, 110, 80, 76, 24 };
     private static readonly double[] AlbumColumnMinimums = { 130, 110, 90, 76, 24 };
 
     /// <summary>
-    /// Pulling a boundary trades width between the two columns that meet there,
-    /// so the table keeps its overall width and only the grabbed column changes.
-    /// Columns are frozen to pixel sizes on the first drag, otherwise the
-    /// star-weighted ones would silently re-balance each other.
+    /// Every track table shares one column layout description, so the shared header
+    /// control is told what to draw and the shared row template reads the same widths
+    /// back. Keys are stable identifiers used for saved column keys, nothing more.
     /// </summary>
+    private static readonly string[] StandardColumns = { "Title", "Artists", "Album", "Genres" };
+    private static readonly double[] StandardWeights = { 2.8, 2.6, 2.0, 1.0 };
+    private static readonly double[] StandardMinimums = { 130, 110, 110, 80 };
+
+    /// <summary>
+    /// The legacy minimum arrays carry a trailing value for the fixed "..." cell; a table
+    /// state only tracks text columns, so the extra entry is dropped here.
+    /// </summary>
+    private static double[] TextMinimums(double[] withOptions, int columns)
+        => withOptions.Take(columns).ToArray();
+
+    public TrackTableState SongsTable { get; } =
+        new("Songs", new[] { "Title", "Artists", "Album", "Genres", "Year" },
+            new[] { 2.8, 2.6, 2.0, 1.0, 0.9 }, TextMinimums(SongsColumnMinimums, 5));
+
+    public TrackTableState AlbumTable { get; } =
+        new("Album", new[] { "Title", "Artists", "Genres", "Year" },
+            new[] { 2.6, 2.4, 1.6, 0.9 }, TextMinimums(AlbumColumnMinimums, 4));
+
+    public TrackTableState RecentPlayTable { get; } =
+        new("RecentPlay", StandardColumns, StandardWeights, StandardMinimums);
+    public TrackTableState RecentAddTable { get; } =
+        new("RecentAdd", StandardColumns, StandardWeights, StandardMinimums);
+    public TrackTableState MostPlayedTable { get; } =
+        new("MostPlayed", StandardColumns, StandardWeights, StandardMinimums);
+    public TrackTableState FavoritesTable { get; } =
+        new("Favorites", StandardColumns, StandardWeights, StandardMinimums);
+    public TrackTableState ArtistDetailTable { get; } =
+        new("ArtistDetail", StandardColumns, StandardWeights, StandardMinimums);
+    public TrackTableState FolderDetailTable { get; } =
+        new("FolderDetail", StandardColumns, StandardWeights, StandardMinimums);
+    public TrackTableState AlbumMusicTable { get; } =
+        new("AlbumMusic", StandardColumns, StandardWeights, StandardMinimums);
+    public TrackTableState PlaylistDetailTable { get; } =
+        new("PlaylistDetail", StandardColumns, StandardWeights, StandardMinimums);
+    public TrackTableState GenreDetailTable { get; } =
+        new("GenreDetail", StandardColumns, StandardWeights, StandardMinimums);
+
+    /// <summary>All track tables, so navigation and layout changes can reach each one.</summary>
+    public IEnumerable<TrackTableState> TrackTables => new[]
+    {
+        SongsTable, AlbumTable, RecentPlayTable, RecentAddTable, MostPlayedTable,
+        FavoritesTable, ArtistDetailTable, FolderDetailTable, AlbumMusicTable,
+        PlaylistDetailTable, GenreDetailTable,
+    };
+
+    // ---- resize gesture, shared by every table -------------------------------------
+
+    /// <summary>
+    /// Reads and writes one table's column widths, whichever storage that table uses:
+    /// the shared <see cref="TrackTableState"/> or the legacy dependency properties the
+    /// two hand-written tables still bind their markup to. The resize gesture goes
+    /// through this so a drag behaves the same on every table.
+    /// </summary>
+    private sealed class ColumnAccess
+    {
+        public required TrackTableState State { get; init; }
+
+        /// <summary>The window that owns the legacy width properties.</summary>
+        public required MainWindow Owner { get; init; }
+
+        /// <summary>Legacy width properties: text columns first, the options cell last.</summary>
+        public DependencyProperty[]? LegacyProps { get; init; }
+
+        public int TextCount => State.ColumnCount;
+
+        public GridLength Get(int index)
+            => LegacyProps is null
+                ? State.Widths[index]
+                : (GridLength)Owner.GetValue(LegacyProps[index]);
+
+        public void Set(int index, GridLength value)
+        {
+            if (LegacyProps is null) { State.SetWidth(index, value); return; }
+            double min = State.Minimums[Math.Min(index, State.Minimums.Length - 1)];
+            Owner.SetValue(LegacyProps[index], new GridLength(Math.Max(min, value.Value), value.GridUnitType));
+        }
+
+        public bool IsHidden(int index) => Get(index).Value <= 0;
+    }
+
+    /// <summary>The width access for a table key, whichever storage that table uses.</summary>
+    private ColumnAccess? AccessFor(string key) => key switch
+    {
+        "Songs" => new ColumnAccess { State = SongsTable, LegacyProps = SongsColProps, Owner = this },
+        "Album" => new ColumnAccess { State = AlbumTable, LegacyProps = AlbumColProps, Owner = this },
+        _ => TrackTables.FirstOrDefault(t => t.Key == key) is { } state
+                ? new ColumnAccess { State = state, Owner = this }
+                : null,
+    };
+
+    private ColumnAccess? _dragAccess;
+    private int _dragLeft = -1;
+    private int _dragRight = -1;
+    private double _dragOrigLeft;
+    private double _dragOrigRight;
+    private double _dragMinLeft;
+    private double _dragMinRight;
     private double _dragOriginX;
 
-    private void ColumnHandle_DragStarted(object sender, DragStartedEventArgs e)
-    {
-        _activeDragProps = null;
-        _activeDragLeft = -1;
-        _activeDragRight = -1;
-        if (sender is not Thumb thumb || thumb.Tag is not string tag) return;
-        var parts = tag.Split(':');
-        if (parts.Length < 1) return;
-        if (this.FindName(parts[0]) is not Grid grid) return;
+    /// <summary>
+    /// True while a resize gesture is in flight. Freezing the column widths changes
+    /// the list's layout, which reports a scroll change, which used to drop the
+    /// column selection - the handle under the cursor then collapsed, the mouse
+    /// capture was lost and the drag died after a single step.
+    /// </summary>
+    private bool _isResizing;
 
-        var isSongs = parts[0].StartsWith("SongsHeader", StringComparison.Ordinal);
-        var props = isSongs ? SongsColProps : AlbumColProps;
-        var minimums = isSongs ? SongsColumnMinimums : AlbumColumnMinimums;
+    /// <summary>
+    /// Pulling a boundary trades width between the two columns meeting there, so the
+    /// table keeps its overall width and only the grabbed column changes. Star columns
+    /// are frozen to pixels on the first drag, otherwise they would silently re-balance.
+    /// The pair is resolved from laid-out geometry rather than a fixed index, because a
+    /// hidden column is 0px wide and its handle would otherwise drag it back into view.
+    /// </summary>
+    private void TableHeader_DragStarted(object? sender, ColumnDragEventArgs e)
+    {
+        if (sender is TrackTableHeader header)
+            BeginResize(new ColumnAccess { State = e.Table, Owner = this }, null, header.HeaderGrid);
+    }
+
+    private void TableHeader_DragDelta(object? sender, ColumnDragEventArgs e) => ContinueSharedDrag(0);
+
+    private void TableHeader_DragCompleted(object? sender, ColumnDragEventArgs e) => EndSharedDrag();
+
+    /// <summary>
+    /// Resolves the two columns meeting at the grabbed boundary and freezes them to
+    /// pixels so star weights stop re-balancing mid-drag.
+    /// </summary>
+    private void BeginResize(ColumnAccess access, Thumb? thumb = null, Grid? explicitGrid = null)
+    {
+        _dragAccess = null;
+        _dragLeft = -1;
+        _dragRight = -1;
+
+        var grid = explicitGrid
+                   ?? (thumb is not null ? FindAncestorGrid(thumb) : null)
+                   ?? FindAncestorGrid(this.FindName(access.State.Key + "HeaderGrid") as FrameworkElement);
+        if (grid is null) return;
+
         var defs = grid.ColumnDefinitions;
         if (defs.Count < 2) return;
 
-        // Which pair of columns trades width is decided from the laid-out geometry,
-        // not from a fixed index. A hidden column is 0px wide, so its handles sit on
-        // top of a neighbour's: resolving by index would grab the hidden column and
-        // a resize would bring it straight back.
         double handleX = Mouse.GetPosition(grid).X;
         int edge = -1;
         double best = double.MaxValue;
         for (int i = 0; i < defs.Count; i++)
         {
             if (defs[i].ActualWidth <= 0) continue;          // hidden column
-            double d = Math.Abs(defs[i].Offset - handleX);
-            if (d < best) { best = d; edge = i; }
+            double distance = Math.Abs(defs[i].Offset - handleX);
+            if (distance < best) { best = distance; edge = i; }
         }
         if (edge < 0) return;
 
-        // `edge` is the column whose LEFT edge carries the handle, so it is the
-        // right-hand partner; the left-hand partner is the nearest visible column
-        // before it. Scanning one column further right (the old behaviour) made a
-        // drag on a column's left edge resize the wrong pair, so the column only
-        // appeared to slide instead of changing length.
         int leftColumn = -1;
         for (int i = edge - 1; i >= 0; i--)
             if (defs[i].ActualWidth > 0) { leftColumn = i; break; }
-        int rightColumn = edge;
-        if (leftColumn < 0) return;                            // outer edge
+        if (leftColumn < 0) return;
 
-        // props[j] maps to Grid column j + 1. The art cell (column 0) is fixed and
-        // the options cell (the last prop) must never move, so neither can trade.
+        // Column 0 is the art cell and the last is the fixed "..." cell; neither trades.
         int left = leftColumn - 1;
-        int right = rightColumn - 1;
-        if (left < 0) return;                                // art cell on the left
-        if (right >= props.Length - 1) return;                // options cell on the right
+        int right = edge - 1;
+        if (left < 0 || right >= access.TextCount) return;
 
-        for (int i = 0; i < props.Length; i++)
+        // From here on the gesture owns the column selection: freezing the widths
+        // re-lays the list out, and that must not take the handle away mid-drag.
+        _isResizing = true;
+
+        for (int i = 0; i < access.TextCount; i++)
+            if (!access.Get(i).IsAbsolute)
+                access.Set(i, new GridLength(defs[i + 1].ActualWidth));
+
+        _dragAccess = access;
+        _dragLeft = left;
+        _dragRight = right;
+        _dragOrigLeft = defs[leftColumn].ActualWidth;
+        _dragOrigRight = defs[edge].ActualWidth;
+        _dragMinLeft = access.State.Minimums[left];
+        _dragMinRight = access.State.Minimums[right];
+
+        var native = new NativePOINT();
+        GetCursorPos(ref native);
+        _dragOriginX = native.X;
+    }
+
+    private void TableHeader_ColumnToggled(object? sender, ColumnIndexEventArgs e)
+    {
+        if (sender is TrackTableHeader { Table: { } table }) table.ToggleActive(e.ColumnIndex);
+    }
+
+    private void TableHeader_HoverChanged(object? sender, ColumnIndexEventArgs e)
+    {
+        if (sender is TrackTableHeader { Table: { } table }) table.Hover = e.ColumnIndex;
+    }
+
+    private void TableHeader_ColumnHideRequested(object? sender, ColumnIndexEventArgs e)
+    {
+        if (sender is TrackTableHeader { Table: { } table })
         {
-            var current = (GridLength)GetValue(props[i]);
-            if (!current.IsAbsolute)
+            table.HideColumn(e.ColumnIndex);
+            // Hiding frees width; the remaining columns take it back up.
+            foreach (var st in _sharedSyncs)
+                if (ReferenceEquals(st.Access?.State, table)) st.NeedsRefit = true;
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(UpdateTracksScrollbarInset));
+        }
+    }
+
+    // ---- shared columns menu (the trailing "..." on every converted table) -------
+
+    private Popup? _columnsMenu;
+    private TrackTableState? _columnsMenuTable;
+
+    /// <summary>
+    /// Builds one popup that adapts to whichever table asked for it: a checkbox per
+    /// text column, ticking shows and unticking hides - same contract as the legacy
+    /// Songs/Album menus, driven entirely from the table state.
+    /// </summary>
+    private void TableHeader_ColumnsMenuRequested(object? sender, EventArgs e)
+    {
+        if (sender is not TrackTableHeader header || header.Table is not { } table) return;
+
+        if (_columnsMenu is null)
+        {
+            _columnsMenu = new Popup
             {
-                SetValue(props[i], new GridLength(defs[i + 1].ActualWidth));
-            }
+                Placement = PlacementMode.Bottom,
+                StaysOpen = false,
+                AllowsTransparency = true,
+                PopupAnimation = PopupAnimation.None,
+            };
+            _columnsMenu.Closed += (_, _) => _columnsMenuTable = null;
         }
 
-        _activeDragProps = props;
-        _activeDragLeft = left;
-        _activeDragRight = right;
-        _activeDragSign = 1;
-        var natOrigin = new NativePOINT();
-        GetCursorPos(ref natOrigin);
-        _dragOriginX = natOrigin.X;
-        _origLeft = defs[leftColumn].ActualWidth;
-        _origRight = defs[rightColumn].ActualWidth;
-        _minLeft = minimums[left];
-        _minRight = minimums[right];
+        _columnsMenuTable = table;
+        _columnsMenu.PlacementTarget = (FrameworkElement?)header.ColumnsButton ?? header;
+        _columnsMenu.Child = BuildColumnsMenuContent(table);
+
+        _columnsMenu.IsOpen = false;
+        _columnsMenu.IsOpen = true;
     }
+
+    private UIElement BuildColumnsMenuContent(TrackTableState table)
+    {
+        var panel = new StackPanel();
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Columns",
+            Foreground = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)),
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(10, 2, 0, 8),
+        });
+
+        for (int i = 0; i < table.ColumnCount; i++)
+        {
+            int index = i;                       // capture for the closure
+            var box = new CheckBox
+            {
+                Content = table.Labels[i],
+                Foreground = new SolidColorBrush(Color.FromArgb(0xE6, 0xFF, 0xFF, 0xFF)),
+                FontSize = 13,
+                Height = 32,
+                Cursor = Cursors.Hand,
+                IsChecked = !table.IsHidden(i),
+                Margin = new Thickness(0),
+                Padding = new Thickness(0),
+                Template = BuildColumnsCheckBoxTemplate(),
+            };
+            box.Checked += (_, _) => table.ShowColumn(index);
+            box.Unchecked += (_, _) => table.HideColumn(index);
+            panel.Children.Add(box);
+        }
+
+        var restore = new Button
+        {
+            Content = "Restore all",
+            Foreground = new SolidColorBrush(Color.FromArgb(0xB4, 0xFF, 0xFF, 0xFF)),
+            FontSize = 12,
+            Height = 28,
+            Margin = new Thickness(6, 6, 6, 2),
+            Cursor = Cursors.Hand,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Template = BuildRestoreButtonTemplate(),
+        };
+        restore.Click += (_, _) => { table.RestoreAll(); SyncColumnsMenuChecks(table); };
+        panel.Children.Add(restore);
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x1E, 0x22, 0x2A)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(6, 8, 6, 8),
+            MinWidth = 184,
+            Child = panel,
+        };
+    }
+
+    /// <summary>Re-ticks the boxes after "Restore all" so the menu reflects the state.</summary>
+    private void SyncColumnsMenuChecks(TrackTableState table)
+    {
+        if (_columnsMenu?.Child is not Border { Child: StackPanel panel }) return;
+        int child = 1;                              // skip the "Columns" title
+        for (int i = 0; i < table.ColumnCount && child < panel.Children.Count; i++, child++)
+            if (panel.Children[child] is CheckBox box)
+                box.IsChecked = !table.IsHidden(i);
+    }
+
+    private static ControlTemplate BuildColumnsCheckBoxTemplate()
+    {
+        var template = new ControlTemplate(typeof(CheckBox));
+
+        var row = new FrameworkElementFactory(typeof(Border), "Row");
+        row.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        row.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+        row.SetValue(Border.PaddingProperty, new Thickness(8, 0, 8, 0));
+
+        var grid = new FrameworkElementFactory(typeof(Grid));
+        var col0 = new FrameworkElementFactory(typeof(ColumnDefinition));
+        col0.SetValue(ColumnDefinition.WidthProperty, new GridLength(26));
+        var col1 = new FrameworkElementFactory(typeof(ColumnDefinition));
+        col1.SetValue(ColumnDefinition.WidthProperty, new GridLength(1, GridUnitType.Star));
+        grid.AppendChild(col0);
+        grid.AppendChild(col1);
+
+        var box = new FrameworkElementFactory(typeof(Border), "Box");
+        box.SetValue(Border.WidthProperty, 16.0);
+        box.SetValue(Border.HeightProperty, 16.0);
+        box.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+        box.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        box.SetValue(Border.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)));
+        box.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        box.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        box.SetValue(Grid.ColumnProperty, 0);
+
+        var tick = new FrameworkElementFactory(typeof(System.Windows.Shapes.Path), "Tick");
+        tick.SetValue(System.Windows.Shapes.Path.DataProperty, Application.Current?.TryFindResource("Icon.Check") as Geometry);
+        tick.SetValue(System.Windows.Shapes.Path.FillProperty, new SolidColorBrush(Color.FromArgb(0xFF, 0x15, 0x18, 0x1F)));
+        tick.SetValue(System.Windows.Shapes.Path.StretchProperty, Stretch.Uniform);
+        tick.SetValue(System.Windows.Shapes.Path.WidthProperty, 9.0);
+        tick.SetValue(System.Windows.Shapes.Path.HeightProperty, 9.0);
+        tick.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        tick.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        tick.SetValue(UIElement.OpacityProperty, 0.0);
+        box.AppendChild(tick);
+
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        presenter.SetValue(Grid.ColumnProperty, 1);
+
+        grid.AppendChild(box);
+        grid.AppendChild(presenter);
+        row.AppendChild(grid);
+        template.VisualTree = row;
+
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)), "Row"));
+
+        var checkedTrigger = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
+        checkedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(0xE6, 0xEA, 0xF2, 0xFF)), "Box"));
+        checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(0xE6, 0xEA, 0xF2, 0xFF)), "Box"));
+        checkedTrigger.Setters.Add(new Setter(UIElement.OpacityProperty, 1.0, "Tick"));
+
+        template.Triggers.Add(hover);
+        template.Triggers.Add(checkedTrigger);
+        template.Seal();
+        return template;
+    }
+
+    private static ControlTemplate BuildRestoreButtonTemplate()
+    {
+        var template = new ControlTemplate(typeof(Button));
+        var border = new FrameworkElementFactory(typeof(Border), "Bd");
+        border.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        border.AppendChild(presenter);
+        template.VisualTree = border;
+
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF)), "Bd"));
+        template.Triggers.Add(hover);
+        template.Seal();
+        return template;
+    }
+
+    // ---- legacy adapters -----------------------------------------------------------
+    // The two hand-written headers that predate the shared control still raise WPF's
+    // Thumb drag events directly. These keep that markup working by handing the gesture
+    // to the shared state, so both paths resize through exactly the same code.
+
+    private void ColumnHandle_DragStarted(object sender, DragStartedEventArgs e)
+        => StartSharedDrag(sender, e.OriginalSource as DependencyObject);
 
     private void ColumnHandle_DragDelta(object sender, DragDeltaEventArgs e)
-    {
-        if (_activeDragProps == null || _activeDragLeft < 0 || _activeDragRight < 0) return;
-        // The drag distance comes from the OS cursor, not from WPF. Summing
-        // Thumb.DragDeltaEventArgs.HorizontalChange made a 36px drag travel
-        // 6+12+18+24+30+36 = 126px, and using that value as-is is quantised
-        // (a 60px drag reported 30), so both drifted away from the cursor.
-        var nat = new NativePOINT();
-        double offset = GetCursorPos(ref nat) ? nat.X - _dragOriginX : e.HorizontalChange;
-
-        double pair = _origLeft + _origRight;
-        double upper = Math.Max(_minLeft, pair - _minRight);
-        double wanted = _origLeft + (_activeDragSign * offset);
-        double nextLeft = Math.Min(upper, Math.Max(_minLeft, wanted));
-        double nextRight = pair - nextLeft;
-
-        SetValue(_activeDragProps[_activeDragLeft], new GridLength(nextLeft));
-        SetValue(_activeDragProps[_activeDragRight], new GridLength(nextRight));
-    }
+        => ContinueSharedDrag(e.HorizontalChange);
 
     private void ColumnHandle_DragCompleted(object sender, DragCompletedEventArgs e)
+        => EndSharedDrag();
+
+    private void StartSharedDrag(object sender, DependencyObject? source)
     {
-        _activeDragProps = null;
-        _activeDragLeft = -1;
-        _activeDragRight = -1;
+        for (DependencyObject? node = source; node is not null;)
+        {
+            if (node is Thumb { Tag: string tag } && tag.Contains(':'))
+            {
+                var key = tag.Split(':')[0].Replace("HeaderGrid", "");
+                var access = AccessFor(key);
+                if (access is not null) { BeginResize(access, node as Thumb); return; }
+            }
+            node = VisualTreeHelper.GetParent(node) ?? (node as FrameworkElement)?.Parent;
+        }
     }
+
+
+    private void ContinueSharedDrag(double fallback)
+    {
+        if (_dragAccess is null) return;
+        try
+        {
+            var native = new NativePOINT();
+            bool got = GetCursorPos(ref native);
+            double offset = got ? native.X - _dragOriginX : fallback;
+
+            double pair = _dragOrigLeft + _dragOrigRight;
+            double upper = Math.Max(_dragMinLeft, pair - _dragMinRight);
+            double nextLeft = Math.Min(upper, Math.Max(_dragMinLeft, _dragOrigLeft + offset));
+            _dragAccess.Set(_dragLeft, new GridLength(nextLeft));
+            _dragAccess.Set(_dragRight, new GridLength(pair - nextLeft));
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("Table drag failed", ex);
+            EndSharedDrag();
+        }
+    }
+
+    private void EndSharedDrag()
+    {
+        _dragAccess = null;
+        _isResizing = false;
+        _dragLeft = -1;
+        _dragRight = -1;
+    }
+
 
     // Shared-element (hero) transition state between the artists grid and the
     // artist detail page, so the reverse animation lands on the same circle.
@@ -697,6 +1202,15 @@ namespace MusicPlayer.Views
     private double _queueListTopCache = double.NaN;
     private double _queueListLeftCache = double.NaN;
     private double _queueEstimatedOffset = double.NaN;
+    // Row pitch of the queue list, measured from a realized row at drag start.
+    // It used to be a hard-coded 60 while the rows were actually 58px apart, so the
+    // gap index drifted further the longer the row was dragged (2px of error per
+    // row, and a whole row off near every boundary). Measuring it keeps the drop
+    // index locked to the real layout even if the row height changes again.
+    private double _queueRowPitch = 48.0;
+    // Deadband around a row boundary where the gap index does not switch, so
+    // pointer jitter cannot flip the target back and forth.
+    private const double _queueGapDeadband = 8.0;
     // Gap rate-limiter: only commit a new targetIndex when it has been stable for
     // at least 2 consecutive UpdateQueueDragVisual calls. Prevents single-frame
     // oscillations from triggering displacement animations in opposite directions.
@@ -764,15 +1278,24 @@ InitializeComponent();
    Loaded += OnWindowLoaded;
    Deactivated += OnWindowDeactivated;
 // Keeps the table headers' column separators aligned with the row separators,
-    // which sit inside each list's scrollbar gutter.
+// which sit inside each list's scrollbar gutter.
     _songsSync.List = AllSongsListBox;
     _songsSync.Header = SongsHeaderGrid;
-    _songsSync.ColProps = SongsColProps;
-    _songsSync.ColMinimums = SongsColumnMinimums;
+    _songsSync.Access = new ColumnAccess { State = SongsTable, LegacyProps = SongsColProps, Owner = this };
     _albumSync.List = AlbumDetailListBox;
     _albumSync.Header = AlbumHeaderGrid;
-    _albumSync.ColProps = AlbumColProps;
-    _albumSync.ColMinimums = AlbumColumnMinimums;
+    _albumSync.Access = new ColumnAccess { State = AlbumTable, LegacyProps = AlbumColProps, Owner = this };
+    // The nine converted tables share the same rule, so their headers follow their
+    // rows into the scrollbar gutter as well.
+    RegisterSharedSync(RecentPlayHeader, RecentPlayList, RecentPlayTable);
+    RegisterSharedSync(RecentAddHeader, RecentAddList, RecentAddTable);
+    RegisterSharedSync(MostPlayedHeader, MostPlayedList, MostPlayedTable);
+    RegisterSharedSync(FavoritesHeader, FavoritesList, FavoritesTable);
+    RegisterSharedSync(ArtistDetailHeader, ArtistDetailList, ArtistDetailTable);
+    RegisterSharedSync(FolderDetailHeader, FolderDetailList, FolderDetailTable);
+    RegisterSharedSync(AlbumMusicHeader, AlbumMusicList, AlbumMusicTable);
+    RegisterSharedSync(PlaylistDetailHeader, PlaylistDetailList, PlaylistDetailTable);
+    RegisterSharedSync(GenreDetailHeader, GenreDetailList, GenreDetailTable);
     if (FindVisualChild<ScrollViewer>(AllSongsListBox) is ScrollViewer songsScroller)
         songsScroller.ScrollChanged += SongsScroller_ScrollChanged;
     // The lists' visual trees are not built yet in the constructor, and a page is
@@ -796,6 +1319,7 @@ InitializeComponent();
         // jobs keep running under the user's first clicks (return-lag).
         PreviewMouseMove += (_, _) => SmoothScrollHelper.MarkInteraction();
         PreviewMouseDown += (_, _) => SmoothScrollHelper.MarkInteraction();
+        PreviewMouseDown += Window_PreviewMouseDown;
         PreviewKeyDown   += (_, _) => SmoothScrollHelper.MarkInteraction();
 
         // Debounce the marquee re-measure on resize: Start*Marquee calls UpdateLayout(),
@@ -1321,6 +1845,7 @@ InitializeComponent();
 
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () => { StartMiniTitleMarquee(); StartFpTitleMarquee(); });
 
+
         // Auto-start scroll diagnostics for perf testing
         SmoothScrollHelper.AutoStartIfPerfTest();
 
@@ -1651,6 +2176,7 @@ InitializeComponent();
 
         _isTabSliding = true;
         SmoothScrollHelper.BeginTabSlide(newTab);
+        ClearColumnSelection();
         vm.CurrentTab = newTab;
 
         outgoing.Visibility = Visibility.Visible;
@@ -3126,14 +3652,14 @@ InitializeComponent();
             // so that the MouseMove flooding from ReleaseMouseCapture can't spawn a
             // ghost drag on the row that just received the dropped card.
             if (Environment.TickCount64 < _queueDropCooldownUntil) return;
-            // Enforce intentional 6px drag threshold before entering drag state
-            if (dist < 6.0) return;
+            // Enforce intentional drag threshold before entering drag state
+            if (dist < 8.0) return;
 
-            if (adx > 10 && adx > ady * 1.5 && dx > 0)
+            if (adx > 16 && adx > ady * 2.0 && dx > 0)
             {
                 _queueIsSwiping = true;
             }
-            else if (dist >= 6.0)
+            else if (dist >= 8.0)
             {
                 // Reorder is index-based on the full Queue; a filtered view
                 // shows a subset in view order, so drops would land on wrong
@@ -3206,6 +3732,7 @@ InitializeComponent();
                     _queueListLeftCache = lt.X;
                     _queueAutoScrollViewer ??= FindScrollViewer(QueueListBox);
                     _queueEstimatedOffset = _queueAutoScrollViewer?.VerticalOffset ?? 0.0;
+                    MeasureQueueRowPitch();
                 }
 
                 StartQueueDragAdorner(fe, track);
@@ -3580,7 +4107,7 @@ InitializeComponent();
         double maxOff = sv?.ScrollableHeight ?? 0;
         if (maxOff <= 0 && ViewModel.Queue.Count > 0)
         {
-            double estimatedTotalH = ViewModel.Queue.Count * 60.0;
+            double estimatedTotalH = ViewModel.Queue.Count * _queueRowPitch;
             maxOff = Math.Max(0, estimatedTotalH - (sv?.ViewportHeight > 0 ? sv.ViewportHeight : listH));
         }
 
@@ -4294,8 +4821,8 @@ InitializeComponent();
         int count = ViewModel.Queue.Count;
         if (count == 0) return 0;
 
-        const double RowPitch = 60.0;
-        const double HalfRow = 30.0;
+        double RowPitch = _queueRowPitch;
+        double HalfRow = RowPitch / 2.0;
         double offset = 0.0;
         try
         {
@@ -4315,13 +4842,29 @@ InitializeComponent();
         if (_queueCurrentDropIndex >= 0 && Math.Abs(rawGap - _queueCurrentDropIndex) == 1)
         {
             double boundaryY = (Math.Max(rawGap, _queueCurrentDropIndex) * RowPitch) - HalfRow;
-            if (Math.Abs(totalY - boundaryY) < 14.0)
+            if (Math.Abs(totalY - boundaryY) < _queueGapDeadband)
             {
                 return _queueCurrentDropIndex;
             }
         }
 
         return rawGap;
+    }
+
+    /// <summary>
+    /// Measures the queue list's row pitch from a realized row, so the drop index
+    /// is derived from the real layout instead of a constant that can drift.
+    /// </summary>
+    private void MeasureQueueRowPitch()
+    {
+        try
+        {
+            var container = QueueListBox?.ItemContainerGenerator?.ContainerFromIndex(0) as FrameworkElement;
+            if (container is null) return;
+            double pitch = container.ActualHeight + container.Margin.Top + container.Margin.Bottom;
+            if (pitch > 1) _queueRowPitch = pitch;
+        }
+        catch { }
     }
 
     private void ShowDropPlaceholder(int gapIndex)
@@ -4435,7 +4978,7 @@ InitializeComponent();
                 double maxOff = sv.ScrollableHeight;
                 if (maxOff <= 0 && ViewModel?.Queue.Count > 0)
                 {
-                    double estimatedTotalH = ViewModel.Queue.Count * 60.0;
+                    double estimatedTotalH = ViewModel.Queue.Count * _queueRowPitch;
                     maxOff = Math.Max(0, estimatedTotalH - (sv.ViewportHeight > 0 ? sv.ViewportHeight : listH));
                 }
 
@@ -4965,6 +5508,7 @@ InitializeComponent();
 
         if (e.Key == Key.Escape)
         {
+            ClearColumnSelection();
             if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
             {
                 LogHelper.LogInfo("[QUEUE_DRAG] DragCancel.Escape");
@@ -5581,9 +6125,13 @@ InitializeComponent();
                 StatusDot3.BeginAnimation(OpacityProperty, null);
             }
         }
-        else if (e.PropertyName == nameof(MainViewModel.CurrentView))
-        {
-            // Clear hero flag when leaving artist detail so re-entry via
+else if (e.PropertyName == nameof(MainViewModel.CurrentView))
+    {
+    // Any page change leaves the column-handle context: the arrows and the X are a
+    // live editing affordance, they must not survive a navigation to one of the
+    // other track pages (folder/genre/artist detail, favourites, most play, recent...).
+    ClearColumnSelection();
+    // Clear hero flag when leaving artist detail so re-entry via
             // non-hero paths (e.g. Full Player -> Artist) won't trigger
             // the reverse hero animation on back.
             _navGen = NavGate.NewNavigation();

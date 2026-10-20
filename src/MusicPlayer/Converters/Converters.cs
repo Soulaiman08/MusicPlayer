@@ -987,3 +987,44 @@ public class ColumnHoverConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotImplementedException();
 }
+// ============================================================================
+// ColumnHandleVisibilityConverter - decides which resize handles show for the
+// selected column. A handle is anchored to a Grid column, so once a column is
+// hidden its handle sits in a 0px cell and WPF clips it in half. Instead of the
+// fixed "active / active+1" rule, this resolves the two *visible* boundaries
+// next to the selected column.
+// values[0]  = selected column index (-1 when none)
+// values[1..]= the text columns' widths, in order
+// parameter = the text column the handle is anchored to (its left edge)
+// ============================================================================
+public class ColumnHandleVisibilityConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (values.Length < 2) return Visibility.Collapsed;
+        if (!int.TryParse(parameter?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int handle))
+            return Visibility.Collapsed;
+        if (values[0] is not int active || active < 0) return Visibility.Collapsed;
+
+        int count = values.Length - 1;                 // text columns only
+        if (handle < 0 || handle >= count) return Visibility.Collapsed;
+
+        bool Visible(int i)
+        {
+            if (i < 0 || i >= count) return false;
+            return values[i + 1] is not GridLength gl || !gl.IsAbsolute || gl.Value > 0;
+        }
+
+        if (!Visible(handle)) return Visibility.Collapsed;
+        if (handle == active) return Visibility.Visible;
+        for (int i = active + 1; i < count; i++)
+        {
+            if (!Visible(i)) continue;                // skip hidden columns
+            return handle == i ? Visibility.Visible : Visibility.Collapsed;
+        }
+        return Visibility.Collapsed;
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object? parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
