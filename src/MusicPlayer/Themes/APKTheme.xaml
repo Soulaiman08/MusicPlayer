@@ -810,4 +810,29 @@
     <FontWeight x:Key="DS_FontWeight_SemiBold">SemiBold</FontWeight>
     <FontWeight x:Key="DS_FontWeight_Bold">Bold</FontWeight>
 
+    <!-- Motion durations: 0:0:0.<ms/1000> (120/170/200/220/280/300/380 ms) as WPF Duration resources -->
+    <Duration x:Key="DS_Duration_Micro">0:0:0.12</Duration>
+    <Duration x:Key="DS_Duration_Displace">0:0:0.17</Duration>
+    <Duration x:Key="DS_Duration_Overlay">0:0:0.22</Duration>
+    <Duration x:Key="DS_Duration_LyricGlide">0:0:0.2</Duration>
+    <Duration x:Key="DS_Duration_Page">0:0:0.28</Duration>
+    <Duration x:Key="DS_Duration_Drawer">0:0:0.3</Duration>
+    <Duration x:Key="DS_Duration_Cinematic">0:0:0.38</Duration>
+
+    <!-- Easing curves (iOS-26 spring approximations; implements audited in-code curves) -->
+    <QuadraticEase x:Key="DS_Ease_InQuad" EasingMode="EaseIn"/>
+    <CubicEase x:Key="DS_Ease_OutCubic" EasingMode="EaseOut"/>
+    <QuarticEase x:Key="DS_Ease_OutQuartic" EasingMode="EaseOut"/>
+    <QuinticEase x:Key="DS_Ease_OutQuintic" EasingMode="EaseOut"/>
+    <BackEase x:Key="DS_Ease_OutBackSoft" Amplitude="0.6" EasingMode="EaseOut"/>
+
+    <!-- Elevation shadows (M3 drawer / M6 sheets / M4 cards) -->
+    <DropShadowEffect x:Key="DS_Shadow_Card" BlurRadius="16" ShadowDepth="2" Direction="270" Opacity="0.25" Color="#FF000000" RenderingBias="Performance"/>
+    <DropShadowEffect x:Key="DS_Shadow_Panel" BlurRadius="28" ShadowDepth="6" Direction="270" Opacity="0.35" Color="#FF000000" RenderingBias="Performance"/>
+    <DropShadowEffect x:Key="DS_Shadow_Float" BlurRadius="44" ShadowDepth="12" Direction="270" Opacity="0.45" Color="#FF000000" RenderingBias="Performance"/>
+
+    <!-- Glass/scrim surfaces (values match current drawer/overlay literals) -->
+    <SolidColorBrush x:Key="DS_Glass_Panel_Brush" Color="#F214171E"/>
+    <SolidColorBrush x:Key="DS_Scrim_Modal_Brush" Color="#99000000"/>
+
 </ResourceDictionary>
