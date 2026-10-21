@@ -752,4 +752,62 @@
 
     <Style TargetType="ListBox" BasedOn="{StaticResource APK_VirtualListBox}"/>
 
+    <!-- ===== DS_ DESIGN TOKENS (additive layer for the UI redesign) =====
+         Foundation-only: no existing resource is modified and no template consumes
+         these yet. Colors/brushes deliberately mirror the current APK_ palette via
+         StaticResource so P2 can restyle a screen with DS_ tokens while the visual
+         values stay identical to today's look. Naming: DS_<group>_<role>. -->
+    <SolidColorBrush x:Key="DS_Bg_Brush" Color="{StaticResource APK_DarkBackground}"/>
+    <SolidColorBrush x:Key="DS_Surface_Brush" Color="{StaticResource APK_DarkSurface}"/>
+    <SolidColorBrush x:Key="DS_SurfaceOverlay_Brush" Color="{StaticResource APK_DarkToolbarOverlay}"/>
+    <SolidColorBrush x:Key="DS_Divider_Brush" Color="{StaticResource APK_ListDivider}"/>
+    <SolidColorBrush x:Key="DS_Accent_Brush" Color="{StaticResource APK_AccentBlue}"/>
+    <SolidColorBrush x:Key="DS_Accent_Hover_Brush" Color="{StaticResource APK_AccentBlueHover}"/>
+    <SolidColorBrush x:Key="DS_Accent_Pressed_Brush" Color="{StaticResource APK_AccentBluePressed}"/>
+    <SolidColorBrush x:Key="DS_Highlight_Brush" Color="{StaticResource APK_SelectionYellow}"/>
+    <SolidColorBrush x:Key="DS_Text_Primary_Brush" Color="{StaticResource APK_TextPrimary}"/>
+    <SolidColorBrush x:Key="DS_Text_Secondary_Brush" Color="{StaticResource APK_TextMedium}"/>
+    <SolidColorBrush x:Key="DS_Text_Tertiary_Brush" Color="{StaticResource APK_TextLow}"/>
+    <SolidColorBrush x:Key="DS_Text_Disabled_Brush" Color="{StaticResource APK_TextDisabled}"/>
+    <SolidColorBrush x:Key="DS_Card_Brush" Color="{StaticResource APK_CardBackground}"/>
+    <SolidColorBrush x:Key="DS_Card_Hover_Brush" Color="{StaticResource APK_CardBackgroundHover}"/>
+    <SolidColorBrush x:Key="DS_Card_Border_Brush" Color="{StaticResource APK_CardBorder}"/>
+    <SolidColorBrush x:Key="DS_Hover_Subtle_Brush" Color="#1AFFFFFF"/>
+    <SolidColorBrush x:Key="DS_Hover_Overlay_Brush" Color="#26FFFFFF"/>
+    <SolidColorBrush x:Key="DS_Pressed_Overlay_Brush" Color="#40FFFFFF"/>
+
+    <!-- Spacing scale (doubles for Width/Height/Padding; Thickness pair for Margin) -->
+    <sys:Double x:Key="DS_Spacing_XS">4</sys:Double>
+    <sys:Double x:Key="DS_Spacing_S">8</sys:Double>
+    <sys:Double x:Key="DS_Spacing_M">12</sys:Double>
+    <sys:Double x:Key="DS_Spacing_L">16</sys:Double>
+    <sys:Double x:Key="DS_Spacing_XL">24</sys:Double>
+    <sys:Double x:Key="DS_Spacing_XXL">32</sys:Double>
+    <Thickness x:Key="DS_Spacing_T_XS">4</Thickness>
+    <Thickness x:Key="DS_Spacing_T_S">8</Thickness>
+    <Thickness x:Key="DS_Spacing_T_M">12</Thickness>
+    <Thickness x:Key="DS_Spacing_T_L">16</Thickness>
+    <Thickness x:Key="DS_Spacing_T_XL">24</Thickness>
+    <Thickness x:Key="DS_Spacing_T_XXL">32</Thickness>
+
+    <!-- Corner radii -->
+    <CornerRadius x:Key="DS_Radius_XS">4</CornerRadius>
+    <CornerRadius x:Key="DS_Radius_S">6</CornerRadius>
+    <CornerRadius x:Key="DS_Radius_M">12</CornerRadius>
+    <CornerRadius x:Key="DS_Radius_L">18</CornerRadius>
+    <CornerRadius x:Key="DS_Radius_Round">100</CornerRadius>
+
+    <!-- Typography -->
+    <FontFamily x:Key="DS_Font_Family">Segoe UI, Roboto, sans-serif</FontFamily>
+    <sys:Double x:Key="DS_FontSize_XS">10</sys:Double>
+    <sys:Double x:Key="DS_FontSize_S">12</sys:Double>
+    <sys:Double x:Key="DS_FontSize_M">13</sys:Double>
+    <sys:Double x:Key="DS_FontSize_L">18</sys:Double>
+    <sys:Double x:Key="DS_FontSize_XL">20</sys:Double>
+    <sys:Double x:Key="DS_FontSize_Display">28</sys:Double>
+    <FontWeight x:Key="DS_FontWeight_Regular">Normal</FontWeight>
+    <FontWeight x:Key="DS_FontWeight_Medium">Medium</FontWeight>
+    <FontWeight x:Key="DS_FontWeight_SemiBold">SemiBold</FontWeight>
+    <FontWeight x:Key="DS_FontWeight_Bold">Bold</FontWeight>
+
 </ResourceDictionary>

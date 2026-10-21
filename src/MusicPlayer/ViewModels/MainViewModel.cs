@@ -773,6 +773,25 @@ public partial class MainViewModel : ViewModelBase
 
 	public int PlaylistDetailTrackCount { get; set; }
 
+	/// <summary>"N songs · total time" summary shown in the playlist hero; set by RefreshPlaylistDetailMeta.</summary>
+	public string PlaylistDetailMeta { get; set; } = string.Empty;
+
+	private void RefreshPlaylistDetailMeta()
+	{
+		long total = 0;
+		for (int i = 0; i < PlaylistDetailTracks.Count; i++)
+			total += PlaylistDetailTracks[i].Duration;
+		int count = PlaylistDetailTracks.Count;
+		TimeSpan span = TimeSpan.FromMilliseconds(total);
+		string length = span.TotalMinutes < 1
+			? $"{(int)span.TotalSeconds} sec"
+			: span.TotalHours >= 1
+				? $"{(int)span.TotalHours} hr {span.Minutes} min"
+				: $"{(int)span.TotalMinutes} min";
+		PlaylistDetailMeta = count == 0 ? string.Empty : $"{count} song{(count == 1 ? "" : "s")} · {length}";
+		OnPropertyChanged("PlaylistDetailMeta");
+	}
+
 
 	public string CurrentAlbumYear { get; set; } = string.Empty;
 
@@ -5060,6 +5079,7 @@ public partial class MainViewModel : ViewModelBase
 		PlaylistDetailTracks.Remove(track);
 		PlaylistDetailTrackCount = PlaylistDetailTracks.Count;
 		OnPropertyChanged("PlaylistDetailTrackCount");
+		RefreshPlaylistDetailMeta();
 		LoadPlaylists();
 		ShowStatusBar($"Removed '{track.Title}' from playlist");
 	}
@@ -6274,12 +6294,13 @@ private async void LoadFolders()
 			{
 				CurrentPlaylistId = playlistId;
 				CurrentPlaylistName = playlistName;
-				PlaylistDetailTrackCount = tracks.Count;
-				for (int i = 0; i < tracks.Count; i++)
-					tracks[i].TrackNumber = i + 1;
-				PlaylistDetailTracks.ReplaceAll(tracks);
-				OnPropertyChanged("CurrentPlaylistName");
-				OnPropertyChanged("PlaylistDetailTrackCount");
+			PlaylistDetailTrackCount = tracks.Count;
+			for (int i = 0; i < tracks.Count; i++)
+				tracks[i].TrackNumber = i + 1;
+			PlaylistDetailTracks.ReplaceAll(tracks);
+			OnPropertyChanged("CurrentPlaylistName");
+			OnPropertyChanged("PlaylistDetailTrackCount");
+			RefreshPlaylistDetailMeta();
 			});
 		}
 		catch
@@ -6726,6 +6747,7 @@ private async void LoadFolders()
 		RemoveById(SearchResults, track.Id);
 		RemoveById(Queue, track.Id);
 		RemoveById(PlaylistDetailTracks, track.Id);
+		RefreshPlaylistDetailMeta();
 		RemoveById(DuplicateTracks, track.Id);
 		RemoveById(DeletedTracks, track.Id);
 		RemoveById(FilteredArtists, track.Id);

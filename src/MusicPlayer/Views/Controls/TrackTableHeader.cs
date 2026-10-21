@@ -24,6 +24,37 @@ public sealed class TrackTableHeader : UserControl
         DependencyProperty.Register(nameof(Table), typeof(TrackTableState), typeof(TrackTableHeader),
             new PropertyMetadata(null, OnTableChanged));
 
+    /// <summary>
+    /// Left padding of every heading text, in its own column. Defaults to the historic
+    /// 18px; pages whose row text uses a 12px inset opt in to 12 so headings and row
+    /// text share one vertical groove. Purely additive: the default keeps every
+    /// existing table pixel-identical.
+    /// </summary>
+    public static readonly DependencyProperty HeaderPaddingLeftProperty =
+        DependencyProperty.Register(nameof(HeaderPaddingLeft), typeof(double), typeof(TrackTableHeader),
+            new PropertyMetadata(18.0));
+
+    /// <summary>
+    /// Draws the footer-to-footer vertical rules between columns. Table chrome from
+    /// the original design; pages that show the lighter, rule-less list look turn
+    /// this off. Default true keeps every existing table unchanged.
+    /// </summary>
+    public static readonly DependencyProperty ShowColumnRulesProperty =
+        DependencyProperty.Register(nameof(ShowColumnRules), typeof(bool), typeof(TrackTableHeader),
+            new PropertyMetadata(true));
+
+    public double HeaderPaddingLeft
+    {
+        get => (double)GetValue(HeaderPaddingLeftProperty);
+        set => SetValue(HeaderPaddingLeftProperty, value);
+    }
+
+    public bool ShowColumnRules
+    {
+        get => (bool)GetValue(ShowColumnRulesProperty);
+        set => SetValue(ShowColumnRulesProperty, value);
+    }
+
     private static readonly Brush _lineBrush = new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
     private static readonly Brush _hoverFill = new SolidColorBrush(Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF));
     private static readonly Brush _closeFill = new SolidColorBrush(Color.FromArgb(0xC4, 0xFF, 0xFF, 0xFF));
@@ -140,6 +171,7 @@ public sealed class TrackTableHeader : UserControl
 
     private void AddSeparator(int column)
     {
+        if (!ShowColumnRules) return;
         var separator = new Border
         {
             BorderBrush = _lineBrush,
@@ -174,7 +206,7 @@ public sealed class TrackTableHeader : UserControl
             FontWeight = FontWeights.SemiBold,
             FontSize = 12.5,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(18, 0, 46, 0),
+            Margin = new Thickness(HeaderPaddingLeft, 0, 46, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,
             ToolTip = "Click to resize this column",
         });
