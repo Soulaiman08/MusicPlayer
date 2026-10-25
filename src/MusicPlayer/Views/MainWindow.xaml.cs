@@ -37,8 +37,6 @@ namespace MusicPlayer.Views
         private const int WM_HOTKEY = 0x0312;
         private const int WM_DEVICECHANGE = 0x0219;
         private const int DBT_DEVNODES_CHANGED = 0x0007;
-        private const int WM_WINDOWPOSCHANGING = 0x0046;
-        private const int SWP_NOCOPYBITS = 0x0100;
 
         private WindowsIntegrationService? _winIntegration;
         private SystemTrayService? _trayService;
@@ -1166,6 +1164,9 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
     // Source card temporarily hidden while the reverse hero flies toward it,
     // so the morphing overlay never doubles with the real card underneath.
     private FrameworkElement? _hiddenReverseCard;
+    private FrameworkElement? _hiddenForwardHeroSource;
+    private sealed record PreparedTileHeroSource(object Item, FrameworkElement Element, ImageSource Image, Point Position, Size Size);
+    private PreparedTileHeroSource? _preparedTileHeroSource;
 
     private Point _queueDragStart;
     private bool _queuePressActive;
@@ -1373,6 +1374,10 @@ InitializeComponent();
             newVm.Queue.CollectionChanged += OnQueueCollectionChanged;
             newVm.ScrollToCurrentTrackRequested += OnScrollToCurrentTrackRequested;
             newVm.PropertyChanged += OnBackgroundPropertyChanged;
+            if (!newVm.IsInitializing && LoadingOverlay != null)
+            {
+                LoadingOverlay.Visibility = Visibility.Collapsed;
+            }
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () => { _bgDirty = true; EnsureBlurCache(); });
             RestoreWindowState();
         }
@@ -1838,6 +1843,12 @@ InitializeComponent();
     private void OnWindowLoaded(object sender, RoutedEventArgs e)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
+        try
+        {
+            int darkMode = 1;
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+        }
+        catch { }
         HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
 
         // Services may not be ready yet (DI builds in background). Initialize them after DataContext is set.
@@ -1978,21 +1989,80 @@ InitializeComponent();
         {
             HandleDeviceChange();
         }
-        else if (msg == WM_WINDOWPOSCHANGING)
+        else if (msg == WM_GETMINMAXINFO)
         {
-            // Windows normally reuses (copies) the old client bitmap when a
-            // window is resized/maximized, which flashes stale doubled content
-            // until WPF finishes its layout pass. Forcing a full repaint (no
-            // copybits) eliminates that moment of ghosting/freeze.
-            var wpos = System.Runtime.InteropServices.Marshal.PtrToStructure<WINDOWPOS>(lParam);
-            wpos.flags |= SWP_NOCOPYBITS;
-            System.Runtime.InteropServices.Marshal.StructureToPtr(wpos, lParam, true);
+            WmGetMinMaxInfo(hwnd, lParam);
+            handled = true;
         }
         return IntPtr.Zero;
     }
 
+    private const int WM_GETMINMAXINFO = 0x0024;
+    private const int WM_NCHITTEST = 0x0084;
+    private const int HTMAXBUTTON = 9;
+
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct WINDOWPOS
+    private struct POINT { public int x; public int y; }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MINMAXINFO
+    {
+        public POINT ptReserved;
+        public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct MONITORINFO
+        {
+            public uint cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+        }
+
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
+        private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO lpmi);
+
+        private static void WmGetMinMaxInfo(nint hwnd, nint lParam)
+        {
+            try
+            {
+                var mmi = System.Runtime.InteropServices.Marshal.PtrToStructure<MINMAXINFO>(lParam);
+                nint monitor = MonitorFromWindow(hwnd, 2);
+                if (monitor != nint.Zero)
+                {
+                    var mi = new MONITORINFO();
+                    mi.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(MONITORINFO));
+                    if (GetMonitorInfo(monitor, ref mi))
+                    {
+                        var work = mi.rcWork;
+                        var mon = mi.rcMonitor;
+                        mmi.ptMaxPosition.x = work.Left - mon.Left;
+                        mmi.ptMaxPosition.y = work.Top - mon.Top;
+                        mmi.ptMaxSize.x = work.Right - work.Left;
+                        mmi.ptMaxSize.y = work.Bottom - work.Top;
+                    }
+                }
+                System.Runtime.InteropServices.Marshal.StructureToPtr(mmi, lParam, true);
+            }
+            catch { }
+        }
+
+        private struct WINDOWPOS
     {
         public nint hwnd;
         public nint hwndInsertAfter;
@@ -2183,8 +2253,8 @@ InitializeComponent();
         outgoing.Visibility = Visibility.Visible;
         incoming.Visibility = Visibility.Visible;
 
-        var ease = new QuarticEase { EasingMode = EasingMode.EaseOut };
-        var dur = TimeSpan.FromMilliseconds(220);
+        var ease = MotionTokens.EaseOut;
+        var dur = MotionTokens.TabSlide;
 
         double incomingStart = movingRight ? w : -w;
         double outgoingEnd = movingRight ? -w : w;
@@ -2253,12 +2323,51 @@ InitializeComponent();
 
     private void FolderRow_Click(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: FolderItem folder })
+        if (sender is Border card && card.DataContext is FolderItem folder)
+        {
+            _preparedTileHeroSource = CaptureTileHeroSource(card);
             ViewModel?.NavigateToFolder(folder.Path);
+        }
+    }
+
+    private void GenreRow_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border card || card.DataContext is not MusicTrack { Genre: { Length: > 0 } genre }) return;
+        _preparedTileHeroSource = CaptureTileHeroSource(card);
+        ViewModel?.NavigateToGenre(genre);
+    }
+
+    // Genres and folders still navigate normally. Keep a click-time snapshot of
+    // the actual square tile so a later detail redesign can reuse its exact visual
+    // bounds and artwork without guessing from the data model or re-finding it.
+    private PreparedTileHeroSource? CaptureTileHeroSource(Border card)
+    {
+        try
+        {
+            card.UpdateLayout();
+            if (card.Child is not StackPanel stack || stack.Children.Count == 0 ||
+                stack.Children[0] is not FrameworkElement tile ||
+                tile.ActualWidth <= 0 || tile.ActualHeight <= 0)
+                return null;
+
+            Point position = tile.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
+            int width = Math.Max(1, (int)Math.Ceiling(tile.ActualWidth));
+            int height = Math.Max(1, (int)Math.Ceiling(tile.ActualHeight));
+            var image = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+            image.Render(tile);
+            image.Freeze();
+            return new PreparedTileHeroSource(card.DataContext ?? tile.DataContext ?? tile, tile, image, position,
+                new Size(tile.ActualWidth, tile.ActualHeight));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void AlbumRow_Click(object sender, MouseButtonEventArgs e)
     {
+        if (_hiddenForwardHeroSource != null || _isBackTransitioning) return;
         if (sender is not Border { DataContext: MusicTrack dataContext } border) return;
         BeginAlbumHeroFromCard(border, dataContext);
     }
@@ -2270,6 +2379,7 @@ InitializeComponent();
     // synchronously inside the click so the first rendered frame already morphs.
     private void BeginAlbumHeroFromCard(Border border, MusicTrack dataContext)
     {
+        if (_hiddenForwardHeroSource != null || _isBackTransitioning) return;
         _navGen = NavGate.NewNavigation();
         FrameworkElement? square = null;
         if (border.Child is StackPanel sp && sp.Children.Count > 0)
@@ -2338,6 +2448,7 @@ InitializeComponent();
         if (imageSource == null) return;
 
         ResetArtistTransition();
+        HideForwardHeroSource(square);
 
         // Immediately cover the source card so there is ZERO black void gap!
         double targetSize = 280;
@@ -2408,6 +2519,10 @@ InitializeComponent();
             LogHelper.LogError("HeroTransition fwd album failed", ex);
             _heroTransitionPending = false;
             _albumDetailEnteredViaHero = false;
+            RestoreHiddenForwardHeroSource();
+            ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
+            ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
+            ArtistTransitionOverlay.Opacity = 1;
             EnsureDetailPageOpacity();
             // Restore everything this handler hid before the failure.
             AlbumDetailView.Opacity = 1;
@@ -2430,18 +2545,10 @@ InitializeComponent();
         }
     }
 
-    private void GenreRow_Click(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not Border { DataContext: MusicTrack dataContext }) return;
-        var genre = dataContext.Genre;
-        if (!string.IsNullOrEmpty(genre))
-            ViewModel?.NavigateToGenre(genre);
-    }
-
     private void NewPlaylist_Click(object sender, RoutedEventArgs e) => ShowNewPlaylistOverlay();
     private void NewPlaylist_Click(object sender, MouseButtonEventArgs e) => ShowNewPlaylistOverlay();
 
-    private void ShowNewPlaylistOverlay()
+    public void ShowNewPlaylistOverlay()
     {
         if (ViewModel == null) return;
         ViewModel.NewPlaylistName = "My Playlist";
@@ -2549,6 +2656,7 @@ InitializeComponent();
 
     private void ArtistRow_Click(object sender, MouseButtonEventArgs e)
     {
+        if (_hiddenForwardHeroSource != null || _isBackTransitioning) return;
         if (sender is not Border { DataContext: MusicTrack dataContext } border) return;
         _navGen = NavGate.NewNavigation();
 
@@ -2626,6 +2734,7 @@ InitializeComponent();
         }
 
         ResetArtistTransition();
+        HideForwardHeroSource(circle);
 
         // Immediately cover the source card so there is ZERO black void gap!
         double targetSize = 300;
@@ -2684,6 +2793,10 @@ InitializeComponent();
             // Never leave the detail page hidden if the morph fails to start.
             LogHelper.LogError("HeroTransition fwd failed", ex);
             _heroTransitionPending = false;
+            RestoreHiddenForwardHeroSource();
+            ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
+            ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
+            ArtistTransitionOverlay.Opacity = 1;
             EnsureDetailPageOpacity();
         }
     }
@@ -2837,10 +2950,29 @@ InitializeComponent();
             CollectImages(VisualTreeHelper.GetChild(root, i), images);
     }
 
+    private void HideForwardHeroSource(FrameworkElement source)
+    {
+        RestoreHiddenForwardHeroSource();
+        _hiddenForwardHeroSource = source;
+        source.BeginAnimation(OpacityProperty, null);
+        source.Opacity = 0;
+    }
+
+    private void RestoreHiddenForwardHeroSource()
+    {
+        if (_hiddenForwardHeroSource is { } source)
+        {
+            source.BeginAnimation(OpacityProperty, null);
+            source.Opacity = 1;
+            _hiddenForwardHeroSource = null;
+        }
+    }
+
     private void ResetArtistTransition()
     {
         // A previous reverse flight may have left its card hidden (e.g. interrupted).
         RestoreHiddenReverseCard();
+        RestoreHiddenForwardHeroSource();
         ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
@@ -3005,6 +3137,7 @@ InitializeComponent();
                     ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
                     ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
                     ArtistTransitionOverlay.Opacity = 1;
+                    RestoreHiddenForwardHeroSource();
                     AlbumDetailView.IsHitTestVisible = true;
                     var artEl = FindAlbumDetailArt();
                     if (artEl != null)
@@ -3054,6 +3187,7 @@ InitializeComponent();
             morphAnim.Completed += (_, _) =>
             {
                 ArtistDetailCircle.Opacity = 1;
+                RestoreHiddenForwardHeroSource();
                 ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
                 ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
                 ArtistTransitionOverlay.Opacity = 1;
@@ -3451,7 +3585,8 @@ InitializeComponent();
             if (child is Border { DataContext: MusicTrack t, IsVisible: true } b &&
                 b.Child is StackPanel sp && sp.Children.Count > 0 &&
                 sp.Children[0] is FrameworkElement sq &&
-                Math.Abs(sq.Width - 150) < 0.5 && sq.ActualWidth > 0)
+                sq.ActualWidth > 0 && sq.ActualHeight > 0 &&
+                Math.Abs(sq.ActualWidth - sq.ActualHeight) < 1.0)
             {
                 bool match = album
                     ? string.Equals(t.Album, name, StringComparison.OrdinalIgnoreCase)
@@ -5526,6 +5661,29 @@ InitializeComponent();
         }
     }
 
+private void WindowMinimize_Click(object sender, RoutedEventArgs e)
+    {
+        SystemCommands.MinimizeWindow(this);
+    }
+
+    private void WindowMaximize_Click(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+            SystemCommands.RestoreWindow(this);
+        else
+            SystemCommands.MaximizeWindow(this);
+    }
+
+    private void WindowClose_Click(object sender, RoutedEventArgs e)
+    {
+        SystemCommands.CloseWindow(this);
+    }
+
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+    }
+
     private void Window_PreviewMouseLeftDown(object sender, MouseButtonEventArgs e)
     {
         if (ViewModel?.ShowLyricsSettings == true && LyricsSettingsPanel != null)
@@ -5552,7 +5710,7 @@ InitializeComponent();
             ViewModel?.SeekToLyricCommand.Execute(dataContext);
     }
 
-    private void PlaylistRename_Click(object sender, RoutedEventArgs e)
+    public void PlaylistRename_Click(object sender, RoutedEventArgs e)
     {
         var p = GetPlaylistFromMenuItem(sender);
         if (p == null || ViewModel == null) return;
@@ -5566,14 +5724,14 @@ InitializeComponent();
         });
     }
 
-    private void PlaylistContextPlay_Click(object sender, RoutedEventArgs e)
+    public void PlaylistContextPlay_Click(object sender, RoutedEventArgs e)
     {
         var p = GetPlaylistFromMenuItem(sender);
         if (p != null)
             ViewModel?.PlayPlaylistCommand.Execute(p);
     }
 
-    private void PlaylistContextDelete_Click(object sender, RoutedEventArgs e)
+    public void PlaylistContextDelete_Click(object sender, RoutedEventArgs e)
     {
         var p = GetPlaylistFromMenuItem(sender);
         if (p != null)
@@ -6669,36 +6827,13 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
     private void AnimateDrawerToggle(bool open)
     {
-        if (DrawerOverlay == null || DrawerPanel == null || DrawerBackdrop == null) return;
+        if (SidebarBorder == null) return;
 
-        var duration = TimeSpan.FromMilliseconds(300);
+        double targetWidth = open ? 230 : 60;
+        var duration = TimeSpan.FromMilliseconds(240);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-
-        if (open)
-        {
-            DrawerOverlay.Visibility = Visibility.Visible;
-            DrawerPanel.RenderTransform.BeginAnimation(
-                TranslateTransform.XProperty,
-                new DoubleAnimation(-300, 0, duration) { EasingFunction = ease });
-            DrawerBackdrop.BeginAnimation(
-                OpacityProperty,
-                new DoubleAnimation(0, 1, duration) { EasingFunction = ease });
-        }
-        else
-        {
-            var slide = new DoubleAnimation(0, -300, duration) { EasingFunction = ease };
-            bool handled = false;
-            slide.Completed += (_, _) =>
-            {
-                if (handled) return;
-                handled = true;
-                DrawerOverlay.Visibility = Visibility.Collapsed;
-            };
-            DrawerPanel.RenderTransform.BeginAnimation(TranslateTransform.XProperty, slide);
-            DrawerBackdrop.BeginAnimation(
-                OpacityProperty,
-                new DoubleAnimation(1, 0, duration) { EasingFunction = ease });
-        }
+        var anim = new DoubleAnimation(SidebarBorder.ActualWidth, targetWidth, duration) { EasingFunction = ease };
+        SidebarBorder.BeginAnimation(FrameworkElement.WidthProperty, anim);
     }
 
     private void AnimateSlideToPage()

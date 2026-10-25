@@ -1,0 +1,202 @@
+<UserControl x:Class="MusicPlayer.Views.HomePreview"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:MusicPlayer.Views">
+  <Viewbox Stretch="Uniform" ClipToBounds="True">
+    <Grid Width="1280" Height="720" ClipToBounds="True">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="42" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="90" />
+      </Grid.RowDefinitions>
+
+      <!-- Integrated App Header / Window Titlebar -->
+      <Border Grid.Row="0" Background="#2E10131A" BorderBrush="#16FFFFFF" BorderThickness="0,0,0,1">
+        <Grid Margin="12,0,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+
+          <!-- Left: App Brand -->
+          <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+            <Border Width="26" Height="26" CornerRadius="8" Background="#264995F3" Margin="0,0,8,0" VerticalAlignment="Center">
+              <Path Data="{StaticResource Icon.Songs}" Fill="{StaticResource APK_AccentBrush}" Stretch="Uniform" Width="13" Height="13" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <TextBlock Text="Music Player" Style="{StaticResource APK_TextAppTitle}" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+          </StackPanel>
+
+          <!-- Center: Breadcrumb -->
+          <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Background="#14FFFFFF" BorderBrush="#16FFFFFF" BorderThickness="1" CornerRadius="12" Padding="14,3">
+            <TextBlock Text="Home" Foreground="#D0D5E0" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </Border>
+
+          <!-- Right: Search & Caption Buttons -->
+          <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Stretch">
+            <Button Style="{StaticResource DS_HeaderButtonStyle}" Width="30" Height="30" ToolTip="Search" Margin="0,0,8,0" VerticalAlignment="Center">
+              <Path Data="{StaticResource Icon.Search}" Fill="#D0FFFFFF" Stretch="Uniform" Width="13" Height="13" />
+            </Button>
+            <Button Style="{StaticResource DS_CaptionButtonStyle}" ToolTip="Minimize">
+              <Path Data="{StaticResource Icon.Minimize}" Fill="#D0FFFFFF" Stretch="Uniform" Width="10" Height="10" />
+            </Button>
+            <Button Style="{StaticResource DS_CaptionButtonStyle}" ToolTip="Maximize">
+              <Path Data="{StaticResource Icon.Maximize}" Fill="#D0FFFFFF" Stretch="Uniform" Width="10" Height="10" />
+            </Button>
+            <Button Style="{StaticResource DS_CaptionCloseButtonStyle}" ToolTip="Close">
+              <Path Data="{StaticResource Icon.Close}" Fill="#D0FFFFFF" Stretch="Uniform" Width="10" Height="10" />
+            </Button>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Body: Persistent Sidebar Rail + Home Content -->
+      <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="60" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Sidebar Rail Preview -->
+        <Border Grid.Column="0" Background="#E613161F" BorderBrush="#14FFFFFF" BorderThickness="0,0,1,0">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <!-- Toggle / Logo badge -->
+            <Border Grid.Row="0" Width="34" Height="34" CornerRadius="10" Margin="0,10,0,10" HorizontalAlignment="Center">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                  <GradientStop Color="#FF3A78F2" Offset="0" />
+                  <GradientStop Color="#FF1E4FC2" Offset="1" />
+                </LinearGradientBrush>
+              </Border.Background>
+              <Path Data="{StaticResource Icon.Songs}" Fill="#FFFFFFFF" Stretch="Uniform" Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <!-- Navigation Icons -->
+            <StackPanel Grid.Row="1" HorizontalAlignment="Center" Margin="0,4">
+              <Button Style="{StaticResource DS_RailButtonStyle}" Width="44" Height="40" Margin="0,2">
+                <Grid>
+                  <Border Width="3" Height="18" CornerRadius="1.5" Background="{StaticResource APK_AccentBrush}" HorizontalAlignment="Left" />
+                  <Path Data="{StaticResource Icon.Songs}" Fill="#FFFFFFFF" Stretch="Uniform" Width="17" Height="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
+              </Button>
+              <Button Style="{StaticResource DS_RailButtonStyle}" Width="44" Height="40" Margin="0,2">
+                <Path Data="{StaticResource Icon.Songs}" Fill="#80FFFFFF" Stretch="Uniform" Width="17" Height="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Button>
+              <Button Style="{StaticResource DS_RailButtonStyle}" Width="44" Height="40" Margin="0,2">
+                <Path Data="{StaticResource Icon.Folder}" Fill="#80FFFFFF" Stretch="Uniform" Width="17" Height="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Button>
+              <Button Style="{StaticResource DS_RailButtonStyle}" Width="44" Height="40" Margin="0,2">
+                <Path Data="{StaticResource Icon.Playlist}" Fill="#80FFFFFF" Stretch="Uniform" Width="17" Height="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Button>
+              <Button Style="{StaticResource DS_RailButtonStyle}" Width="44" Height="40" Margin="0,2">
+                <Path Data="{StaticResource Icon.FavoriteFilled}" Fill="#FFFF5A5A" Stretch="Uniform" Width="17" Height="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Button>
+              <Border Height="1" Background="#14FFFFFF" Margin="6,8" />
+              <Button Style="{StaticResource DS_RailButtonStyle}" Width="44" Height="40" Margin="0,2">
+                <Path Data="{StaticResource Icon.Equalizer}" Fill="#80FFFFFF" Stretch="Uniform" Width="17" Height="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Button>
+              <Button Style="{StaticResource DS_RailButtonStyle}" Width="44" Height="40" Margin="0,2">
+                <Path Data="{StaticResource Icon.Theme}" Fill="#80FFFFFF" Stretch="Uniform" Width="17" Height="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Button>
+              <Button Style="{StaticResource DS_RailButtonStyle}" Width="44" Height="40" Margin="0,2">
+                <Path Data="{StaticResource Icon.Settings}" Fill="#80FFFFFF" Stretch="Uniform" Width="17" Height="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Button>
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <!-- Content Area -->
+        <ScrollViewer Grid.Column="1" Padding="24,16,24,16" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+          <local:HomeContent />
+        </ScrollViewer>
+      </Grid>
+
+      <!-- Mini Player (Spans Full Width across Bottom) -->
+      <Border Grid.Row="2" Background="#F011141C" BorderBrush="#1CFFFFFF" BorderThickness="0,1,0,0">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2.2*" />
+            <ColumnDefinition Width="3*" />
+            <ColumnDefinition Width="2.2*" />
+          </Grid.ColumnDefinitions>
+
+          <!-- Left Info (Flush to Left Edge) -->
+          <Grid Grid.Column="0" Grid.RowSpan="2">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" VerticalAlignment="Stretch" ClipToBounds="True">
+              <FrameworkElement.Style>
+                <Style TargetType="{x:Type Border}">
+                  <Setter Property="Width" Value="{Binding ActualHeight, RelativeSource={RelativeSource Self}}" />
+                </Style>
+              </FrameworkElement.Style>
+              <Grid Background="#22151922">
+                <Path Data="{StaticResource Icon.Songs}" Fill="#35FFFFFF" Stretch="Uniform" Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <Image Stretch="UniformToFill" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium}" />
+              </Grid>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,16,0">
+              <TextBlock Style="{StaticResource APK_TextBodyStyle}" FontSize="13.5" FontWeight="SemiBold" Text="{Binding CurrentTrack.Title, FallbackValue=No track playing}" />
+              <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#9BA2B0" TextTrimming="CharacterEllipsis" Text="{Binding CurrentTrack.Artist, FallbackValue=Unknown Artist}" />
+            </StackPanel>
+          </Grid>
+
+          <!-- Center Controls -->
+          <Grid Grid.Column="1" Grid.RowSpan="2">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="*" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+              <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Sound Effects" Command="{Binding ShowSoundEffectsPanelCommand}" Margin="2,0">
+                <Path Data="{StaticResource Icon.SoundEffects}" Fill="#C0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+              </Button>
+              <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Favorite" Margin="2,0">
+                <Path Data="{StaticResource Icon.Favorite}" Fill="#C0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+              </Button>
+              <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Previous" Margin="2,0">
+                <Path Data="{StaticResource Icon.Previous}" Fill="#FFFFFFFF" Stretch="Uniform" Width="18" Height="18" />
+              </Button>
+              <Border Width="42" Height="42" CornerRadius="21" Background="{StaticResource APK_AccentBrush}" Margin="8,0">
+                <Path Data="{StaticResource Icon.Play}" Fill="#FFFFFFFF" Stretch="Uniform" Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Next" Margin="2,0">
+                <Path Data="{StaticResource Icon.Next}" Fill="#FFFFFFFF" Stretch="Uniform" Width="18" Height="18" />
+              </Button>
+              <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Shuffle" Margin="2,0">
+                <Path Data="{StaticResource Icon.Shuffle}" Fill="#C0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+              </Button>
+              <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Repeat" Margin="2,0">
+                <Path Data="{StaticResource Icon.Repeat}" Fill="#C0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+              </Button>
+            </StackPanel>
+            <Slider Grid.Row="1" Style="{StaticResource APK_SeekSlider}" Margin="16,0,16,6" Value="35" Maximum="100" />
+          </Grid>
+
+          <!-- Right Controls -->
+          <StackPanel Grid.Column="2" Grid.RowSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,16,0">
+            <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Speed" Margin="2,0">
+              <Path Data="{StaticResource Icon.SpeedPitch}" Fill="#C0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+            </Button>
+            <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Queue" Margin="2,0">
+              <Path Data="{StaticResource Icon.Queue}" Fill="#C0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+            </Button>
+            <Button Style="{StaticResource DS_MiniPlayerButtonStyle}" ToolTip="Volume" Margin="2,0">
+              <Path Data="{StaticResource Icon.Volume}" Fill="#C0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+            </Button>
+            <Slider Style="{StaticResource APK_SeekSlider}" Width="75" Margin="4,0,8,0" VerticalAlignment="Center" Value="80" Maximum="100" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Viewbox>
+</UserControl>

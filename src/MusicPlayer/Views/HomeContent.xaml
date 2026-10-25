@@ -1,0 +1,340 @@
+<UserControl x:Class="MusicPlayer.Views.HomeContent"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StackPanel>
+    <!-- Section 1: Library Quick Access -->
+    <Grid Margin="0,0,0,12">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Text="LIBRARY &amp; EXPLORE" Style="{StaticResource APK_TextSectionTitle}" FontSize="13" FontWeight="Bold" Foreground="#B0B5C0" VerticalAlignment="Center" />
+    </Grid>
+
+    <Grid Margin="0,0,0,24">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+
+      <!-- Card 0: ALL SONGS -->
+      <Border Grid.Row="0" Grid.Column="0" Height="92" Margin="0,0,12,12" Background="#18FFFFFF" BorderBrush="#1CFFFFFF" BorderThickness="1" CornerRadius="14" Cursor="Hand" MouseLeftButtonUp="AllSongsCard_Click" SnapsToDevicePixels="True">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="2" Direction="270" Opacity="0.18" Color="#000000" RenderingBias="Performance" />
+              </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#2BFFFFFF" />
+                <Setter Property="BorderBrush" Value="#404995F3" />
+              </Trigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <Grid Margin="16,12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="52" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Grid.Column="0" Width="46" Height="46" CornerRadius="13" VerticalAlignment="Center">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#FF3A78F2" Offset="0" />
+                <GradientStop Color="#FF1E4FC2" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <Path Data="{StaticResource Icon.Songs}" Fill="#FFFFFFFF" Stretch="Uniform" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
+            <TextBlock Text="ALL SONGS" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[0].Count, StringFormat={}{0} tracks}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Card 1: FOLDERS -->
+      <Border Grid.Row="0" Grid.Column="1" Height="92" Margin="0,0,12,12" Background="#18FFFFFF" BorderBrush="#1CFFFFFF" BorderThickness="1" CornerRadius="14" Cursor="Hand" MouseLeftButtonUp="FoldersCard_Click" SnapsToDevicePixels="True">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="2" Direction="270" Opacity="0.18" Color="#000000" RenderingBias="Performance" />
+              </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#2BFFFFFF" />
+                <Setter Property="BorderBrush" Value="#40FFCF4D" />
+              </Trigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <Grid Margin="16,12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="52" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Grid.Column="0" Width="46" Height="46" CornerRadius="13" VerticalAlignment="Center">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#FFFFB800" Offset="0" />
+                <GradientStop Color="#FFE08500" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <Path Data="{StaticResource Icon.Folder}" Fill="#FFFFFFFF" Stretch="Uniform" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
+            <TextBlock Text="FOLDERS" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[1].Count, StringFormat={}{0} folders}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Card 2: FAVORITES -->
+      <Border Grid.Row="0" Grid.Column="2" Height="92" Margin="0,0,0,12" Background="#18FFFFFF" BorderBrush="#1CFFFFFF" BorderThickness="1" CornerRadius="14" Cursor="Hand" MouseLeftButtonUp="FavoritesCard_Click" SnapsToDevicePixels="True">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="2" Direction="270" Opacity="0.18" Color="#000000" RenderingBias="Performance" />
+              </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#2BFFFFFF" />
+                <Setter Property="BorderBrush" Value="#40FF5A5A" />
+              </Trigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <Grid Margin="16,12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="52" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Grid.Column="0" Width="46" Height="46" CornerRadius="13" VerticalAlignment="Center">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#FFFF5A5A" Offset="0" />
+                <GradientStop Color="#FFD62839" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <Path Data="{StaticResource Icon.FavoriteFilled}" Fill="#FFFFFFFF" Stretch="Uniform" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
+            <TextBlock Text="FAVORITES" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[2].Count, StringFormat={}{0} favorites}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Card 3: RECENT PLAY -->
+      <Border Grid.Row="1" Grid.Column="0" Height="92" Margin="0,0,12,0" Background="#18FFFFFF" BorderBrush="#1CFFFFFF" BorderThickness="1" CornerRadius="14" Cursor="Hand" MouseLeftButtonUp="RecentPlayCard_Click" SnapsToDevicePixels="True">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="2" Direction="270" Opacity="0.18" Color="#000000" RenderingBias="Performance" />
+              </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#2BFFFFFF" />
+                <Setter Property="BorderBrush" Value="#404CAF50" />
+              </Trigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <Grid Margin="16,12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="52" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Grid.Column="0" Width="46" Height="46" CornerRadius="13" VerticalAlignment="Center">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#FF2ECC71" Offset="0" />
+                <GradientStop Color="#FF1B9E4B" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <Path Data="{StaticResource Icon.Recent}" Fill="#FFFFFFFF" Stretch="Uniform" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
+            <TextBlock Text="RECENT PLAY" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[3].Count, StringFormat={}{0} tracks}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Card 4: RECENT ADD -->
+      <Border Grid.Row="1" Grid.Column="1" Height="92" Margin="0,0,12,0" Background="#18FFFFFF" BorderBrush="#1CFFFFFF" BorderThickness="1" CornerRadius="14" Cursor="Hand" MouseLeftButtonUp="RecentAddCard_Click" SnapsToDevicePixels="True">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="2" Direction="270" Opacity="0.18" Color="#000000" RenderingBias="Performance" />
+              </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#2BFFFFFF" />
+                <Setter Property="BorderBrush" Value="#4000A3FF" />
+              </Trigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <Grid Margin="16,12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="52" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Grid.Column="0" Width="46" Height="46" CornerRadius="13" VerticalAlignment="Center">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#FF00A3FF" Offset="0" />
+                <GradientStop Color="#FF0070D1" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <Path Data="{StaticResource Icon.RecentAdd}" Fill="#FFFFFFFF" Stretch="Uniform" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
+            <TextBlock Text="RECENT ADD" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[4].Count, StringFormat={}{0} tracks}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Card 5: MOST PLAY -->
+      <Border Grid.Row="1" Grid.Column="2" Height="92" Margin="0,0,0,0" Background="#18FFFFFF" BorderBrush="#1CFFFFFF" BorderThickness="1" CornerRadius="14" Cursor="Hand" MouseLeftButtonUp="MostPlayCard_Click" SnapsToDevicePixels="True">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Effect">
+              <Setter.Value>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="2" Direction="270" Opacity="0.18" Color="#000000" RenderingBias="Performance" />
+              </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#2BFFFFFF" />
+                <Setter Property="BorderBrush" Value="#40FF9800" />
+              </Trigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <Grid Margin="16,12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="52" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Grid.Column="0" Width="46" Height="46" CornerRadius="13" VerticalAlignment="Center">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#FFFF9800" Offset="0" />
+                <GradientStop Color="#FFD45B00" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <Path Data="{StaticResource Icon.MostPlayed}" Fill="#FFFFFFFF" Stretch="Uniform" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
+            <TextBlock Text="MOST PLAY" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[5].Count, StringFormat={}{0} tracks}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- Section 2: Playlists Header -->
+    <Grid Margin="0,12,0,14">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock Text="PLAYLISTS" Style="{StaticResource APK_TextSectionTitle}" FontSize="13" FontWeight="Bold" Foreground="#B0B5C0" VerticalAlignment="Center" />
+      </StackPanel>
+      <Button HorizontalAlignment="Right" Style="{StaticResource PillButtonStyle}" Padding="16,6" ToolTip="Create a new playlist" Click="NewPlaylist_Click">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Path Data="{StaticResource Icon.Plus}" Fill="#FFFFFFFF" Stretch="Uniform" Width="12" Height="12" Margin="0,0,8,0" VerticalAlignment="Center" />
+          <TextBlock Text="New Playlist" Foreground="#FFFFFFFF" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </StackPanel>
+      </Button>
+    </Grid>
+
+    <!-- Empty State for Playlists -->
+    <Border Background="#12FFFFFF" BorderBrush="#16FFFFFF" BorderThickness="1" CornerRadius="14" Padding="28,24" Margin="0,0,0,16" Visibility="{Binding Playlists.Count, Converter={StaticResource ZeroToVisibilityConverter}}">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Border Width="48" Height="48" CornerRadius="24" Background="#1EFFFFFF" HorizontalAlignment="Center" Margin="0,0,0,12">
+          <Path Data="{StaticResource Icon.Playlist}" Fill="#80FFFFFF" Stretch="Uniform" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+        <TextBlock Text="No playlists yet" FontSize="15" FontWeight="SemiBold" Foreground="#D0FFFFFF" HorizontalAlignment="Center" />
+        <TextBlock Text="Create custom playlists to group and organize your favorite songs" FontSize="12.5" Foreground="#75FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,14" />
+        <Button HorizontalAlignment="Center" Style="{StaticResource PillButtonStyle}" Padding="20,7" Click="NewPlaylist_Click">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Path Data="{StaticResource Icon.Plus}" Fill="#FFFFFFFF" Stretch="Uniform" Width="12" Height="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+            <TextBlock Text="Create First Playlist" Foreground="#FFFFFFFF" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </StackPanel>
+        </Button>
+      </StackPanel>
+    </Border>
+
+    <!-- Playlists ItemsControl -->
+    <ItemsControl ItemsSource="{Binding Playlists}">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <UniformGrid Columns="{Binding ActualWidth, Converter={StaticResource ThemeColumnsConverter}, RelativeSource={RelativeSource AncestorType=ScrollViewer}}" />
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <Border Width="190" Height="74" Background="#16FFFFFF" BorderBrush="#1AFFFFFF" BorderThickness="1" CornerRadius="12" Margin="0,0,12,12" Padding="12" Cursor="Hand" MouseLeftButtonUp="PlaylistItem_Click" SnapsToDevicePixels="True">
+            <Border.Style>
+              <Style TargetType="Border">
+                <Setter Property="Effect">
+                  <Setter.Value>
+                    <DropShadowEffect BlurRadius="12" ShadowDepth="1" Direction="270" Opacity="0.15" Color="#000000" RenderingBias="Performance" />
+                  </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#26FFFFFF" />
+                    <Setter Property="BorderBrush" Value="#38FFFFFF" />
+                  </Trigger>
+                </Style.Triggers>
+              </Style>
+            </Border.Style>
+            <FrameworkElement.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Play" Click="PlaylistContextPlay_Click" />
+                <MenuItem Header="Rename" Click="PlaylistRename_Click" />
+                <MenuItem Header="Delete" Click="PlaylistContextDelete_Click" />
+              </ContextMenu>
+            </FrameworkElement.ContextMenu>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="46" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Width="42" Height="42" CornerRadius="10" VerticalAlignment="Center">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#FF4A7BF7" Offset="0" />
+                    <GradientStop Color="#FF6C47E8" Offset="1" />
+                  </LinearGradientBrush>
+                </Border.Background>
+                <Path Data="{StaticResource Icon.Playlist}" Fill="#FFFFFFFF" Stretch="Uniform" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,0,0,0">
+                <TextBlock Style="{StaticResource APK_TextBodyStyle}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" Text="{Binding Name}" Foreground="#FFFFFFFF" />
+                <TextBlock Style="{StaticResource APK_TextLowStyle}" Margin="0,3,0,0" FontSize="11.5" Foreground="#8A92A2" Text="{Binding TrackCount, StringFormat={}{0} songs}" />
+              </StackPanel>
+            </Grid>
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </StackPanel>
+</UserControl>

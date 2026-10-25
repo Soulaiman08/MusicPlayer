@@ -13,7 +13,7 @@ public static class MotionTokens
 {
     public static TimeSpan PageEnter => TimeSpan.FromMilliseconds(280);
     public static TimeSpan HeroMorph => TimeSpan.FromMilliseconds(260);
-    public static TimeSpan TabSlide => TimeSpan.FromMilliseconds(220);
+    public static TimeSpan TabSlide => TimeSpan.FromMilliseconds(260);
     public static TimeSpan ReverseRevealLead => TimeSpan.FromMilliseconds(40);
     public static TimeSpan ReverseRevealFollow => TimeSpan.FromMilliseconds(110);
     public static TimeSpan ReverseRevealLeadDuration => TimeSpan.FromMilliseconds(150);

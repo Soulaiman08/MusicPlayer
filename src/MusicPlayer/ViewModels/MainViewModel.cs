@@ -669,7 +669,20 @@ public partial class MainViewModel : ViewModelBase
 		}
 	}
 
-	public string CurrentFolderName { get; set; } = string.Empty;
+	private string _currentFolderName = string.Empty;
+	public string CurrentFolderName
+	{
+		get => _currentFolderName;
+		set
+		{
+			if (_currentFolderName != value)
+			{
+				_currentFolderName = value;
+				OnPropertyChanged("CurrentFolderName");
+				OnPropertyChanged("CurrentPageTitle");
+			}
+		}
+	}
 
 	public string CurrentGenreName { get; set; } = string.Empty;
 
@@ -685,6 +698,7 @@ public partial class MainViewModel : ViewModelBase
 			{
 				_currentArtistName = value;
 				OnPropertyChanged("CurrentArtistName");
+				OnPropertyChanged("CurrentPageTitle");
 			}
 		}
 	}
@@ -762,14 +776,39 @@ public partial class MainViewModel : ViewModelBase
 	public BulkObservableCollection<MusicTrack> AlbumDetailTracks { get; } = new BulkObservableCollection<MusicTrack>();
 
 
-	public string CurrentAlbumName { get; set; } = string.Empty;
-
+	private string _currentAlbumName = string.Empty;
+	public string CurrentAlbumName
+	{
+		get => _currentAlbumName;
+		set
+		{
+			if (_currentAlbumName != value)
+			{
+				_currentAlbumName = value;
+				OnPropertyChanged("CurrentAlbumName");
+				OnPropertyChanged("CurrentPageTitle");
+			}
+		}
+	}
 
 	public string CurrentAlbumArtist { get; set; } = string.Empty;
 
 	public BulkObservableCollection<MusicTrack> PlaylistDetailTracks { get; } = new BulkObservableCollection<MusicTrack>();
 
-	public string CurrentPlaylistName { get; set; } = string.Empty;
+	private string _currentPlaylistName = string.Empty;
+	public string CurrentPlaylistName
+	{
+		get => _currentPlaylistName;
+		set
+		{
+			if (_currentPlaylistName != value)
+			{
+				_currentPlaylistName = value;
+				OnPropertyChanged("CurrentPlaylistName");
+				OnPropertyChanged("CurrentPageTitle");
+			}
+		}
+	}
 
 	public int PlaylistDetailTrackCount { get; set; }
 
@@ -1293,13 +1332,15 @@ public partial class MainViewModel : ViewModelBase
 		}
 	}
 
+	public bool IsNonTrackListSearchableView => IsSearchableView && !IsTrackListView;
+
 	public bool CanNavigateBack
 	{
 		get
 		{
-			if (!(CurrentView != "home"))
+			if (string.Equals(CurrentView, "home", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(CurrentView))
 			{
-				return _viewHistory.Count > 0;
+				return false;
 			}
 			return true;
 		}
@@ -1313,6 +1354,35 @@ public partial class MainViewModel : ViewModelBase
 		"favorites" => "FAVORITES", 
 		"folder_detail" => CurrentFolderName, 
 		_ => "ALL SONGS", 
+	};
+
+	public string CurrentPageTitle => CurrentView switch
+	{
+		"home" => "Home",
+		"songs" => "All Songs",
+		"artists" => "Artists",
+		"albums" => "Albums",
+		"genres" => "Genres",
+		"playlists" => "Playlists",
+		"folders" => "Folders",
+		"recent" => "Recent Plays",
+		"recent_add" => "Recently Added",
+		"most_played" => "Most Played",
+		"favorites" => "Favorites",
+		"artist_detail" => !string.IsNullOrEmpty(CurrentArtistName) ? $"Artists  ›  {CurrentArtistName}" : "Artist Details",
+		"album_detail" => !string.IsNullOrEmpty(CurrentAlbumName) ? $"Albums  ›  {CurrentAlbumName}" : "Album Details",
+		"playlist_detail" => !string.IsNullOrEmpty(CurrentPlaylistName) ? $"Playlists  ›  {CurrentPlaylistName}" : (!string.IsNullOrEmpty(CurrentPlaylist?.Name) ? $"Playlists  ›  {CurrentPlaylist.Name}" : "Playlist Details"),
+		"folder_detail" => !string.IsNullOrEmpty(CurrentFolderName) ? $"Folders  ›  {CurrentFolderName}" : "Folder Details",
+		"genre_detail" => "Genre Details",
+		"queue" => "Queue",
+		"settings" => "Settings",
+		"theme_gallery" => "Themes & Wallpaper",
+		"equalizer" => "Equalizer",
+		"sleep_timer" => "Sleep Timer",
+		"batch_edit" => "Batch Edit",
+		"tag_editor" => "Tag Editor",
+		"lrc_editor" => "Lyrics Editor",
+		_ => "Music Player"
 	};
 
 	public ObservableCollection<MusicTrack> DisplayedTracks
@@ -1512,8 +1582,8 @@ public partial class MainViewModel : ViewModelBase
 		RebakeThemePreview();
 	}
 
-	private System.Windows.Media.ImageSource? _themePreviewImage;
-	public System.Windows.Media.ImageSource? ThemePreviewImage
+	private System.Windows.UIElement? _themePreviewImage;
+	public System.Windows.UIElement? ThemePreviewImage
 	{
 		get => _themePreviewImage;
 		private set
@@ -1577,24 +1647,16 @@ public partial class MainViewModel : ViewModelBase
 			var thumb = Converters.WallpaperThumbnailConverter.GetThumbnail(path, 700);
 			if (thumb == null) return;
 			double blur = _themeEditBlur;
-			if (blur < 0.5) { ThemePreviewImage = thumb; return; }
-			const int w = 336, h = 189;
-			var target = new System.Windows.Media.Imaging.RenderTargetBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-			var visual = new System.Windows.Media.DrawingVisual();
-			using (var ctx = visual.RenderOpen())
-			{
-				var ib = new System.Windows.Media.ImageBrush(thumb) { Stretch = System.Windows.Media.Stretch.UniformToFill };
-				ctx.DrawRectangle(ib, null, new System.Windows.Rect(0, 0, w, h));
-			}
-			target.Render(visual);
-			var blurred = new System.Windows.Media.Effects.BlurEffect { Radius = System.Math.Max(2, blur / 2), RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance };
-			var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
-			wrapper.Measure(new System.Windows.Size(w, h));
-			wrapper.Arrange(new System.Windows.Rect(0, 0, w, h));
-			var result = new System.Windows.Media.Imaging.RenderTargetBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-			result.Render(wrapper);
-			result.Freeze();
-			ThemePreviewImage = result;
+		if (blur < 0.5)
+		{
+			var sharpImage = new System.Windows.Controls.Image { Source = thumb, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = 672, Height = 378 };
+			ThemePreviewImage = sharpImage;
+			return;
+		}
+		const int w = 672, h = 378;
+		var blurred = new System.Windows.Media.Effects.BlurEffect { Radius = System.Math.Max(2, blur / 2), RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance };
+		var previewImage = new System.Windows.Controls.Image { Source = thumb, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = w, Height = h, Effect = blurred };
+		ThemePreviewImage = previewImage;
 		}
 		catch { }
 	}
@@ -4037,66 +4099,49 @@ public partial class MainViewModel : ViewModelBase
 		catch { }
 	}
 
-	// Generation counter for progressive tab fills — a newer fill invalidates any
-	// older one still pumping chunks (rapid tab re-entry).
-	private int _tabFillGen;
+	// Generation counter per target collection — a newer fill on the same collection invalidates an older one,
+	// while allowing Albums, Artists, etc. to load concurrently without cancelling each other.
+	private readonly System.Collections.Concurrent.ConcurrentDictionary<object, int> _tabFillGens = new();
 
 	/// <summary>
 	/// Fills a tab collection in small chunks, one per rendered frame, instead of a
-	/// single ReplaceAll. Realizing 130+ WrapPanel tiles (their images, clips and
-	/// text) in one dispatch costs a 250–450ms UI-thread freeze; the same work split
-	/// into ~10-item chunks stays within a frame budget and the grid fills in front
-	/// of the user instead of freezing the tab slide.
+	/// single ReplaceAll.
 	/// </summary>
 	private async Task ReplaceAllChunkedAsync(BulkObservableCollection<MusicTrack> target, List<MusicTrack> items)
 	{
-		int gen = Interlocked.Increment(ref _tabFillGen);
-		// 6 per chunk, not 10: realizing a tile (clip + image + text) costs
-		// ~3–4ms, so 10 landed 40–50ms frames inside the tab-switch window the
-		// user is already watching; 6 keeps every fill frame under ~25ms.
-		const int chunk = 6;
+		int gen = _tabFillGens.AddOrUpdate(target, 1, (_, current) => current + 1);
+		const int chunk = 12;
 		try
 		{
 			if (items.Count <= chunk)
 			{
 				await DispatchAsync(delegate
 				{
-					if (gen == _tabFillGen) target.ReplaceAll(items);
+					if (_tabFillGens.TryGetValue(target, out int currentGen) && gen == currentGen) target.ReplaceAll(items);
 				});
 				return;
 			}
 			var first = items.GetRange(0, chunk);
 			await DispatchAsync(delegate
 			{
-				if (gen == _tabFillGen) target.ReplaceAll(first);
+				if (_tabFillGens.TryGetValue(target, out int currentGen) && gen == currentGen) target.ReplaceAll(first);
 			});
 			int i = chunk;
-			long maxChunkMs = 0;
-			var swChunk = new System.Diagnostics.Stopwatch();
 			while (i < items.Count)
 			{
 				int take = Math.Min(chunk, items.Count - i);
 				var next = items.GetRange(i, take);
 				i += take;
-				await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
-				if (gen != _tabFillGen)
+				await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+				if (!_tabFillGens.TryGetValue(target, out int currentGen) || gen != currentGen)
 				{
-					if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
-						LogHelper.LogInfo($"TAB-FILL abort gen {gen}->{_tabFillGen} at {i}/{items.Count} count={target.Count}");
 					return;
 				}
-				swChunk.Restart();
 				target.AddRangeIncremental(next);
-				swChunk.Stop();
-				if (swChunk.ElapsedMilliseconds > maxChunkMs) maxChunkMs = swChunk.ElapsedMilliseconds;
 			}
-			if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
-				LogHelper.LogInfo($"TAB-FILL done count={target.Count}/{items.Count} maxChunkMs={maxChunkMs}");
 		}
-		catch (Exception ex)
+		catch
 		{
-			if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
-				LogHelper.LogInfo($"TAB-FILL ex gen={gen} count={target.Count}: {ex.GetType().Name}: {ex.Message}");
 		}
 	}
 
@@ -4232,15 +4277,6 @@ public partial class MainViewModel : ViewModelBase
 		}
 		catch
 		{
-		}
-		List<KeyValuePair<string, string>> preloadedImages = _preloadedArtistResult?.CachedImages;
-		if (preloadedImages != null && preloadedImages.Count > 0)
-		{
-			statusCallback?.Invoke("Loading artist art...");
-			await Task.Run(delegate
-			{
-				PreloadArtistImages(preloadedImages);
-			});
 		}
 		if (sortedTracks != null && sortedTracks.Count > 0)
 		{
@@ -5835,27 +5871,14 @@ public partial class MainViewModel : ViewModelBase
 	{
 		try
 		{
-			List<MusicTrack> items = await Task.Run(() => (from g in (from t in _db.GetAllTracks()
-					where !string.IsNullOrWhiteSpace(t.Album)
-					select t).GroupBy<MusicTrack, string>((MusicTrack t) => t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
+			List<MusicTrack> items = await Task.Run(() => (from g in _db.GetAllTracks()
+					.GroupBy<MusicTrack, string>(t => string.IsNullOrWhiteSpace(t.Album) ? "Unknown Album" : t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
 				select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
 				orderby t.Album
 				select t).ToList());
 		// Sort BEFORE inserting: replacing the collection twice (insert, then
 		// re-sort with a Reset) made the WrapPanel realize every tile twice.
 		List<MusicTrack> sortedAlbums = items.Count >= 2 ? SortItems(items).ToList() : items;
-		// Decode album art OFF the UI thread first — otherwise each fill chunk
-		// decodes disk JPEGs inline (AlbumArtConverter), which lands in the
-		// tab-switch window the user is already scrolling through and shows up
-		// as dropped frames. After the warmup these are dictionary hits.
-		await Task.Run(delegate
-		{
-			foreach (MusicTrack t in sortedAlbums)
-			{
-				AlbumArtLoader.Instance?.LoadMediumAlbumArt(t);
-				AlbumArtLoader.Instance?.LoadAlbumArt(t);
-			}
-		});
 		await ReplaceAllChunkedAsync(Albums, sortedAlbums);
 		PerfTabData("albums", Albums.Count);
 	}
@@ -5879,16 +5902,6 @@ private async void LoadArtists()
 				}
 				OnPropertyChanged("ArtistImages");
 			});
-			// Pre-decode on a background thread any photo paths that are not yet
-			// in ArtistImageCache (fetched mid-session results; startup-cached
-			// ones were preloaded at launch) — the tile converter otherwise
-			// decodes inline inside fill chunks on the UI thread.
-			var undecoded = ArtistImages
-				.Where((KeyValuePair<string, string> kv) => !string.IsNullOrWhiteSpace(kv.Value) && !ArtistImageCache.ContainsKey(kv.Key))
-				.Select((KeyValuePair<string, string> kv) => kv)
-				.ToList();
-			if (undecoded.Count > 0)
-				await Task.Run(delegate { PreloadArtistImages(undecoded); });
 			// Sort BEFORE inserting (single pass) and fill progressively so the
 			// WrapPanel never realizes all artist tiles inside one frame.
 			List<MusicTrack> sortedArtists = result.Items.Count >= 2
@@ -7982,7 +7995,9 @@ private async void LoadFolders()
 		}
 		OnPropertyChanged("IsTrackListView");
 		OnPropertyChanged("IsSearchableView");
+		OnPropertyChanged("IsNonTrackListSearchableView");
 		OnPropertyChanged("CurrentTrackListTitle");
+		OnPropertyChanged("CurrentPageTitle");
 		OnPropertyChanged("DisplayedTracks");
 		OnPropertyChanged("CanNavigateBack");
 		OnPropertyChanged("HasNoMusic");

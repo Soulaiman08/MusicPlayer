@@ -50,7 +50,7 @@ namespace MusicPlayer.Views
 
         private void Solve(double width)
         {
-            var w = width > 0 && !double.IsNaN(width) ? width : Math.Max(1, MinItemWidth);
+            var w = width > 0 && !double.IsNaN(width) && !double.IsInfinity(width) ? width : Math.Max(1, MinItemWidth);
             var gap = Math.Max(0, Gap);
             var min = Math.Clamp(MinItemWidth, 1d, w);
             var max = Math.Max(min, MaxItemWidth);
@@ -86,15 +86,30 @@ namespace MusicPlayer.Views
             Solve(finalSize.Width);
             if (Math.Abs(ItemWidth - _slot) > 0.5)
                 SetValue(ItemWidthPropertyKey, _slot);
+
+            // Recompute _rowHeight if not yet measured (Arrange can be called before Measure)
+            if (_rowHeight <= 0 && Children.Count > 0)
+            {
+                var childConstraint = new Size(_slot, double.PositiveInfinity);
+                foreach (UIElement child in Children)
+                {
+                    child.Measure(childConstraint);
+                    var h = child.DesiredSize.Height;
+                    if (double.IsInfinity(h) || double.IsNaN(h)) h = 0;
+                    if (h > _rowHeight) _rowHeight = h;
+                }
+            }
+
             var rowHeight = Math.Max(0, _rowHeight);
             var y = 0d;
             var count = Children.Count;
             for (var i = 0; i < count; i++)
             {
                 var child = Children[i];
-                var x = (i % _cols) * (_slot + _gapH);
-                child.Arrange(new Rect(x, y, _slot, Math.Max(0, child.DesiredSize.Height)));
-                if (i % _cols == _cols - 1) y += rowHeight + Gap;
+                var col = i % _cols;
+                var x = col * (_slot + _gapH);
+                child.Arrange(new Rect(x, y, _slot, rowHeight > 0 ? rowHeight : Math.Max(0, child.DesiredSize.Height)));
+                if (col == _cols - 1) y += rowHeight + Gap;
             }
             return new Size(finalSize.Width, ComputeExtent());
         }
