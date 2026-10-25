@@ -17,8 +17,10 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Windowing;
 using MusicPlayer.Library;
 using MusicPlayer.Lyrics;
 using MusicPlayer.Models;
@@ -31,6 +33,9 @@ namespace MusicPlayer.Views
 {
     public partial class MainWindow : Window
     {
+        private AppWindow? _appWindow;
+        private bool _usesAppWindowTitleBar;
+
         // Windows messages handled in WndProc. WM_TRAYICON has to match the value
         // SystemTrayService stores in NOTIFYICONDATA.uCallbackMessage.
         private const int WM_TRAYICON = 0x800;
@@ -1275,6 +1280,7 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
     public MainWindow()
     {
 InitializeComponent();
+   SourceInitialized += OnWindowSourceInitialized;
    SmoothScrollHelper.Initialize();
    DataContextChanged += OnDataContextChanged;
    Loaded += OnWindowLoaded;
@@ -1840,13 +1846,137 @@ InitializeComponent();
 
     private const double MarqueePauseMs = 2000; // PauseTicks(125) @16ms
 
+    private const double NativeCaptionButtonRegionWidth = 140;
+    private const double NativeCaptionHeight = 42;
+
+    private void OnWindowSourceInitialized(object? sender, EventArgs e)
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == nint.Zero)
+            return;
+
+        // WindowChrome and AppWindowTitleBar both own non-client hit testing.
+        // Switch atomically to AppWindow only after its HWND bridge is available;
+        // otherwise retain the existing WindowChrome path as a safe fallback.
+        var existingChrome = WindowChrome.GetWindowChrome(this);
+        try
+        {
+            if (!AppWindowTitleBar.IsCustomizationSupported())
+                return;
+
+            var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
+            var appWindow = AppWindow.GetFromWindowId(windowId);
+            if (appWindow == null)
+                return;
+
+            WindowChrome.SetWindowChrome(this, null);
+            var titleBar = appWindow.TitleBar;
+            titleBar.ExtendsContentIntoTitleBar = true;
+
+            // Let the MusicPlayer visual continue behind the system-drawn
+            // caption buttons. Keep hover and pressed colors unset so Windows
+            // retains its native feedback, including the Close button red state.
+            titleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+            titleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+
+            _appWindow = appWindow;
+            _usesAppWindowTitleBar = true;
+            // The maximized WindowChrome layout kept a 7-DIP safety inset for
+            // its non-client frame. AppWindow owns that frame now, so keeping
+            // the inset would expose the transparent Window background as a
+            // thick white border.
+            Padding = new Thickness(0);
+            UpdateNativeCaptionButtonCutout();
+            UpdateAppWindowTitleBarDragRegions();
+        }
+        catch
+        {
+            WindowChrome.SetWindowChrome(this, existingChrome);
+            _appWindow = null;
+            _usesAppWindowTitleBar = false;
+        }
+    }
+
+    private void RootBorder_Loaded(object sender, RoutedEventArgs e)
+        => UpdateNativeCaptionButtonCutout();
+
+    private void RootBorder_SizeChanged(object sender, SizeChangedEventArgs e)
+        => UpdateNativeCaptionButtonCutout();
+
+    private void UpdateNativeCaptionButtonCutout()
+    {
+        if (RootBorder == null) return;
+
+        if (_usesAppWindowTitleBar)
+        {
+            RootBorder.Clip = null;
+            UpdateAppWindowTitleBarDragRegions();
+            return;
+        }
+
+        var width = RootBorder.ActualWidth;
+        var height = RootBorder.ActualHeight;
+        if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
+        {
+            RootBorder.Clip = null;
+            return;
+        }
+
+        var windowBounds = new RectangleGeometry(new Rect(0, 0, width, height));
+        var cutoutWidth = Math.Min(NativeCaptionButtonRegionWidth, width);
+        var cutoutHeight = Math.Min(NativeCaptionHeight, height);
+        var captionButtons = new RectangleGeometry(
+            new Rect(width - cutoutWidth, 0, cutoutWidth, cutoutHeight));
+
+        // WPF paints RootBorder and its descendants over DWM's glass frame. Leave
+        // the native caption-button rectangle transparent so DWM can draw and hit-test
+        // its own Minimize/Maximize/Close buttons in every window state.
+        RootBorder.Clip = new CombinedGeometry(
+            GeometryCombineMode.Exclude, windowBounds, captionButtons);
+    }
+
+    private void UpdateAppWindowTitleBarDragRegions()
+    {
+        if (!_usesAppWindowTitleBar || _appWindow == null || ActualWidth <= 0)
+            return;
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var scaleX = dpi.DpiScaleX;
+        var scaleY = dpi.DpiScaleY;
+        var clientWidth = (int)Math.Ceiling(ActualWidth * scaleX);
+        var captionHeight = (int)Math.Ceiling(NativeCaptionHeight * scaleY);
+        // The Full Player places its Back and Queue actions in the caption bar.
+        // Those controls must remain client hit targets; a single broad drag
+        // rectangle would make the right-side Queue button look enabled but
+        // consume its clicks as title-bar drags.
+        var isFullPlayerOpen = ViewModel?.ShowFullPlayer == true;
+        var leftInteractiveWidth = (int)Math.Ceiling(60 * scaleX);
+        var rightReservedWidth = (int)Math.Ceiling((isFullPlayerOpen ? 200 : NativeCaptionButtonRegionWidth) * scaleX);
+        var dragWidth = Math.Max(0, clientWidth - leftInteractiveWidth - rightReservedWidth);
+
+        _appWindow.TitleBar.SetDragRectangles(
+        [
+            new Windows.Graphics.RectInt32(leftInteractiveWidth, 0, dragWidth, captionHeight)
+        ]);
+    }
+
     private void OnWindowLoaded(object sender, RoutedEventArgs e)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         try
         {
-            int darkMode = 1;
-            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+            if (!_usesAppWindowTitleBar)
+            {
+                bool supportsCaptionColor = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
+                int darkMode = supportsCaptionColor ? 1 : 0;
+                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+
+                if (supportsCaptionColor)
+                {
+                    int captionColor = 0x007A9F0D; // COLORREF for RGB(13, 159, 122)
+                    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref captionColor, sizeof(int));
+                }
+            }
         }
         catch { }
         HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
@@ -2000,6 +2130,8 @@ InitializeComponent();
     private const int WM_GETMINMAXINFO = 0x0024;
     private const int WM_NCHITTEST = 0x0084;
     private const int HTMAXBUTTON = 9;
+    private const int MinimumWindowWidthDip = 1116;
+    private const int MinimumWindowHeightDip = 650;
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct POINT { public int x; public int y; }
@@ -2030,6 +2162,7 @@ InitializeComponent();
         private static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+        private const int DWMWA_CAPTION_COLOR = 35;
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
@@ -2037,11 +2170,22 @@ InitializeComponent();
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO lpmi);
 
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(nint hwnd);
+
         private static void WmGetMinMaxInfo(nint hwnd, nint lParam)
         {
             try
             {
                 var mmi = System.Runtime.InteropServices.Marshal.PtrToStructure<MINMAXINFO>(lParam);
+                // AppWindow's non-client implementation queries this message
+                // directly. Because this hook owns WM_GETMINMAXINFO, WPF's
+                // MinWidth/MinHeight are not applied unless we set the tracking
+                // size here as well.
+                var dpi = GetDpiForWindow(hwnd);
+                if (dpi == 0) dpi = 96;
+                mmi.ptMinTrackSize.x = (int)Math.Ceiling(MinimumWindowWidthDip * dpi / 96.0);
+                mmi.ptMinTrackSize.y = (int)Math.Ceiling(MinimumWindowHeightDip * dpi / 96.0);
                 nint monitor = MonitorFromWindow(hwnd, 2);
                 if (monitor != nint.Zero)
                 {
@@ -6231,6 +6375,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         }
         else if (e.PropertyName == nameof(MainViewModel.ShowFullPlayer))
         {
+            UpdateAppWindowTitleBarDragRegions();
             Dispatcher.BeginInvoke(() => StartFpTitleMarquee());
             if (ViewModel?.ShowFullPlayer == true)
             {
