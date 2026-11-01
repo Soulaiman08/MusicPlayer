@@ -22,6 +22,29 @@ publish/
 # Local Backups & Historical Archives
 archive/
 MainWindow_Recovery/
+recovery_backups/
+*.pre-*-backup*
+*.pre-checkout
+*.recovery-candidate
+*.backup*
+HEAD_*
+
+# Root temporary screenshots, scripts & research reports
+/*.png
+/*.jpg
+/*.txt
+/*.py
+/*.ps1
+/*REPORT*.md
+/*_REPORT.md
+/*REVIEW*.json
+/*REVIEW*.md
+/*ANALYSIS*.md
+/*VERIFICATION*.md
+/*Supplement.md
+/*TABLE.md
+/*RESEARCH.md
+
 
 # Decompiled & Reverse-Engineering Reference Assets
 decompiled/
