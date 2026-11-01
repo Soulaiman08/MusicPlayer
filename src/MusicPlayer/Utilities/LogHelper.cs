@@ -97,6 +97,8 @@ public static class LogHelper
     {
         _running = false;
         _wake.Set();
+        // Give the writer thread a bounded moment to drain, then drain synchronously.
+        try { _writerThread.Join(1000); } catch { }
         DrainQueue();
     }
 }

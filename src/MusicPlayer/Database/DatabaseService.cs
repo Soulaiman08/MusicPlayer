@@ -1,5 +1,6 @@
 using SQLite;
 using MusicPlayer.Models;
+using MusicPlayer.Utilities;
 using Microsoft.Extensions.Logging;
 
 namespace MusicPlayer.Database;
@@ -8,6 +9,67 @@ public class DatabaseService
 {
     private readonly SQLiteConnection _db;
     private readonly ILogger<DatabaseService> _logger;
+
+    // Concurrency: sqlite-net-pcl's SQLiteConnection is NOT thread-safe.
+    // A single lock serializes all access. Transaction-aware: when a transaction
+    // is active on the current thread, nested calls skip re-acquiring the lock.
+    private readonly object _sync = new();
+    private int _txDepth;
+    private int _txOwnerThreadId;
+
+    private bool IsTransactionOwner => _txDepth > 0 && _txOwnerThreadId == Environment.CurrentManagedThreadId;
+
+    private IDisposable LockIfNeeded()
+    {
+        if (IsTransactionOwner) return new NoOpScope();
+        Monitor.Enter(_sync);
+        return new LockScope(this);
+    }
+
+    private void EnterTransaction()
+    {
+        if (_txDepth == 0)
+        {
+            Monitor.Enter(_sync);
+            _txOwnerThreadId = Environment.CurrentManagedThreadId;
+        }
+        else if (_txOwnerThreadId != Environment.CurrentManagedThreadId)
+        {
+            // Should not happen in practice; block to be safe.
+            Monitor.Enter(_sync);
+            _txOwnerThreadId = Environment.CurrentManagedThreadId;
+        }
+        _txDepth++;
+    }
+
+    private void ExitTransaction()
+    {
+        if (_txDepth > 0) _txDepth--;
+        if (_txDepth <= 0)
+        {
+            _txDepth = 0;
+            _txOwnerThreadId = 0;
+            try { Monitor.Exit(_sync); } catch { }
+        }
+    }
+
+    private sealed class LockScope : IDisposable
+    {
+        private readonly DatabaseService _owner;
+        private bool _released;
+        public LockScope(DatabaseService owner) { _owner = owner; }
+        public void Dispose()
+        {
+            if (_released) return;
+            _released = true;
+            try { Monitor.Exit(_owner._sync); } catch { }
+        }
+    }
+
+    private sealed class NoOpScope : IDisposable
+    {
+        public void Dispose() { }
+    }
 
     public DatabaseService(string dbPath, ILogger<DatabaseService> logger)
     {
@@ -20,6 +82,7 @@ public class DatabaseService
     {
         try
         {
+            using var _ = LockIfNeeded();
             _db.CreateTable<MusicTrack>();
             _db.CreateTable<Playlist>();
             _db.CreateTable<PlaylistTrack>();
@@ -29,7 +92,7 @@ public class DatabaseService
             _db.CreateTable<AlbumArtCache>();
             _db.CreateTable<LyricBinding>();
             _db.CreateTable<ManagedMusicFolder>();
-            
+
             _logger.LogInformation("Database initialized successfully at {Path}", _db.DatabasePath);
         }
         catch (Exception ex)
@@ -40,26 +103,31 @@ public class DatabaseService
     }
 
     // Tracks
-    public List<MusicTrack> GetAllTracks() => _db.Table<MusicTrack>().Where(t => !t.IsHidden).ToList();
-    
+    public List<MusicTrack> GetAllTracks()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().Where(t => !t.IsHidden).ToList();
+    }
+
     public List<MusicTrack> GetManagedFolderTracks()
     {
+        using var _ = LockIfNeeded();
         var managedPaths = _db.Table<ManagedMusicFolder>()
             .Where(f => f.Enabled)
             .Select(f => f.Path)
             .ToList();
-        
+
         if (managedPaths.Count == 0)
             return new List<MusicTrack>();
-        
+
         var allTracks = _db.Table<MusicTrack>().ToList();
-        return allTracks.Where(t => 
+        return allTracks.Where(t =>
             !t.IsHidden &&
             !string.IsNullOrEmpty(t.FilePath) &&
-            managedPaths.Any(mp => t.FilePath.StartsWith(mp, StringComparison.OrdinalIgnoreCase)))
+            managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)))
             .ToList();
     }
-    
+
     public List<MusicTrack> GetManagedFolderTracksSorted(string sortBy = "date_added", bool descending = true)
     {
         var tracks = GetManagedFolderTracks();
@@ -72,60 +140,74 @@ public class DatabaseService
             _ => descending ? tracks.OrderByDescending(t => t.Title ?? "").ToList() : tracks.OrderBy(t => t.Title ?? "").ToList()
         };
     }
-    
-    public List<MusicTrack> GetHiddenTracks() => _db.Table<MusicTrack>().Where(t => t.IsHidden).ToList();
+
+    public List<MusicTrack> GetHiddenTracks()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().Where(t => t.IsHidden).ToList();
+    }
 
     public int GetManagedFolderTrackCount()
     {
+        using var _ = LockIfNeeded();
         var managedPaths = _db.Table<ManagedMusicFolder>()
             .Where(f => f.Enabled)
             .Select(f => f.Path)
             .ToList();
-        
+
         if (managedPaths.Count == 0) return 0;
-        
+
         return _db.Table<MusicTrack>().Count(t =>
             !t.IsHidden &&
             !string.IsNullOrEmpty(t.FilePath) &&
-            managedPaths.Any(mp => t.FilePath.StartsWith(mp)));
+            managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)));
     }
-    
+
     public void CleanOrphanTracks()
     {
+        using var _ = LockIfNeeded();
         var managedPaths = _db.Table<ManagedMusicFolder>()
             .Where(f => f.Enabled)
             .Select(f => f.Path)
             .ToList();
-        
+
+        // Safety policy: never wipe the whole library just because no managed
+        // folders are currently enabled. Tracks are preserved; membership is
+        // re-evaluated when folders are (re)added.
         if (managedPaths.Count == 0)
         {
-            _db.Execute("DELETE FROM tracks");
+            _logger.LogWarning("CleanOrphanTracks: no enabled managed folders; skipping destructive cleanup to protect library data.");
             return;
         }
-        
+
         var allTracks = _db.Table<MusicTrack>().ToList();
         foreach (var track in allTracks)
         {
             if (string.IsNullOrEmpty(track.FilePath)) continue;
-            var belongsToManaged = managedPaths.Any(mp => 
-                track.FilePath.StartsWith(mp, StringComparison.OrdinalIgnoreCase));
+            var belongsToManaged = managedPaths.Any(mp =>
+                PathContainment.IsWithin(track.FilePath, mp));
             if (!belongsToManaged)
             {
                 _db.Delete<MusicTrack>(track.Id);
             }
         }
     }
-    
-    public MusicTrack? GetTrack(int id) => _db.Table<MusicTrack>().FirstOrDefault(t => t.Id == id);
-    
-    public MusicTrack? GetTrackByPath(string path) => _db.Table<MusicTrack>().FirstOrDefault(t => t.FilePath == path);
 
-    /// <summary>
-    /// Deletes any track whose file no longer exists on disk (deleted/moved),
-    /// so the library stays in sync with the actual music folder.
-    /// </summary>
+    public MusicTrack? GetTrack(int id)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().FirstOrDefault(t => t.Id == id);
+    }
+
+    public MusicTrack? GetTrackByPath(string path)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().FirstOrDefault(t => t.FilePath == path);
+    }
+
     public void RemoveMissingTracks()
     {
+        using var _ = LockIfNeeded();
         var allTracks = _db.Table<MusicTrack>().ToList();
         int removed = 0;
         foreach (var track in allTracks)
@@ -140,34 +222,73 @@ public class DatabaseService
         if (removed > 0)
             _logger.LogInformation("Removed {Count} tracks whose files no longer exist", removed);
     }
-    
-    public int InsertTrack(MusicTrack track) => _db.Insert(track);
-    
-    public void UpdateTrack(MusicTrack track) => _db.Update(track);
-    
-    public void DeleteTrack(int id) => _db.Delete<MusicTrack>(id);
 
-    public int GetTrackCount() => _db.Table<MusicTrack>().Count(t => !t.IsHidden);
-    public int GetFavoriteCount() => _db.Table<MusicTrack>().Count(t => !t.IsHidden && t.IsFavorite);
-    public int GetFolderCount() => _db.Table<MusicTrack>().Where(t => !t.IsHidden).Select(t => System.IO.Path.GetDirectoryName(t.FilePath)).Distinct().Count();
-    public int GetRecentPlayCount() => _db.Table<MusicTrack>().Count(t => !t.IsHidden && t.DateLastPlayed > 0);
+    public int InsertTrack(MusicTrack track)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Insert(track);
+    }
+
+    public void UpdateTrack(MusicTrack track)
+    {
+        using var _ = LockIfNeeded();
+        _db.Update(track);
+    }
+
+    public void DeleteTrack(int id)
+    {
+        using var _ = LockIfNeeded();
+        _db.Delete<MusicTrack>(id);
+    }
+
+    public int GetTrackCount()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().Count(t => !t.IsHidden);
+    }
+
+    public int GetFavoriteCount()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().Count(t => !t.IsHidden && t.IsFavorite);
+    }
+
+    public int GetFolderCount()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().Where(t => !t.IsHidden).Select(t => System.IO.Path.GetDirectoryName(t.FilePath)).Distinct().Count();
+    }
+
+    public int GetRecentPlayCount()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().Count(t => !t.IsHidden && t.DateLastPlayed > 0);
+    }
+
     public int GetRecentAddCount()
     {
+        using var _ = LockIfNeeded();
         long thirtyDaysAgo = DateTimeOffset.UtcNow.AddDays(-30).ToUnixTimeSeconds();
         return _db.Table<MusicTrack>().Count(t => !t.IsHidden && t.DateAdded > thirtyDaysAgo);
     }
-    public int GetMostPlayedCount() => _db.Table<MusicTrack>().Count(t => !t.IsHidden && t.PlayCount > 0);
+
+    public int GetMostPlayedCount()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>().Count(t => !t.IsHidden && t.PlayCount > 0);
+    }
 
     public (int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount) GetAllCounts()
     {
-        var managedPaths = GetManagedFolderPaths();
+        using var _ = LockIfNeeded();
+        var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0)
             return (0, 0, 0, 0, 0, 0);
-        
+
         var allTracks = _db.Table<MusicTrack>().ToList()
-            .Where(t => !t.IsHidden && IsTrackInManagedFolder(t, managedPaths))
+            .Where(t => !t.IsHidden && IsTrackInManagedFolderLocked(t, managedPaths))
             .ToList();
-        
+
         int trackCount = allTracks.Count;
         int folderCount = managedPaths.Count;
         int favoriteCount = allTracks.Count(t => t.IsFavorite);
@@ -180,12 +301,13 @@ public class DatabaseService
 
     public Dictionary<string, int> GetFolderTrackCounts()
     {
-        var managedPaths = GetManagedFolderPaths();
+        using var _ = LockIfNeeded();
+        var managedPaths = GetManagedFolderPathsLocked();
         var tracks = _db.Table<MusicTrack>().Select(t => t.FilePath).ToList();
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in tracks)
         {
-            if (managedPaths.Count > 0 && !managedPaths.Any(mp => p.StartsWith(mp, StringComparison.OrdinalIgnoreCase))) continue;
+            if (managedPaths.Count > 0 && !managedPaths.Any(mp => PathContainment.IsWithin(p, mp))) continue;
             var dir = System.IO.Path.GetDirectoryName(p);
             if (string.IsNullOrEmpty(dir)) continue;
             if (counts.ContainsKey(dir)) counts[dir]++;
@@ -196,6 +318,7 @@ public class DatabaseService
 
     public Dictionary<int, int> GetAllPlaylistTrackCounts()
     {
+        using var _ = LockIfNeeded();
         var all = _db.Table<PlaylistTrack>().Select(pt => pt.PlaylistId).ToList();
         var counts = new Dictionary<int, int>();
         foreach (var playlistId in all)
@@ -205,10 +328,11 @@ public class DatabaseService
         }
         return counts;
     }
-    
+
     public int InsertOrIgnoreTrack(MusicTrack track)
     {
-        var existing = GetTrackByPath(track.FilePath);
+        using var _ = LockIfNeeded();
+        var existing = GetTrackByPathLocked(track.FilePath);
         if (existing == null) return _db.Insert(track);
 
         existing.Title = track.Title;
@@ -232,35 +356,65 @@ public class DatabaseService
         return existing.Id;
     }
 
-    public void BeginTransaction() => _db.BeginTransaction();
+    public void BeginTransaction()
+    {
+        EnterTransaction();
+        _db.BeginTransaction();
+    }
 
-    public void Commit() => _db.Commit();
+    public void Commit()
+    {
+        _db.Commit();
+        ExitTransaction();
+    }
 
-    public void Rollback() => _db.Rollback();
+    public void Rollback()
+    {
+        try { _db.Rollback(); } catch { }
+        ExitTransaction();
+    }
 
     // Playlists
-    public List<Playlist> GetAllPlaylists() => _db.Table<Playlist>().OrderBy(p => p.SortOrder).ToList();
-    
-    public Playlist? GetPlaylist(int id) => _db.Table<Playlist>().FirstOrDefault(p => p.Id == id);
-    
-    public int InsertPlaylist(Playlist playlist) => _db.Insert(playlist);
-    
-    public void UpdatePlaylist(Playlist playlist) => _db.Update(playlist);
-    
+    public List<Playlist> GetAllPlaylists()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<Playlist>().OrderBy(p => p.SortOrder).ToList();
+    }
+
+    public Playlist? GetPlaylist(int id)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<Playlist>().FirstOrDefault(p => p.Id == id);
+    }
+
+    public int InsertPlaylist(Playlist playlist)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Insert(playlist);
+    }
+
+    public void UpdatePlaylist(Playlist playlist)
+    {
+        using var _ = LockIfNeeded();
+        _db.Update(playlist);
+    }
+
     public void DeletePlaylist(int id)
     {
+        using var _ = LockIfNeeded();
         _db.Table<PlaylistTrack>().Where(pt => pt.PlaylistId == id).Delete();
         _db.Delete<Playlist>(id);
     }
 
     public List<MusicTrack> GetPlaylistTracks(int playlistId)
     {
+        using var _ = LockIfNeeded();
         var trackIds = _db.Table<PlaylistTrack>()
             .Where(pt => pt.PlaylistId == playlistId)
             .OrderBy(pt => pt.Position)
             .Select(pt => pt.TrackId)
             .ToList();
-        
+
         return trackIds.Select(id => _db.Table<MusicTrack>().FirstOrDefault(t => t.Id == id))
             .Where(t => t != null)
             .Cast<MusicTrack>()
@@ -269,6 +423,7 @@ public class DatabaseService
 
     public void AddTrackToPlaylist(int playlistId, int trackId, int position)
     {
+        using var _ = LockIfNeeded();
         _db.Insert(new PlaylistTrack
         {
             PlaylistId = playlistId,
@@ -279,81 +434,113 @@ public class DatabaseService
 
     public void RemoveTrackFromPlaylist(int playlistId, int trackId)
     {
+        using var _ = LockIfNeeded();
         _db.Table<PlaylistTrack>()
             .Where(pt => pt.PlaylistId == playlistId && pt.TrackId == trackId)
             .Delete();
     }
 
     // Managed Folders
-    public List<ManagedMusicFolder> GetManagedFolders() =>
-        _db.Table<ManagedMusicFolder>().Where(f => f.Enabled).OrderBy(f => f.Name).ToList();
+    public List<ManagedMusicFolder> GetManagedFolders()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<ManagedMusicFolder>().Where(f => f.Enabled).OrderBy(f => f.Name).ToList();
+    }
 
-    public List<ManagedMusicFolder> GetAllManagedFolders() =>
-        _db.Table<ManagedMusicFolder>().OrderBy(f => f.Name).ToList();
+    public List<ManagedMusicFolder> GetAllManagedFolders()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<ManagedMusicFolder>().OrderBy(f => f.Name).ToList();
+    }
 
-    public ManagedMusicFolder? GetManagedFolder(string path) =>
-        _db.Table<ManagedMusicFolder>().FirstOrDefault(f => f.Path == path);
+    public ManagedMusicFolder? GetManagedFolder(string path)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<ManagedMusicFolder>().FirstOrDefault(f => f.Path == path);
+    }
 
     public int AddManagedFolder(ManagedMusicFolder folder)
     {
-        var existing = GetManagedFolder(folder.Path);
+        using var _ = LockIfNeeded();
+        var existing = _db.Table<ManagedMusicFolder>().FirstOrDefault(f => f.Path == folder.Path);
         if (existing != null) return existing.Id;
         return _db.Insert(folder);
     }
 
-    public void RemoveManagedFolder(int id) =>
+    public void RemoveManagedFolder(int id)
+    {
+        using var _ = LockIfNeeded();
         _db.Delete<ManagedMusicFolder>(id);
+    }
 
-    public void UpdateManagedFolderLastScan(int id) =>
+    public void UpdateManagedFolderLastScan(int id)
+    {
+        using var _ = LockIfNeeded();
         _db.Execute("UPDATE managed_folders SET LastScanDate = ? WHERE Id = ?",
             DateTimeOffset.UtcNow.ToUnixTimeSeconds(), id);
+    }
 
     // Queue
     public List<MusicTrack> GetQueue()
     {
+        using var _ = LockIfNeeded();
         var items = _db.Table<QueueItem>().OrderBy(q => q.Position).ToList();
-        var managedPaths = GetManagedFolderPaths();
+        var managedPaths = GetManagedFolderPathsLocked();
         return items.Select(i => _db.Table<MusicTrack>().FirstOrDefault(t => t.Id == i.TrackId))
-            .Where(t => t != null && IsTrackInManagedFolder(t!, managedPaths))
+            .Where(t => t != null && IsTrackInManagedFolderLocked(t!, managedPaths))
             .Cast<MusicTrack>()
             .ToList();
     }
 
     public void SaveQueue(List<QueueItem> items)
     {
-        _db.DeleteAll<QueueItem>();
-        _db.InsertAll(items);
+        using var _ = LockIfNeeded();
+        _db.BeginTransaction();
+        try
+        {
+            _db.DeleteAll<QueueItem>();
+            _db.InsertAll(items);
+            _db.Commit();
+        }
+        catch
+        {
+            try { _db.Rollback(); } catch { }
+            throw;
+        }
     }
 
     // Favorites
     public List<MusicTrack> GetFavoriteTracks()
     {
-        var managedPaths = GetManagedFolderPaths();
+        using var _ = LockIfNeeded();
+        var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0) return new List<MusicTrack>();
         return _db.Table<MusicTrack>().Where(t => !t.IsHidden && t.IsFavorite).ToList()
-            .Where(t => IsTrackInManagedFolder(t, managedPaths))
+            .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
             .OrderBy(t => t.Title).ToList();
     }
 
     public void ToggleFavorite(int trackId)
     {
-        var track = GetTrack(trackId);
+        using var _ = LockIfNeeded();
+        var track = _db.Table<MusicTrack>().FirstOrDefault(t => t.Id == trackId);
         if (track != null)
         {
             track.IsFavorite = !track.IsFavorite;
-            UpdateTrack(track);
+            _db.Update(track);
         }
     }
 
     // Recent/Most played
     public List<MusicTrack> GetRecentPlay(int limit = 50)
     {
-        var managedPaths = GetManagedFolderPaths();
+        using var _ = LockIfNeeded();
+        var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0) return new List<MusicTrack>();
         return _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden && t.DateLastPlayed > 0)
             .ToList()
-            .Where(t => IsTrackInManagedFolder(t, managedPaths))
+            .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
             .OrderByDescending(t => t.DateLastPlayed)
             .Take(limit)
             .ToList();
@@ -361,12 +548,13 @@ public class DatabaseService
 
     public List<MusicTrack> GetMostPlay(int limit = 50)
     {
-        var managedPaths = GetManagedFolderPaths();
+        using var _ = LockIfNeeded();
+        var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0) return new List<MusicTrack>();
         return _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden && t.PlayCount > 0)
             .ToList()
-            .Where(t => IsTrackInManagedFolder(t, managedPaths))
+            .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
             .OrderByDescending(t => t.PlayCount)
             .Take(limit)
             .ToList();
@@ -374,19 +562,20 @@ public class DatabaseService
 
     public List<MusicTrack> GetRecentAdd(int limit = 50)
     {
-        var managedPaths = GetManagedFolderPaths();
+        using var _ = LockIfNeeded();
+        var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0) return new List<MusicTrack>();
         return _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden)
             .OrderByDescending(t => t.DateAdded)
             .ToList()
-            .Where(t => IsTrackInManagedFolder(t, managedPaths))
+            .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
             .Take(limit)
             .ToList();
     }
 
-    // Helper: get managed folder paths
-    private List<string> GetManagedFolderPaths()
+    // Helper: get managed folder paths (lock-free internal; caller must hold lock)
+    private List<string> GetManagedFolderPathsLocked()
     {
         return _db.Table<ManagedMusicFolder>()
             .Where(f => f.Enabled)
@@ -395,30 +584,54 @@ public class DatabaseService
     }
 
     // Helper: check if track belongs to a managed folder
-    private static bool IsTrackInManagedFolder(MusicTrack track, List<string> managedPaths)
+    private static bool IsTrackInManagedFolderLocked(MusicTrack track, List<string> managedPaths)
     {
         if (string.IsNullOrEmpty(track.FilePath)) return false;
-        return managedPaths.Any(mp => track.FilePath.StartsWith(mp, StringComparison.OrdinalIgnoreCase));
+        return managedPaths.Any(mp => PathContainment.IsWithin(track.FilePath, mp));
+    }
+
+    // Public helper used by external callers (locks internally)
+    public List<string> GetManagedFolderPaths()
+    {
+        using var _ = LockIfNeeded();
+        return GetManagedFolderPathsLocked();
+    }
+
+    public bool IsTrackInManagedFolder(MusicTrack track, List<string> managedPaths)
+    {
+        return IsTrackInManagedFolderLocked(track, managedPaths);
     }
 
     // Hidden folders
-    public List<HiddenFolder> GetHiddenFolders() => _db.Table<HiddenFolder>().ToList();
-    
-    public void AddHiddenFolder(string path) =>
+    public List<HiddenFolder> GetHiddenFolders()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<HiddenFolder>().ToList();
+    }
+
+    public void AddHiddenFolder(string path)
+    {
+        using var _ = LockIfNeeded();
         _db.Insert(new HiddenFolder { FolderPath = path });
-    
-    public void RemoveHiddenFolder(string path) =>
+    }
+
+    public void RemoveHiddenFolder(string path)
+    {
+        using var _ = LockIfNeeded();
         _db.Table<HiddenFolder>().Where(h => h.FolderPath == path).Delete();
+    }
 
     // Settings
     public string GetSetting(string key, string defaultValue = "")
     {
+        using var _ = LockIfNeeded();
         var setting = _db.Table<Setting>().FirstOrDefault(s => s.Key == key);
         return setting?.Value ?? defaultValue;
     }
 
     public void SetSetting(string key, string value)
     {
+        using var _ = LockIfNeeded();
         var existing = _db.Table<Setting>().FirstOrDefault(s => s.Key == key);
         if (existing != null)
         {
@@ -433,37 +646,61 @@ public class DatabaseService
 
     public int GetSettingInt(string key, int defaultValue = 0)
     {
-        var value = GetSetting(key, defaultValue.ToString());
+        using var _ = LockIfNeeded();
+        var value = GetSettingLocked(key, defaultValue.ToString());
         return int.TryParse(value, out int result) ? result : defaultValue;
     }
 
     public bool GetSettingBool(string key, bool defaultValue = false)
     {
-        var value = GetSetting(key, defaultValue.ToString());
+        using var _ = LockIfNeeded();
+        var value = GetSettingLocked(key, defaultValue.ToString());
         return bool.TryParse(value, out bool result) ? result : defaultValue;
     }
 
     public float GetSettingFloat(string key, float defaultValue = 0f)
     {
-        var value = GetSetting(key, defaultValue.ToString());
+        using var _ = LockIfNeeded();
+        var value = GetSettingLocked(key, defaultValue.ToString());
         return float.TryParse(value, out float result) ? result : defaultValue;
     }
 
-    // Album art cache
-    public AlbumArtCache? GetAlbumArtCache(string trackPath) =>
-        _db.Table<AlbumArtCache>().FirstOrDefault(a => a.TrackPath == trackPath);
+    private string GetSettingLocked(string key, string defaultValue)
+    {
+        var setting = _db.Table<Setting>().FirstOrDefault(s => s.Key == key);
+        return setting?.Value ?? defaultValue;
+    }
 
-    public void SaveAlbumArtCache(AlbumArtCache cache) => _db.InsertOrReplace(cache);
+    // Album art cache
+    public AlbumArtCache? GetAlbumArtCache(string trackPath)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<AlbumArtCache>().FirstOrDefault(a => a.TrackPath == trackPath);
+    }
+
+    public void SaveAlbumArtCache(AlbumArtCache cache)
+    {
+        using var _ = LockIfNeeded();
+        _db.InsertOrReplace(cache);
+    }
 
     // Lyrics
-    public LyricBinding? GetLyricBinding(string trackPath) =>
-        _db.Table<LyricBinding>().FirstOrDefault(l => l.TrackPath == trackPath);
+    public LyricBinding? GetLyricBinding(string trackPath)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<LyricBinding>().FirstOrDefault(l => l.TrackPath == trackPath);
+    }
 
-    public void SaveLyricBinding(LyricBinding binding) => _db.InsertOrReplace(binding);
+    public void SaveLyricBinding(LyricBinding binding)
+    {
+        using var _ = LockIfNeeded();
+        _db.InsertOrReplace(binding);
+    }
 
     // Search
     public List<MusicTrack> SearchTracks(string query)
     {
+        using var _ = LockIfNeeded();
         var lowerQuery = query.ToLower();
         return _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden && (t.Title.ToLower().Contains(lowerQuery) ||
@@ -474,16 +711,20 @@ public class DatabaseService
     }
 
     // Albums
-    public List<string> GetAllAlbums() =>
-        _db.Table<MusicTrack>()
+    public List<string> GetAllAlbums()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden && !string.IsNullOrEmpty(t.Album))
             .Select(t => t.Album)
             .Distinct()
             .OrderBy(a => a)
             .ToList();
+    }
 
     public List<MusicTrack> GetAlbumTracks(string album)
     {
+        using var _ = LockIfNeeded();
         var key = album.Trim();
         return _db.Table<MusicTrack>()
             .ToList()
@@ -494,6 +735,7 @@ public class DatabaseService
 
     public string GetAlbumArtist(string album)
     {
+        using var _ = LockIfNeeded();
         var key = album.Trim();
         return _db.Table<MusicTrack>()
             .ToList()
@@ -504,12 +746,6 @@ public class DatabaseService
             .FirstOrDefault()?.Key ?? "Unknown Artist";
     }
 
-    // Canonical album-cover rule — THE single definition of "which track's art
-    // represents an album" used by every surface (artist cards, albums cards,
-    // album detail, hero overlays). Lowest track number wins; Title then FilePath
-    // break ties deterministically — untagged files all share TrackNumber 0, so
-    // TrackNumber alone would leave the pick to raw scan order (covers flipping
-    // after rescans). Null-guards: tags are often missing at runtime.
     public static MusicTrack? PickCanonicalTrack(IEnumerable<MusicTrack> tracks)
     {
         return tracks
@@ -521,6 +757,7 @@ public class DatabaseService
 
     public (List<MusicTrack> Tracks, string Artist) GetAlbumDetail(string album)
     {
+        using var _ = LockIfNeeded();
         var key = album.Trim();
         var all = _db.Table<MusicTrack>().ToList();
         var tracks = all
@@ -540,14 +777,12 @@ public class DatabaseService
     // Artists
     public List<string> GetAllArtists()
     {
+        using var _ = LockIfNeeded();
         var all = _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden && !string.IsNullOrEmpty(t.Artist))
             .Select(t => t.Artist)
             .ToList();
 
-        // Case-insensitive merge so "TAME IMPALA" and "Tame Impala" count as ONE
-        // artist. The most common spelling is kept as the display/canonical name,
-        // with whitespace trimmed.
         return all
             .GroupBy(a => a.Trim(), StringComparer.OrdinalIgnoreCase)
             .Select(g => g
@@ -561,6 +796,7 @@ public class DatabaseService
 
     public List<MusicTrack> GetArtistTracks(string artist)
     {
+        using var _ = LockIfNeeded();
         var key = artist.Trim();
         return _db.Table<MusicTrack>()
             .ToList()
@@ -570,11 +806,9 @@ public class DatabaseService
             .ToList();
     }
 
-    // Broad match for the artist detail page: includes shared/collaboration
-    // albums where the artist name appears as a collaborator (feat., &, feat.,
-    // "," etc.) in Artist or AlbumArtist.
     public List<MusicTrack> GetArtistDetailTracks(string artistName)
     {
+        using var _ = LockIfNeeded();
         var key = NormalizeArtistName(artistName);
         if (string.IsNullOrEmpty(key)) return new List<MusicTrack>();
 
@@ -603,8 +837,6 @@ public class DatabaseService
         if (string.IsNullOrWhiteSpace(field)) return false;
         if (field.Trim().Equals(key, StringComparison.OrdinalIgnoreCase)) return true;
 
-        // Match a white-space/separator-delimited token (covers "A, B", "A & B",
-        // "A feat. B", "A/B" and the raw combined tag field, e.g. "A, B").
         var tokens = field.Split(new[] { ',', '&', ';', '/', '+', '\\' }, StringSplitOptions.RemoveEmptyEntries)
                           .Select(t => t.Trim().Trim(',', ' '));
         return tokens.Any(tok =>
@@ -613,24 +845,31 @@ public class DatabaseService
     }
 
     // Genres
-    public List<string> GetAllGenres() =>
-        _db.Table<MusicTrack>()
+    public List<string> GetAllGenres()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden && !string.IsNullOrEmpty(t.Genre))
             .Select(t => t.Genre)
             .Distinct()
             .OrderBy(g => g)
             .ToList();
+    }
 
-    public List<MusicTrack> GetGenreTracks(string genre) =>
-        _db.Table<MusicTrack>()
+    public List<MusicTrack> GetGenreTracks(string genre)
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden && t.Genre == genre)
             .OrderBy(t => t.Artist)
             .ThenBy(t => t.Album)
             .ToList();
+    }
 
     // Folders
     public List<string> GetAllFolders()
     {
+        using var _ = LockIfNeeded();
         var paths = _db.Table<MusicTrack>().Where(t => !t.IsHidden).Select(t => t.FilePath).ToList();
         var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in paths)
@@ -643,8 +882,9 @@ public class DatabaseService
 
     public List<MusicTrack> GetFolderTracks(string folder)
     {
+        using var _ = LockIfNeeded();
         var allInFolder = _db.Table<MusicTrack>()
-            .Where(t => !t.IsHidden && t.FilePath.StartsWith(folder))
+            .Where(t => !t.IsHidden && PathContainment.IsWithin(t.FilePath, folder))
             .OrderBy(t => t.Title)
             .ToList();
         return allInFolder.Where(t =>
@@ -654,9 +894,15 @@ public class DatabaseService
         }).ToList();
     }
 
+    // Internal locked helpers used by transactional callers
+    private MusicTrack? GetTrackByPathLocked(string path)
+    {
+        return _db.Table<MusicTrack>().FirstOrDefault(t => t.FilePath == path);
+    }
+
     public void Dispose()
     {
-        _db?.Close();
-        _db?.Dispose();
+        try { _db?.Close(); } catch { }
+        try { _db?.Dispose(); } catch { }
     }
 }

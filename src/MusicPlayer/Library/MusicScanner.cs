@@ -7,12 +7,14 @@ using System.Threading.Tasks;
 using TagLib;
 using MusicPlayer.Models;
 using MusicPlayer.Database;
+using MusicPlayer.Utilities;
 using Microsoft.Extensions.Logging;
 
 namespace MusicPlayer.Library;
 
 public class MusicScanner
 {
+    private readonly object _scanGate = new();
     private readonly DatabaseService _db;
     private readonly ILogger<MusicScanner> _logger;
     
@@ -37,8 +39,14 @@ public class MusicScanner
     
     public async Task ScanFoldersAsync(IEnumerable<string> folders, CancellationToken cancellationToken = default)
     {
-        if (IsScanning) { _logger.LogWarning("Scan already in progress, skipping"); return; }
-        IsScanning = true;
+        lock (_scanGate)
+        {
+            if (IsScanning) { _logger.LogWarning("Scan already in progress, skipping"); return; }
+            IsScanning = true;
+        }
+
+        try
+        {
         
         await Task.Run(() =>
         {
@@ -67,7 +75,7 @@ public class MusicScanner
                         continue;
                     }
 
-                    var allFiles = Directory.GetFiles(folder, "*.*", SearchOption.AllDirectories);
+                    var allFiles = EnumerateFilesSafe(folder).ToArray();
                     _logger.LogInformation("Total files in {Folder}: {Count}", folder, allFiles.Length);
                     
                     var files = allFiles
@@ -84,12 +92,12 @@ public class MusicScanner
                         try
                         {
                             var dir = Path.GetDirectoryName(file)?.ToLower() ?? "";
-                            if (hiddenFolders.Any(h => dir.StartsWith(h))) continue;
+                            if (hiddenFolders.Any(h => PathContainment.IsWithin(dir, h))) continue;
                             
                             var fileInfo = new FileInfo(file);
                             if (excludeBySize && fileInfo.Length < minSize) continue;
                             
-                            var tagFile = TagLib.File.Create(file);
+                            using var tagFile = TagLib.File.Create(file);
                             
                             if (excludeByDuration && tagFile.Properties.Duration.TotalMilliseconds < minDuration)
                                 continue;
@@ -136,9 +144,12 @@ public class MusicScanner
             
             _logger.LogInformation("Scan complete. {Count} tracks indexed.", count);
         }, cancellationToken);
-        
-        IsScanning = false;
-        ScanCompleted?.Invoke(this, EventArgs.Empty);
+        }
+        finally
+        {
+            lock (_scanGate) { IsScanning = false; }
+            ScanCompleted?.Invoke(this, EventArgs.Empty);
+        }
     }
     
     public async Task ScanFolderAsync(string folder, CancellationToken cancellationToken = default)
@@ -195,8 +206,11 @@ public class MusicScanner
 
     public async Task<(int Added, int Updated, int Removed)> RefreshAndSyncLibraryAsync(CancellationToken cancellationToken = default)
     {
-        if (IsScanning) return (0, 0, 0);
-        IsScanning = true;
+        lock (_scanGate)
+        {
+            if (IsScanning) return (0, 0, 0);
+            IsScanning = true;
+        }
         int added = 0;
         int updated = 0;
         int removed = 0;
@@ -236,7 +250,7 @@ public class MusicScanner
                 foreach (var f in foldersToScan.OrderBy(p => p.Length))
                 {
                     var normalized = Path.GetFullPath(f).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                    if (!rootFolders.Any(r => normalized.StartsWith(r + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || normalized.Equals(r, StringComparison.OrdinalIgnoreCase)))
+                    if (!rootFolders.Any(r => PathContainment.IsWithin(normalized, r)))
                     {
                         rootFolders.Add(normalized);
                     }
@@ -247,7 +261,7 @@ public class MusicScanner
                 {
                     foreach (var rf in rootFolders)
                     {
-                        if (!managedFolders.Any(mf => rf.StartsWith(mf.Path, StringComparison.OrdinalIgnoreCase)))
+                        if (!managedFolders.Any(mf => PathContainment.IsWithin(rf, mf.Path)))
                         {
                             var folderName = Path.GetFileName(rf);
                             if (string.IsNullOrEmpty(folderName)) folderName = rf;
@@ -312,7 +326,7 @@ public class MusicScanner
                         string[] allFiles;
                         try
                         {
-                            allFiles = Directory.GetFiles(folder, "*.*", SearchOption.AllDirectories);
+                            allFiles = EnumerateFilesSafe(folder).ToArray();
                         }
                         catch (Exception ex)
                         {
@@ -326,7 +340,7 @@ public class MusicScanner
                             if (!IsMusicFile(file)) continue;
 
                             var dir = Path.GetDirectoryName(file)?.ToLowerInvariant() ?? "";
-                            if (hiddenFolders.Any(h => dir.StartsWith(h))) continue;
+                            if (hiddenFolders.Any(h => PathContainment.IsWithin(dir, h))) continue;
 
                             FileInfo fileInfo;
                             try
@@ -446,11 +460,36 @@ public class MusicScanner
         }
         finally
         {
-            IsScanning = false;
+            lock (_scanGate) { IsScanning = false; }
             ScanCompleted?.Invoke(this, EventArgs.Empty);
         }
 
         return (added, updated, removed);
+    }
+
+    private static IEnumerable<string> EnumerateFilesSafe(string root)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return result;
+        var stack = new Stack<string>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            var dir = stack.Pop();
+            try
+            {
+                foreach (var f in Directory.GetFiles(dir))
+                    result.Add(f);
+            }
+            catch { }
+            try
+            {
+                foreach (var d in Directory.GetDirectories(dir))
+                    stack.Push(d);
+            }
+            catch { }
+        }
+        return result;
     }
 
     public int BackfillDateAdded()

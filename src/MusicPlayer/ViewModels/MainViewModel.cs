@@ -4291,20 +4291,25 @@ public partial class MainViewModel : ViewModelBase
 		// Row-thumbnail warmup runs immediately in background so the entire library is cached in RAM.
 		_ = Task.Run(async delegate
 		{
-			await WarmUpAndRefreshAsync(sortedTracks);
+			try { await WarmUpAndRefreshAsync(sortedTracks); }
+			catch (Exception ex) { _logger.LogError(ex, "WarmUpAndRefreshAsync failed"); }
 		});
 		_ = Task.Run(async delegate
 		{
-			// 30s-quiet (not 4s): wallpaper decoding only runs during a genuine
-			// pause, aborts per file the instant the user interacts, and retries
-			// until it completes — so returning to the app never meets a
-			// wallpaper job already in flight (was a source of return-lag).
-			while (true)
+			try
 			{
-				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-					quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue);
-				if (await EnsureWallpapersLoadedAsync(false, true)) break;
+				// 30s-quiet (not 4s): wallpaper decoding only runs during a genuine
+				// pause, aborts per file the instant the user interacts, and retries
+				// until it completes — so returning to the app never meets a
+				// wallpaper job already in flight (was a source of return-lag).
+				while (true)
+				{
+					await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
+						quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue);
+					if (await EnsureWallpapersLoadedAsync(false, true)) break;
+				}
 			}
+			catch (Exception ex) { _logger.LogError(ex, "Wallpaper warmup loop failed"); }
 		});
 		// Re-crop all existing cached artist images with smart face-centered square crop.
 		// Cancelled while the user interacts, resumed when they pause — re-cropping is
@@ -5210,7 +5215,7 @@ public partial class MainViewModel : ViewModelBase
 			var q = _playback.Engine.Queue.ToList();
 			for (int i = q.Count - 1; i >= 0; i--)
 			{
-				if (!string.IsNullOrEmpty(q[i].FilePath) && q[i].FilePath.StartsWith(folder2.Path, StringComparison.OrdinalIgnoreCase))
+				if (!string.IsNullOrEmpty(q[i].FilePath) && PathContainment.IsWithin(q[i].FilePath, folder2.Path))
 					_playback.Engine.RemoveFromQueue(i);
 			}
 			RefreshQueue();

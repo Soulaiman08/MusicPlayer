@@ -597,7 +597,7 @@ public class AudioEngine : IDisposable
     /// </summary>
     public void LoadAndPlayAsync(MusicTrack track)
     {
-        if (track == null) return;
+        if (track == null || _disposed) return;
 
         lock (_playbackLock)
         {
@@ -638,6 +638,8 @@ public class AudioEngine : IDisposable
         {
             while (true)
             {
+                if (_disposed) { lock (_playbackLock) { _playbackWorkerRunning = false; _queuedTrack = null; } return; }
+
                 MusicTrack track;
                 int gen;
                 lock (_playbackLock)
@@ -648,8 +650,22 @@ public class AudioEngine : IDisposable
                     gen = _loadGeneration;
                 }
 
+                // Drop stale requests: a newer LoadAndPlayAsync superseded this one.
+                if (gen != _loadGeneration || _disposed)
+                {
+                    LogHelper.LogInfo("[PLAYBACK] PlaybackWorker: skipping stale request");
+                    continue;
+                }
+
                 long w0 = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 LoadTrack(track);
+                // Re-check generation after the (potentially long) load: if a newer
+                // request arrived mid-load, do not start playback of the stale track.
+                if (gen != _loadGeneration || _disposed)
+                {
+                    LogHelper.LogInfo("[PLAYBACK] PlaybackWorker: load completed but request superseded; not playing");
+                    continue;
+                }
                 Play();
                 LogHelper.LogInfo($"PlaybackWorker: load+play={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - w0}ms");
             }
@@ -920,9 +936,11 @@ public class AudioEngine : IDisposable
     private bool _playbackWorkerRunning = false;
     private int _loadGeneration = 0;
     private Thread? _workerThread = null;
+    private volatile bool _disposed = false;
 
     private void OnPositionTimerElapsed(object? sender, ElapsedEventArgs e)
     {
+        if (_disposed) return;
         // Conservative watchdog: if the engine sits idle with a valid current
         // track but no file loaded (a load that never completed) for ~2s,
         // reload the track. Guarded by _loadingTrack / _loadFailedForCurrentTrack
@@ -1015,6 +1033,7 @@ public class AudioEngine : IDisposable
 
     private void OnOutputDevicePlaybackStopped(object? sender, StoppedEventArgs e)
     {
+        if (_disposed) return;
         LogHelper.LogInfo($"[PLAYBACK] OnOutputDevicePlaybackStopped: _isPlaying={_isPlaying}, _loadingTrack={_loadingTrack}, error={e.Exception?.Message ?? "none"}");
         if (_loadingTrack) return; // LoadTrack is disposing the old device — don't double-advance
         if (!_isPlaying) return;   // intentional pause/stop — don't advance
@@ -1052,14 +1071,40 @@ public class AudioEngine : IDisposable
 
     public void Dispose()
     {
-        _positionTimer?.Stop();
-        _positionTimer?.Dispose();
-        AudioAnalyzer.Instance.Attach(null);
-        if (_outputDevice != null)
+        if (_disposed) return;
+        _disposed = true;
+
+        // Stop the timer first so no further callbacks fire.
+        try { _positionTimer?.Stop(); } catch { }
+        try { _positionTimer?.Dispose(); } catch { }
+
+        // Cancel any in-flight worker.
+        lock (_playbackLock)
         {
-            _outputDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped;
-            _outputDevice?.Dispose();
+            _queuedTrack = null;
+            _playbackWorkerRunning = false;
         }
-        _audioFile?.Dispose();
+        var wt = _workerThread;
+        if (wt != null && wt.IsAlive)
+        {
+            try { wt.Join(3000); } catch { }
+        }
+
+        try { AudioAnalyzer.Instance.Attach(null); } catch { }
+
+        try
+        {
+            if (_outputDevice != null)
+            {
+                try { _outputDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped; } catch { }
+                try { _outputDevice.Stop(); } catch { }
+                try { _outputDevice.Dispose(); } catch { }
+                _outputDevice = null;
+            }
+        }
+        catch { }
+
+        try { _audioFile?.Dispose(); } catch { }
+        _audioFile = null;
     }
 }

@@ -494,11 +494,10 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         AllowSleep();
+        // Single owner for service disposal: service host owns AudioEngine + DatabaseService.
         try { _serviceHost?.Stop(); } catch { }
         try { ServiceProvider?.GetService<WindowsIntegrationService>()?.Dispose(); } catch { }
         try { ServiceProvider?.GetService<SystemTrayService>()?.Dispose(); } catch { }
-        try { ServiceProvider?.GetService<AudioEngine>()?.Dispose(); } catch { }
-        try { ServiceProvider?.GetService<DatabaseService>()?.Dispose(); } catch { }
         try { _singleInstanceMutex?.ReleaseMutex(); } catch { }
         try { _singleInstanceMutex?.Dispose(); } catch { }
         try { (ServiceProvider as IDisposable)?.Dispose(); } catch { }
