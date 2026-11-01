@@ -41,9 +41,9 @@
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
-        <!-- Unified Dark Glass TopBar (Harmonoid-inspired cohesive header) -->
+        <!-- Unified identity glass TopBar: the same material continues from the app identity head and Sidebar -->
         <!-- 1. Visual Background Layer: Purely visual, never intercepts mouse hit tests -->
-        <Border Grid.Row="0" Grid.Column="1" Background="#200D1119" BorderBrush="#14FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True" IsHitTestVisible="False">
+        <Border x:Name="HeaderGlassLayer" Grid.Row="0" Grid.Column="1" Background="#200D1119" BorderThickness="0" SnapsToDevicePixels="True" IsHitTestVisible="False" OpacityMask="{StaticResource DS_IdentityHeaderFadeMask}">
           <Border.Style>
             <Style TargetType="Border">
               <Setter Property="Visibility" Value="Visible" />
@@ -60,17 +60,26 @@
           <Grid>
             <!-- Live Backdrop Glass Blur Sampling Surface -->
             <Border x:Name="HeaderGlassSurface" Background="Transparent" IsHitTestVisible="False" />
-            <!-- Soft gradient depth overlay: subtly darker at top, blending seamlessly into the page below -->
-            <Border IsHitTestVisible="False">
-              <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                  <GradientStop Color="#280C1017" Offset="0" />
-                  <GradientStop Color="#14080B10" Offset="1" />
-                </LinearGradientBrush>
-              </Border.Background>
-            </Border>
+            <!-- Shared identity tint: identical material recipe to the Sidebar -->
+            <Border Background="{StaticResource DS_IdentityGlassTint}" IsHitTestVisible="False" />
+            <!-- Soft glass sheen that lifts the header without adding a panel edge -->
+            <Border Background="{StaticResource DS_IdentityTopSheen}" IsHitTestVisible="False" />
+            <!-- Hairline edge that dissolves at both ends instead of cutting the page -->
+            <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource DS_IdentityHeaderEdge}" IsHitTestVisible="False" />
           </Grid>
         </Border>
+
+        <!-- Soft ambient light where the identity column and TopBar meet; hidden on Home and Full Player.
+             The zero-size Canvas keeps the glow out of the Auto-row measurement. -->
+        <Canvas Grid.Row="0" Grid.Column="1" Width="0" Height="0"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                IsHitTestVisible="False">
+          <Border x:Name="IdentityJunctionGlow" Width="160" Height="120"
+                  Canvas.Left="-16" Canvas.Top="-8"
+                  Background="{StaticResource DS_IdentityJunctionGlow}"
+                  Visibility="{Binding Visibility, ElementName=HeaderGlassLayer}"
+                  IsHitTestVisible="False" SnapsToDevicePixels="True" />
+        </Canvas>
 
         <!-- 2. Interactive Header Controls Layer: Houses all controls with isolated, direct hit testing -->
         <Grid Grid.Row="0" Grid.Column="1" MinHeight="70">
@@ -506,6 +515,15 @@
           </Grid>
         </Grid>
 
+          <!-- Soft glass head: the app icon reads as the top segment of the Sidebar identity column -->
+          <Border x:Name="SidebarBrandGlass" Grid.Column="0" Grid.Row="0"
+                  Width="{Binding ActualWidth, ElementName=SidebarBrandButton}"
+                  Height="44" Margin="8,6,6,0"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  CornerRadius="18"
+                  Background="{StaticResource DS_IdentityBrandPlate}"
+                  IsHitTestVisible="False" SnapsToDevicePixels="True" />
+
           <!-- App identity: Independent brand identity directly integrated with Sidebar -->
           <Button x:Name="SidebarBrandButton" Grid.Column="0" Grid.Row="0" Width="50" Height="40" Margin="8,8,6,0" Padding="0" Background="Transparent" BorderThickness="0" Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalAlignment="Left" VerticalAlignment="Top" ToolTip="Toggle Navigation Menu" Command="{Binding ToggleDrawerCommand}" WindowChrome.IsHitTestVisibleInChrome="True">
             <Button.Template>
@@ -552,7 +570,7 @@
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
               </Grid.RowDefinitions>
-              <Border Grid.RowSpan="2" Background="#2810131B" IsHitTestVisible="False" />
+              <Border Grid.RowSpan="2" Background="{StaticResource DS_IdentityGlassTint}" IsHitTestVisible="False" />
 
               <!-- Sidebar Navigation Items -->
               <ScrollViewer Grid.Row="0" Style="{StaticResource DS_SidebarScrollViewerStyle}">

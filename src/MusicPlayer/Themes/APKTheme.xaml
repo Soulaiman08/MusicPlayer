@@ -841,6 +841,36 @@
     <SolidColorBrush x:Key="DS_Glass_Panel_Brush" Color="#28111624"/>
     <SolidColorBrush x:Key="DS_Scrim_Modal_Brush" Color="#99000000"/>
 
+    <!-- Unified identity glass: shared by the app identity head, Sidebar and TopBar -->
+    <LinearGradientBrush x:Key="DS_IdentityGlassTint" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#2E0D1119" Offset="0"/>
+        <GradientStop Color="#220D1119" Offset="0.55"/>
+        <GradientStop Color="#180D1119" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="DS_IdentityBrandPlate" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#10FFFFFF" Offset="0"/>
+        <GradientStop Color="#1E0D1119" Offset="0.42"/>
+        <GradientStop Color="#2A10131B" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="DS_IdentityTopSheen" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#0CFFFFFF" Offset="0"/>
+        <GradientStop Color="#00FFFFFF" Offset="0.55"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="DS_IdentityHeaderEdge" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#00FFFFFF" Offset="0"/>
+        <GradientStop Color="#1AFFFFFF" Offset="0.12"/>
+        <GradientStop Color="#16FFFFFF" Offset="0.82"/>
+        <GradientStop Color="#00FFFFFF" Offset="1"/>
+    </LinearGradientBrush>
+    <RadialGradientBrush x:Key="DS_IdentityJunctionGlow" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+        <GradientStop Color="#20FFFFFF" Offset="0"/>
+        <GradientStop Color="#00FFFFFF" Offset="1"/>
+    </RadialGradientBrush>
+    <LinearGradientBrush x:Key="DS_IdentityHeaderFadeMask" StartPoint="0,0" EndPoint="30,0" MappingMode="Absolute">
+        <GradientStop Color="#00000000" Offset="0"/>
+        <GradientStop Color="#FF000000" Offset="1"/>
+    </LinearGradientBrush>
+
     <!-- App Header & Navigation Controls -->
     <Style x:Key="DS_HeaderButtonStyle" TargetType="{x:Type Button}">
         <Setter Property="Background" Value="#18FFFFFF"/>
