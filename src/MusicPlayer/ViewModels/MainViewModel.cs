@@ -4551,6 +4551,11 @@ public partial class MainViewModel : ViewModelBase
 		{
 			CleanupLrcEditIfEmpty();
 		}
+		if (CurrentView == "theme_edit")
+		{
+			CancelThemeEdit();
+			return;
+		}
 		bool num = ShowFullPlayer || _navigatedFromFullPlayer;
 		_navigatedFromFullPlayer = false;
 		if (_viewHistory.Count > 0)
@@ -5876,9 +5881,11 @@ public partial class MainViewModel : ViewModelBase
 				select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
 				orderby t.Album
 				select t).ToList());
-		// Sort BEFORE inserting: replacing the collection twice (insert, then
-		// re-sort with a Reset) made the WrapPanel realize every tile twice.
-		List<MusicTrack> sortedAlbums = items.Count >= 2 ? SortItems(items).ToList() : items;
+			string sortOrder = LibrarySortOrder;
+			bool sortDescending = IsLibrarySortDescending;
+			List<MusicTrack> sortedAlbums = items.Count >= 2
+				? await Task.Run(() => SortItems(items, false, sortOrder, sortDescending).ToList())
+				: items;
 		await ReplaceAllChunkedAsync(Albums, sortedAlbums);
 		PerfTabData("albums", Albums.Count);
 	}
@@ -5904,9 +5911,13 @@ private async void LoadArtists()
 			});
 			// Sort BEFORE inserting (single pass) and fill progressively so the
 			// WrapPanel never realizes all artist tiles inside one frame.
-			List<MusicTrack> sortedArtists = result.Items.Count >= 2
-				? SortItems(result.Items, isArtistCollection: true).ToList()
-				: result.Items;
+			string sortOrder = LibrarySortOrder;
+			bool sortDescending = IsLibrarySortDescending;
+			var swSort = System.Diagnostics.Stopwatch.StartNew();
+			List<MusicTrack> sortedArtists = await Task.Run(() => result.Items.Count >= 2
+				? SortItems(result.Items, isArtistCollection: true, sortOrder, sortDescending).ToList()
+				: result.Items);
+			long sortMs = swSort.ElapsedMilliseconds;
 			var swFill = System.Diagnostics.Stopwatch.StartNew();
 			await ReplaceAllChunkedAsync(Artists, sortedArtists);
 			long fillMs = swFill.ElapsedMilliseconds;
@@ -5914,7 +5925,7 @@ private async void LoadArtists()
 			var swKick = System.Diagnostics.Stopwatch.StartNew();
 			_ = FetchMissingArtistImagesAsync(result.Items);
 			if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
-				LogHelper.LogInfo($"TAB-ARTISTS fillMs={fillMs} fetchKickMs={swKick.ElapsedMilliseconds}");
+				LogHelper.LogInfo($"TAB-ARTISTS sortMs={sortMs} fillMs={fillMs} fetchKickMs={swKick.ElapsedMilliseconds}");
 		}
 		catch
 		{
@@ -6013,11 +6024,14 @@ private async void LoadArtists()
 						{
 							await DispatchAsync(delegate
 							{
-								if (!ArtistImages.ContainsKey(track.Artist))
+							if (!ArtistImages.ContainsKey(track.Artist))
+								{
 									ArtistImages[track.Artist] = path;
-							});
-						}
-					}
+									OnPropertyChanged(nameof(ArtistImages));
+								}
+					});
+				}
+			}
 					catch
 					{
 					}
@@ -6061,7 +6075,7 @@ private async void LoadArtists()
 	{
 		try
 		{
-			List<MusicTrack> items = await Task.Run(() => (from g in (from t in _db.GetAllTracks()
+			List<MusicTrack> genres = await Task.Run(() => (from g in (from t in _db.GetAllTracks()
 					where !string.IsNullOrWhiteSpace(t.Genre)
 					select t).GroupBy<MusicTrack, string>((MusicTrack t) => t.Genre.Trim(), StringComparer.OrdinalIgnoreCase)
 				select (from t in g
@@ -6069,10 +6083,14 @@ private async void LoadArtists()
 					select t).First() into t
 				orderby t.Genre
 				select t).ToList());
+			string sortOrder = LibrarySortOrder;
+			bool sortDescending = IsLibrarySortDescending;
+			List<MusicTrack> items = genres.Count >= 2
+				? await Task.Run(() => SortItems(genres, false, sortOrder, sortDescending).ToList())
+				: genres;
 		await DispatchAsync(delegate
 		{
 			Genres.ReplaceAll(items);
-			SortCollection(Genres);
 		});
 		PerfTabData("genres", Genres.Count);
 	}
@@ -6578,8 +6596,15 @@ private async void LoadFolders()
 	}
 
 	private IEnumerable<MusicTrack> SortItems(IEnumerable<MusicTrack> tracks, bool isArtistCollection = false)
+		=> SortItems(tracks, isArtistCollection, LibrarySortOrder, IsLibrarySortDescending);
+
+	private static IEnumerable<MusicTrack> SortItems(
+		IEnumerable<MusicTrack> tracks,
+		bool isArtistCollection,
+		string librarySortOrder,
+		bool isLibrarySortDescending)
 	{
-		Func<MusicTrack, string> keySelector = LibrarySortOrder switch
+		Func<MusicTrack, string> keySelector = librarySortOrder switch
 		{
 			"artist" => (MusicTrack track) => track.Artist ?? string.Empty, 
 			"album" => (MusicTrack track) => track.Album ?? string.Empty, 
@@ -6587,7 +6612,7 @@ private async void LoadFolders()
 			_ when isArtistCollection => (MusicTrack track) => track.Artist ?? string.Empty, 
 			_ => (MusicTrack track) => track.Title ?? string.Empty, 
 		};
-		IEnumerable<MusicTrack> enumerable = LibrarySortOrder switch
+		IEnumerable<MusicTrack> enumerable = librarySortOrder switch
 		{
 			"date_added" => tracks.OrderByDescending((MusicTrack track) => track.DateAdded), 
 			"date_modified" => tracks.OrderBy((MusicTrack track) => track.DateModified), 
@@ -6603,7 +6628,7 @@ private async void LoadFolders()
 			_ when isArtistCollection => tracks.OrderBy<MusicTrack, string>(keySelector, StringComparer.CurrentCultureIgnoreCase), 
 			_ => tracks.OrderBy<MusicTrack, string>(keySelector, StringComparer.CurrentCultureIgnoreCase), 
 		};
-		if (IsLibrarySortDescending)
+		if (isLibrarySortDescending)
 		{
 			enumerable = enumerable.Reverse();
 		}

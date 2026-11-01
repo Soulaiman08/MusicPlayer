@@ -623,8 +623,16 @@ private void SongsScroller_ScrollChanged(object sender, ScrollChangedEventArgs e
     /// <summary>Switches the tracks view between the column table and the card grid.</summary>
     private void ToggleSongsLayout_Click(object sender, RoutedEventArgs e)
     {
-        IsSongsGridView = !IsSongsGridView;
+        bool showGrid = !IsSongsGridView;
+        string mode = showGrid ? "grid" : "list";
+        AlbumArtUiProbe? imageProbe = showGrid && ViewModel?.CurrentView == "songs"
+            ? BeginTracksImageProbe("mode-toggle", mode)
+            : null;
+
+        IsSongsGridView = showGrid;
         SongsActiveColumn = -1;
+        if (ViewModel?.CurrentView == "songs")
+            BeginTracksSurfaceProbe("mode-toggle", mode, imageProbe);
     }
 
     private static readonly DependencyProperty[] SongsColProps =
@@ -1347,8 +1355,9 @@ InitializeComponent();
         {
             _resizeMarqueeTimer.Stop();
             _resizeMarqueeTimer.Start();
-            EnsureBlurCache();
+            MarkGlassBackdropDirty();
         };
+        LocationChanged += Window_LocationChanged;
 
         // Single reusable timer for the "pause auto-follow after user scrolls
         // lyrics" behavior. Created once instead of allocating a new timer on
@@ -1369,6 +1378,7 @@ InitializeComponent();
         if (e.OldValue is MainViewModel oldVm)
         {
             oldVm.PropertyChanged -= OnViewModelPropertyChanged;
+            oldVm.PropertyChanged -= OnBackgroundPropertyChanged;
             oldVm.Queue.CollectionChanged -= OnQueueCollectionChanged;
             oldVm.ScrollToCurrentTrackRequested -= OnScrollToCurrentTrackRequested;
         }
@@ -1384,7 +1394,12 @@ InitializeComponent();
             {
                 LoadingOverlay.Visibility = Visibility.Collapsed;
             }
-            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () => { _bgDirty = true; EnsureBlurCache(); });
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+            {
+                _bgDirty = true;
+                _glassDirty = true;
+                EnsureBlurCache();
+            });
             RestoreWindowState();
         }
     }
@@ -1398,10 +1413,46 @@ InitializeComponent();
             _bgDirty = true;
             EnsureBlurCache();
         }
+        else if (e.PropertyName == nameof(MainViewModel.WallpaperAlpha))
+        {
+            MarkGlassBackdropDirty();
+        }
+    }
+
+    private void Window_LocationChanged(object? sender, EventArgs e)
+    {
+        var dpi = VisualTreeHelper.GetDpi(this);
+        if (Math.Abs(dpi.DpiScaleX - _glassCacheDpiX) > 0.001 ||
+            Math.Abs(dpi.DpiScaleY - _glassCacheDpiY) > 0.001)
+        {
+            MarkGlassBackdropDirty();
+        }
     }
 
     private bool _bgDirty;
     private System.Windows.Threading.DispatcherTimer? _bgBlurTimer;
+    private bool _glassDirty;
+    private ImageSource? _glassWallpaperSource;
+    private ImageSource? _glassCacheSource;
+    private BitmapSource? _glassBackdropCache;
+    private ImageBrush? _headerGlassBrush;
+    private ImageBrush? _sidebarGlassBrush;
+    private double _glassCacheWidth;
+    private double _glassCacheHeight;
+    private double _glassCacheDpiX;
+    private double _glassCacheDpiY;
+    private double _glassCacheAlpha = double.NaN;
+
+    private void MarkGlassBackdropDirty()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(MarkGlassBackdropDirty));
+            return;
+        }
+        _glassDirty = true;
+        EnsureBlurCache();
+    }
 
     private void EnsureBlurCache()
     {
@@ -1419,11 +1470,156 @@ InitializeComponent();
                     _bgDirty = false;
                     RebuildBlurCache();
                 }
+                if (_glassDirty)
+                {
+                    _glassDirty = false;
+                    RebuildGlassBackdropCache();
+                }
             };
         }
         _bgBlurTimer.Stop();
         _bgBlurTimer.Start();
     }
+
+    private void SetWallpaperSources(ImageSource displaySource, ImageSource glassSource)
+    {
+        BackgroundImage.Source = displaySource;
+        if (!ReferenceEquals(_glassWallpaperSource, glassSource))
+        {
+            _glassWallpaperSource = glassSource;
+            MarkGlassBackdropDirty();
+        }
+    }
+
+    private void RebuildGlassBackdropCache()
+    {
+        if (_glassWallpaperSource == null || RootBorder == null ||
+            RootBorder.ActualWidth < 10 || RootBorder.ActualHeight < 10)
+        {
+            return;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        double width = RootBorder.ActualWidth;
+        double height = RootBorder.ActualHeight;
+        double alpha = ViewModel?.WallpaperAlphaOpacity ?? 0;
+        if (_glassBackdropCache != null &&
+            ReferenceEquals(_glassCacheSource, _glassWallpaperSource) &&
+            Math.Abs(_glassCacheWidth - width) < 0.1 &&
+            Math.Abs(_glassCacheHeight - height) < 0.1 &&
+            Math.Abs(_glassCacheDpiX - dpi.DpiScaleX) < 0.001 &&
+            Math.Abs(_glassCacheDpiY - dpi.DpiScaleY) < 0.001 &&
+            Math.Abs(_glassCacheAlpha - alpha) < 0.001)
+        {
+            UpdateGlassSurfaceBrushes();
+            return;
+        }
+
+        const double renderScale = 1.0 / 3.0;
+        const double glassBlurRadius = 5.0;
+        int pixelWidth = Math.Max(1, (int)Math.Ceiling(width * dpi.DpiScaleX * renderScale));
+        int pixelHeight = Math.Max(1, (int)Math.Ceiling(height * dpi.DpiScaleY * renderScale));
+        double renderDpiX = 96 * dpi.DpiScaleX;
+        double renderDpiY = 96 * dpi.DpiScaleY;
+        double renderWidth = pixelWidth * 96 / renderDpiX;
+        double renderHeight = pixelHeight * 96 / renderDpiY;
+
+        try
+        {
+            var target = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
+            var visual = new DrawingVisual();
+            using (var context = visual.RenderOpen())
+            {
+                var wallpaper = new ImageBrush(_glassWallpaperSource) { Stretch = Stretch.UniformToFill };
+                context.DrawRectangle(wallpaper, null, new Rect(0, 0, renderWidth, renderHeight));
+                context.DrawRectangle(new SolidColorBrush(Colors.Black) { Opacity = alpha }, null, new Rect(0, 0, renderWidth, renderHeight));
+
+                var tint = new LinearGradientBrush
+                {
+                    StartPoint = new Point(0, 0),
+                    EndPoint = new Point(0, 1)
+                };
+                tint.GradientStops.Add(new GradientStop(Color.FromArgb(0x4D, 0x15, 0x18, 0x1F), 0));
+                tint.GradientStops.Add(new GradientStop(Color.FromArgb(0x33, 0x18, 0x1B, 0x24), 0.5));
+                tint.GradientStops.Add(new GradientStop(Color.FromArgb(0x59, 0x11, 0x13, 0x18), 1));
+                context.DrawRectangle(tint, null, new Rect(0, 0, renderWidth, renderHeight));
+            }
+            target.Render(visual);
+            target.Freeze();
+
+            var blurVisual = new Image
+            {
+                Source = target,
+                Stretch = Stretch.Fill,
+                Effect = new BlurEffect
+                {
+                    Radius = glassBlurRadius,
+                    RenderingBias = RenderingBias.Performance
+                }
+            };
+            blurVisual.Measure(new Size(renderWidth, renderHeight));
+            blurVisual.Arrange(new Rect(0, 0, renderWidth, renderHeight));
+
+            var blurred = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
+            blurred.Render(blurVisual);
+            blurred.Freeze();
+
+            _glassBackdropCache = blurred;
+            _glassCacheSource = _glassWallpaperSource;
+            _glassCacheWidth = width;
+            _glassCacheHeight = height;
+            _glassCacheDpiX = dpi.DpiScaleX;
+            _glassCacheDpiY = dpi.DpiScaleY;
+            _glassCacheAlpha = alpha;
+            UpdateGlassSurfaceBrushes();
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("[Glass] background sampling failed", ex);
+        }
+    }
+
+    private void UpdateGlassSurfaceBrushes()
+    {
+        if (_glassBackdropCache == null || RootBorder == null ||
+            RootBorder.ActualWidth <= 0 || RootBorder.ActualHeight <= 0)
+        {
+            return;
+        }
+
+        UpdateGlassSurfaceBrush(HeaderGlassSurface, ref _headerGlassBrush);
+        UpdateGlassSurfaceBrush(SidebarBorder, ref _sidebarGlassBrush);
+    }
+
+    private void UpdateGlassSurfaceBrush(Border? surface, ref ImageBrush? brush)
+    {
+        if (surface == null || !surface.IsLoaded || RootBorder == null) return;
+
+        brush ??= new ImageBrush
+        {
+            Stretch = Stretch.Fill,
+            TileMode = TileMode.None,
+            ViewboxUnits = BrushMappingMode.Absolute,
+            ViewportUnits = BrushMappingMode.RelativeToBoundingBox,
+            Viewport = new Rect(0, 0, 1, 1)
+        };
+        if (!ReferenceEquals(surface.Background, brush))
+            surface.Background = brush;
+        if (!ReferenceEquals(brush.ImageSource, _glassBackdropCache))
+            brush.ImageSource = _glassBackdropCache;
+
+        var origin = surface.TransformToAncestor(RootBorder).Transform(new Point(0, 0));
+        double scaleX = _glassBackdropCache.Width / RootBorder.ActualWidth;
+        double scaleY = _glassBackdropCache.Height / RootBorder.ActualHeight;
+        brush.Viewbox = new Rect(
+            origin.X * scaleX,
+            origin.Y * scaleY,
+            surface.ActualWidth * scaleX,
+            surface.ActualHeight * scaleY);
+    }
+
+    private void SidebarGlassSurface_SizeChanged(object sender, SizeChangedEventArgs e)
+        => UpdateGlassSurfaceBrushes();
 
     private System.Windows.Media.ImageSource? _solidWallpaperFallback;
     // Generation guard for async wallpaper loads: only the latest requested
@@ -1522,7 +1718,7 @@ InitializeComponent();
                     }
                     if (!wantBlur)
                     {
-                        BackgroundImage.Source = finalDecoded;
+                        SetWallpaperSources(finalDecoded, finalDecoded);
                         LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} sharp {finalDecoded.PixelWidth}x{finalDecoded.PixelHeight} appliedMs={ElapsedMs(t0):0}");
                         return;
                     }
@@ -1531,7 +1727,7 @@ InitializeComponent();
                     {
                         // Not laid out yet â€” show the sharp original now; the next
                         // size change re-triggers the blur through the debounce.
-                        BackgroundImage.Source = finalDecoded;
+                        SetWallpaperSources(finalDecoded, finalDecoded);
                         LogHelper.LogInfo($"[Wallpaper] rebuild: not laid out yet, showing original ({finalKind})");
                         _bgDirty = true;
                         EnsureBlurCache();
@@ -1560,7 +1756,7 @@ InitializeComponent();
                         result.Render(wrapper);
                         result.Freeze();
 
-                        BackgroundImage.Source = result;
+                        SetWallpaperSources(result, finalDecoded);
                         LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {w}x{h} radius={blurRadius:0} appliedMs={ElapsedMs(t0):0}");
                     }
                     catch (Exception blurEx)
@@ -1568,7 +1764,7 @@ InitializeComponent();
                         // Blur failure alone must never blank the background: the
                         // decoded original is already in hand â€” show it unblurred.
                         LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
-                        BackgroundImage.Source = finalDecoded;
+                        SetWallpaperSources(finalDecoded, finalDecoded);
                     }
                 }));
             });
@@ -1693,7 +1889,7 @@ InitializeComponent();
                 rt.Freeze();
                 _solidWallpaperFallback = rt;
             }
-            BackgroundImage.Source = _solidWallpaperFallback;
+            SetWallpaperSources(_solidWallpaperFallback, _solidWallpaperFallback);
             LogHelper.LogInfo("[Wallpaper] rebuild: solid fallback applied");
         }
         catch (Exception ex)
@@ -1898,10 +2094,18 @@ InitializeComponent();
     }
 
     private void RootBorder_Loaded(object sender, RoutedEventArgs e)
-        => UpdateNativeCaptionButtonCutout();
+    {
+        UpdateNativeCaptionButtonCutout();
+        MarkGlassBackdropDirty();
+        UpdateGlassSurfaceBrushes();
+    }
 
     private void RootBorder_SizeChanged(object sender, SizeChangedEventArgs e)
-        => UpdateNativeCaptionButtonCutout();
+    {
+        UpdateNativeCaptionButtonCutout();
+        MarkGlassBackdropDirty();
+        UpdateGlassSurfaceBrushes();
+    }
 
     private void UpdateNativeCaptionButtonCutout()
     {
@@ -1945,23 +2149,55 @@ InitializeComponent();
         var scaleY = dpi.DpiScaleY;
         var clientWidth = (int)Math.Ceiling(ActualWidth * scaleX);
         var captionHeight = (int)Math.Ceiling(NativeCaptionHeight * scaleY);
-        // The Full Player places its Back and Queue actions in the caption bar.
-        // Those controls must remain client hit targets; a single broad drag
-        // rectangle would make the right-side Queue button look enabled but
-        // consume its clicks as title-bar drags.
+
         var isFullPlayerOpen = ViewModel?.ShowFullPlayer == true;
-        var leftInteractiveWidth = (int)Math.Ceiling(60 * scaleX);
+        
+        // Calculate the clear zone for the left side (sidebar + brand button + back button area).
+        // Sidebar column is 50 DIPs collapsed, 230 DIPs expanded (+14 DIPs margins = 64 / 244 DIPs).
+        // Back button is located at column offset + 24 DIPs margin, with 36 DIPs width.
+        // We ALWAYS reserve at least sidebarColumnWidth + 24.0 + 36.0 + 20.0 DIPs (~144 DIPs collapsed, ~324 DIPs expanded)
+        // so that the Back button is 100% in client area and NEVER intercepted by TitleBar drag.
+        bool isDrawerOpen = ViewModel?.IsDrawerOpen == true;
+        double sidebarWidth = isDrawerOpen ? 230.0 : Math.Max(SidebarBorder?.ActualWidth ?? 50.0, SidebarBrandButton?.ActualWidth ?? 50.0);
+        double sidebarColumnWidth = sidebarWidth + 14.0; // 8 left + 6 right margin
+        double leftClearDip = sidebarColumnWidth + 24.0 + 36.0 + 20.0;
+
+        var leftInteractiveWidth = (int)Math.Ceiling(leftClearDip * scaleX);
         var rightReservedWidth = (int)Math.Ceiling((isFullPlayerOpen ? 200 : NativeCaptionButtonRegionWidth) * scaleX);
         var dragWidth = Math.Max(0, clientWidth - leftInteractiveWidth - rightReservedWidth);
 
-        _appWindow.TitleBar.SetDragRectangles(
-        [
-            new Windows.Graphics.RectInt32(leftInteractiveWidth, 0, dragWidth, captionHeight)
-        ]);
+        if (_appWindow?.TitleBar != null)
+        {
+            try
+            {
+                _appWindow.TitleBar.SetDragRectangles(
+                [
+                    new Windows.Graphics.RectInt32(leftInteractiveWidth, 0, dragWidth, captionHeight)
+                ]);
+            }
+            catch (Exception ex)
+            {
+                LogHelper.LogError("SetDragRectangles", ex);
+            }
+        }
     }
 
     private void OnWindowLoaded(object sender, RoutedEventArgs e)
     {
+        if (SidebarBackButton != null)
+        {
+            SidebarBackButton.IsVisibleChanged += (_, _) => Dispatcher.BeginInvoke(UpdateAppWindowTitleBarDragRegions);
+        }
+        if (ViewModel != null)
+        {
+            ViewModel.PropertyChanged += (_, e2) =>
+            {
+                if (e2.PropertyName == nameof(MainViewModel.IsDrawerOpen) ||
+                    e2.PropertyName == nameof(MainViewModel.CurrentView) ||
+                    e2.PropertyName == nameof(MainViewModel.CanNavigateBack))
+                    Dispatcher.BeginInvoke(UpdateAppWindowTitleBarDragRegions);
+            };
+        }
         var hwnd = new WindowInteropHelper(this).Handle;
         try
         {
@@ -2124,11 +2360,35 @@ InitializeComponent();
             WmGetMinMaxInfo(hwnd, lParam);
             handled = true;
         }
+        else if (msg == WM_NCHITTEST)
+        {
+            int screenX = unchecked((short)(long)lParam);
+            int screenY = unchecked((short)((long)lParam >> 16));
+
+            if (SidebarBackButton != null && SidebarBackButton.IsVisible)
+            {
+                try
+                {
+                    var btnTopLeft = SidebarBackButton.PointToScreen(new Point(0, 0));
+                    var btnBottomRight = SidebarBackButton.PointToScreen(new Point(SidebarBackButton.ActualWidth, SidebarBackButton.ActualHeight));
+                    
+                    if (screenX >= (btnTopLeft.X - 4) && screenX <= (btnBottomRight.X + 4) &&
+                        screenY >= (btnTopLeft.Y - 4) && screenY <= (btnBottomRight.Y + 4))
+                    {
+                        handled = true;
+                        return new IntPtr(HTCLIENT);
+                    }
+                }
+                catch { }
+            }
+        }
         return IntPtr.Zero;
     }
 
     private const int WM_GETMINMAXINFO = 0x0024;
     private const int WM_NCHITTEST = 0x0084;
+    private const int HTCLIENT = 1;
+    private const int HTCAPTION = 2;
     private const int HTMAXBUTTON = 9;
     private const int MinimumWindowWidthDip = 1116;
     private const int MinimumWindowHeightDip = 650;
@@ -2173,7 +2433,7 @@ InitializeComponent();
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern uint GetDpiForWindow(nint hwnd);
 
-        private static void WmGetMinMaxInfo(nint hwnd, nint lParam)
+    private static void WmGetMinMaxInfo(nint hwnd, nint lParam)
         {
             try
             {
@@ -2338,6 +2598,8 @@ InitializeComponent();
     private int _previousTabIndex;
     private bool _isTabSliding;
     private string? _pendingTab;
+    private long _tabTransitionId;
+    private long _tracksProbeSampleId;
 
     private void TabSongs_Click(object sender, RoutedEventArgs e) => SwitchTab("songs");
     private void TabArtists_Click(object sender, RoutedEventArgs e) => SwitchTab("artists");
@@ -2373,6 +2635,12 @@ InitializeComponent();
             return;
         }
 
+        long switchStarted = SmoothScrollHelper.ProfilingEnabled ? Stopwatch.GetTimestamp() : 0L;
+        int artistCountBefore = newTab == "artists" ? vm.Artists.Count : -1;
+        int artistVisualsBefore = newTab == "artists" ? GetItemsPanelChildCount(TabContent_Artists) : -1;
+        string? songsMode = newTab == "songs" ? (IsSongsGridView ? "grid" : "list") : null;
+        int trackCountBefore = newTab == "songs" ? vm.DisplayedTracks.Count : -1;
+
         // NOTE: LoadTabData is intentionally called AFTER the animation below,
         // not here â€” building the WrapPanel items while the slide animation runs
         // causes the animation to stutter. Data is loaded once the tab is visible.
@@ -2386,13 +2654,38 @@ InitializeComponent();
 
         if (outgoing == null || incoming == null || TabSlideHost == null) return;
 
+        AlbumArtUiProbe? imageProbe = newTab == "songs" && songsMode == "grid"
+            ? BeginTracksImageProbe("tab-switch", songsMode)
+            : null;
+        bool incomingWasLoaded = incoming.IsLoaded;
+        bool incomingMeasureValid = incoming.IsMeasureValid;
+        bool incomingArrangeValid = incoming.IsArrangeValid;
         double w = TabSlideHost.ActualWidth;
         if (w <= 0) w = 600;
 
+        long transitionId = ++_tabTransitionId;
+        Action? stopTracksLayoutProbe = null;
+        Action<string>? finishImageProbe = null;
+        Action<string>? finishPanelProbe = null;
+        long tracksProbeStarted = 0L;
+        long tracksProbeSampleId = 0L;
+
         _isTabSliding = true;
-        SmoothScrollHelper.BeginTabSlide(newTab);
+        SmoothScrollHelper.BeginTabSlide(newTab, songsMode);
         ClearColumnSelection();
         vm.CurrentTab = newTab;
+
+        if (newTab == "artists" && SmoothScrollHelper.ProfilingEnabled)
+        {
+            ItemsControl? artistsItems = FindVisualChild<ItemsControl>(TabContent_Artists);
+            BalancedItemsPanel? artistsPanel = artistsItems != null
+                ? FindVisualChild<BalancedItemsPanel>(artistsItems)
+                : null;
+            string panelState = vm.Artists.Count == 0
+                ? "empty"
+                : artistsPanel?.Children.Count > 0 ? "warm" : "cold";
+            finishPanelProbe = StartBalancedPanelProbe(artistsPanel, "artists", "artists", panelState);
+        }
 
         outgoing.Visibility = Visibility.Visible;
         incoming.Visibility = Visibility.Visible;
@@ -2408,61 +2701,333 @@ InitializeComponent();
         incoming.RenderTransform = incomingTransform;
         outgoing.RenderTransform = outgoingTransform;
 
-        // Pay the one-time layout synchronously BEFORE the slide starts (mirrors
-        // songs entry): making the incoming page Visible forces a full-subtree
-        // measure, and paying that inside the animation turns it into a visible
-        // start hitch. The first switch pays it here (slightly later first frame);
-        // every later switch is already laid out. Tab data + art are pre-warmed,
-        // so this is just a measure pass.
-        long prepT0 = 0L;
-        if (SmoothScrollHelper.ProfilingEnabled) prepT0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        try { incoming.UpdateLayout(); outgoing.UpdateLayout(); } catch { }
-
-        // Kick the slide on the next render with everything measured.
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Render, () =>
+        if (newTab == "songs" && SmoothScrollHelper.ProfilingEnabled)
         {
-            if (!_isTabSliding) return;
+            ItemsControl? itemsControl = FindTracksItemsControl(songsMode!);
+            if (itemsControl != null)
+            {
+                tracksProbeSampleId = ++_tracksProbeSampleId;
+                stopTracksLayoutProbe = StartTracksLayoutProbe(
+                    itemsControl,
+                    songsMode!,
+                    tracksProbeSampleId,
+                    out tracksProbeStarted,
+                    imageProbe,
+                    out finishImageProbe,
+                    out finishPanelProbe);
+            }
+            else
+            {
+                LogHelper.LogInfo($"TAB-ITEMS songs mode={songsMode} stage=show sample=missing itemsControl=missing");
+                imageProbe?.Complete("items-control-missing");
+                finishPanelProbe?.Invoke("items-control-missing");
+            }
+        }
+
+        // The slide distance comes from the already-measured host, so the incoming
+        // page does not need a forced synchronous measure before its animation.
+        // Making it visible invalidates layout; Loaded priority lets WPF process
+        // that layout naturally before the slide begins.
+        long prepT0 = SmoothScrollHelper.ProfilingEnabled ? Stopwatch.GetTimestamp() : 0L;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        {
+            if (transitionId != _tabTransitionId || !_isTabSliding)
+            {
+                finishImageProbe?.Invoke("transition-superseded");
+                finishPanelProbe?.Invoke("transition-superseded");
+                return;
+            }
             if (SmoothScrollHelper.ProfilingEnabled)
-                LogHelper.LogInfo($"TAB-PREP {newTab} layoutMs={(System.Diagnostics.Stopwatch.GetTimestamp() - prepT0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} relMs={SmoothScrollHelper.TabRelMs():0}");
+            {
+                stopTracksLayoutProbe?.Invoke();
+                if (newTab == "songs" && songsMode != null)
+                    LogTracksLayoutSnapshot("ready", songsMode, incoming, FindTracksItemsControl(songsMode), tracksProbeStarted, tracksProbeSampleId);
+
+                int artistCountAfter = newTab == "artists" ? vm.Artists.Count : -1;
+                int artistVisualsAfter = newTab == "artists" ? GetItemsPanelChildCount(TabContent_Artists) : -1;
+                LogHelper.LogInfo(
+                    $"TAB-READY {newTab} mode={songsMode ?? "-"} waitMs={(Stopwatch.GetTimestamp() - prepT0) * 1000.0 / Stopwatch.Frequency:0.0} sliding={_isTabSliding} " +
+                    $"size={incoming.ActualWidth:0.0}x{incoming.ActualHeight:0.0} loaded={incomingWasLoaded} " +
+                    $"measureValid={incomingMeasureValid}->{incoming.IsMeasureValid} arrangeValid={incomingArrangeValid}->{incoming.IsArrangeValid} " +
+                    $"tracks={trackCountBefore} artists={artistCountBefore}->{artistCountAfter} " +
+                    $"visuals={artistVisualsBefore}->{artistVisualsAfter} relMs={SmoothScrollHelper.TabRelMs():0}");
+            }
             var inAnim = new DoubleAnimation(incomingStart, 0, dur) { EasingFunction = ease };
             var outAnim = new DoubleAnimation(0, outgoingEnd, dur) { EasingFunction = ease };
 
             inAnim.Completed += (_, _) =>
             {
-                incoming.RenderTransform = null;
-            };
+                if (transitionId != _tabTransitionId || !_isTabSliding) return;
 
-            outgoingTransform.BeginAnimation(TranslateTransform.XProperty, outAnim);
-            incomingTransform.BeginAnimation(TranslateTransform.XProperty, inAnim);
-        });
-
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(dur + TimeSpan.FromMilliseconds(50));
-            Dispatcher.Invoke(() =>
-            {
+                stopTracksLayoutProbe?.Invoke();
+                if (newTab == "songs" && songsMode == "grid")
+                    finishImageProbe?.Invoke("animation-complete-before-first-render");
+                finishPanelProbe?.Invoke("animation-complete-before-first-render");
                 outgoing.Visibility = Visibility.Collapsed;
                 outgoing.RenderTransform = null;
                 incoming.RenderTransform = null;
                 _isTabSliding = false;
                 AlbumArtLoader.SetScrollingActive(false);
 
-                // Load data AFTER animation ends â€” avoids racing WrapPanel
-                // item creation with the slide animation and causing stutter.
+                // Load data only after the actual slide completes, so a delayed
+                // layout/animation start cannot be overtaken by a fixed timeout.
                 vm.LoadTabData(newTab);
                 if (SmoothScrollHelper.ProfilingEnabled)
+                {
+                    LogHelper.LogInfo($"TAB-ANIM-COMPLETE {newTab} relMs={SmoothScrollHelper.TabRelMs():0}");
                     LogHelper.LogInfo($"TAB-LOADKICK {newTab} relMs={SmoothScrollHelper.TabRelMs():0}");
+                }
 
-                // Drain a click that arrived while this slide was running.
                 var pending = _pendingTab;
                 _pendingTab = null;
                 if (pending != null && pending != vm.CurrentTab)
                     Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
                         new Action(() => SwitchTab(pending)));
-            });
+            };
+
+            outgoingTransform.BeginAnimation(TranslateTransform.XProperty, outAnim);
+            incomingTransform.BeginAnimation(TranslateTransform.XProperty, inAnim);
         });
 
         _previousTabIndex = newIndex;
+        if (SmoothScrollHelper.ProfilingEnabled)
+        {
+            double switchMs = (Stopwatch.GetTimestamp() - switchStarted) * 1000.0 / Stopwatch.Frequency;
+            LogHelper.LogInfo(
+                $"TAB-SWITCH {newTab} mode={songsMode ?? "-"} syncMs={switchMs:0.0} " +
+                $"tracks={trackCountBefore} loaded={incomingWasLoaded} measureValid={incomingMeasureValid} arrangeValid={incomingArrangeValid}");
+        }
+    }
+
+    private ItemsControl? FindTracksItemsControl(string mode) =>
+        mode == "grid"
+            ? SongsGridScroller.Content as ItemsControl ?? FindVisualChild<ItemsControl>(AllSongsGridPanel)
+            : AllSongsListBox;
+
+    private AlbumArtUiProbe? BeginTracksImageProbe(string trigger, string mode)
+    {
+        if (!SmoothScrollHelper.ProfilingEnabled || mode != "grid") return null;
+
+        var itemsControl = FindTracksItemsControl(mode);
+        if (itemsControl == null) return null;
+
+        string state = itemsControl.ItemContainerGenerator.Status == GeneratorStatus.ContainersGenerated
+            && CountGeneratedContainers(itemsControl) > 0
+                ? "warm"
+                : "cold";
+        return AlbumArtLoader.BeginUiImageProbe(trigger, mode, state);
+    }
+
+    private Action<string>? StartBalancedPanelProbe(
+        BalancedItemsPanel? panel,
+        string key,
+        string transition,
+        string state)
+    {
+        if (!SmoothScrollHelper.ProfilingEnabled) return null;
+
+        BalancedItemsPanel.LayoutDiagnosticProbe probe =
+            BalancedItemsPanel.StartDiagnosticProbe(panel, key, transition, state);
+        bool completed = false;
+        EventHandler? rendering = null;
+        Action<string> finish = reason =>
+        {
+            if (completed) return;
+            completed = true;
+            if (rendering != null)
+                System.Windows.Media.CompositionTarget.Rendering -= rendering;
+
+            long firstRenderTimestamp = reason == "first-render-callback"
+                ? Stopwatch.GetTimestamp()
+                : 0L;
+            LogHelper.LogInfo(probe.Complete(reason, firstRenderTimestamp));
+        };
+
+        rendering = (_, _) => finish("first-render-callback");
+        System.Windows.Media.CompositionTarget.Rendering += rendering;
+        return finish;
+    }
+
+    private void BeginTracksSurfaceProbe(string path, string mode, AlbumArtUiProbe? imageProbe = null)
+    {
+        if (!SmoothScrollHelper.ProfilingEnabled) return;
+
+        ItemsControl? itemsControl = FindTracksItemsControl(mode);
+        if (itemsControl == null)
+        {
+            LogHelper.LogInfo($"TAB-TRACKS path={path} mode={mode} phase=start itemsControl=missing");
+            return;
+        }
+
+        long sampleId = ++_tracksProbeSampleId;
+        imageProbe ??= BeginTracksImageProbe(path, mode);
+        Action stopProbe = StartTracksLayoutProbe(
+            itemsControl,
+            mode,
+            sampleId,
+            out long started,
+            imageProbe,
+            out Action<string> finishImageProbe,
+            out Action<string>? finishPanelProbe);
+        LogHelper.LogInfo($"TAB-TRACKS path={path} mode={mode} phase=start sample={sampleId}");
+
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+        {
+            LogHelper.LogInfo(
+                $"TAB-TRACKS path={path} mode={mode} phase=ready sample={sampleId} " +
+                $"elapsedMs={(Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency:0.0}");
+            LogTracksLayoutSnapshot("ready", mode, TabContent_Songs, itemsControl, started, sampleId);
+
+            var settleTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(800)
+            };
+            settleTimer.Tick += (_, _) =>
+            {
+                settleTimer.Stop();
+                stopProbe();
+                finishImageProbe("settled-before-first-render");
+                finishPanelProbe?.Invoke("settled-before-first-render");
+                LogHelper.LogInfo(
+                    $"TAB-TRACKS path={path} mode={mode} phase=settled sample={sampleId} " +
+                    $"elapsedMs={(Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency:0.0} " +
+                    $"currentView={ViewModel?.CurrentView}");
+                LogTracksLayoutSnapshot("settled", mode, TabContent_Songs, itemsControl, started, sampleId);
+            };
+            settleTimer.Start();
+        }));
+    }
+
+    private Action StartTracksLayoutProbe(
+        ItemsControl itemsControl,
+        string mode,
+        long sampleId,
+        out long started,
+        AlbumArtUiProbe? imageProbe,
+        out Action<string> finishImageProbe,
+        out Action<string>? finishPanelProbe)
+    {
+        long probeStarted = Stopwatch.GetTimestamp();
+        started = probeStarted;
+        EventHandler? statusChanged = null;
+        EventHandler? layoutUpdated = null;
+        EventHandler? rendering = null;
+        Action<string> completeImageProbe = reason =>
+        {
+            if (imageProbe == null) return;
+            LogHelper.LogInfo(imageProbe.Complete(reason));
+            imageProbe = null;
+            if (rendering != null)
+                System.Windows.Media.CompositionTarget.Rendering -= rendering;
+        };
+        finishImageProbe = completeImageProbe;
+        var generator = itemsControl.ItemContainerGenerator;
+        string state = generator.Status == GeneratorStatus.ContainersGenerated
+            && CountGeneratedContainers(itemsControl) > 0
+                ? "warm"
+                : "cold";
+        LogTracksLayoutSnapshot($"show state={state}", mode, TabContent_Songs, itemsControl, probeStarted, sampleId);
+
+        bool generatorStartLogged = false;
+
+        statusChanged = (_, _) =>
+        {
+            if (!generatorStartLogged)
+            {
+                generatorStartLogged = true;
+                LogTracksLayoutSnapshot("generator-start", mode, TabContent_Songs, itemsControl, probeStarted, sampleId);
+            }
+
+            if (generator.Status == GeneratorStatus.ContainersGenerated)
+            {
+                generator.StatusChanged -= statusChanged;
+                LogTracksLayoutSnapshot("generator-complete", mode, TabContent_Songs, itemsControl, probeStarted, sampleId);
+            }
+        };
+        layoutUpdated = (_, _) =>
+        {
+            itemsControl.LayoutUpdated -= layoutUpdated;
+            LogTracksLayoutSnapshot("layout", mode, TabContent_Songs, itemsControl, probeStarted, sampleId);
+        };
+        rendering = (_, _) =>
+        {
+            System.Windows.Media.CompositionTarget.Rendering -= rendering;
+            LogTracksLayoutSnapshot("first-render", mode, TabContent_Songs, itemsControl, probeStarted, sampleId);
+            completeImageProbe("first-render-callback");
+        };
+
+        generator.StatusChanged += statusChanged;
+        itemsControl.LayoutUpdated += layoutUpdated;
+        System.Windows.Media.CompositionTarget.Rendering += rendering;
+        BalancedItemsPanel? balancedPanel = mode == "grid"
+            ? FindVisualChild<BalancedItemsPanel>(itemsControl)
+            : null;
+        finishPanelProbe = mode == "grid"
+            ? StartBalancedPanelProbe(balancedPanel, "tracks-grid", "tracks-grid", state)
+            : null;
+
+        return () =>
+        {
+            generator.StatusChanged -= statusChanged;
+            itemsControl.LayoutUpdated -= layoutUpdated;
+            if (imageProbe == null)
+                System.Windows.Media.CompositionTarget.Rendering -= rendering;
+        };
+    }
+
+    private static void LogTracksLayoutSnapshot(
+        string stage,
+        string mode,
+        FrameworkElement tab,
+        ItemsControl? itemsControl,
+        long started,
+        long sampleId)
+    {
+        int sourceCount = itemsControl?.Items.Count ?? 0;
+        int generatedCount = itemsControl != null ? CountGeneratedContainers(itemsControl) : 0;
+        string generatorStatus = itemsControl?.ItemContainerGenerator.Status.ToString() ?? "missing";
+        int panelChildren = itemsControl != null ? GetItemsPanelChildCount(itemsControl) : 0;
+        double elapsedMs = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
+
+        LogHelper.LogInfo(
+            $"TAB-ITEMS songs mode={mode} stage={stage} sample={sampleId} elapsedMs={elapsedMs:0.0} " +
+            $"source={sourceCount} generated={generatedCount} panelChildren={panelChildren} generator={generatorStatus} " +
+            $"tabMeasure={tab.IsMeasureValid} tabArrange={tab.IsArrangeValid} " +
+            $"itemsMeasure={itemsControl?.IsMeasureValid ?? false} itemsArrange={itemsControl?.IsArrangeValid ?? false}");
+    }
+
+    private static int CountGeneratedContainers(ItemsControl itemsControl)
+    {
+        int count = 0;
+        for (int i = 0; i < itemsControl.Items.Count; i++)
+        {
+            if (itemsControl.ItemContainerGenerator.ContainerFromIndex(i) != null)
+                count++;
+        }
+        return count;
+    }
+
+    private static int GetItemsPanelChildCount(ItemsControl? itemsControl)
+    {
+        if (itemsControl == null) return 0;
+        var presenter = FindVisualChild<ItemsPresenter>(itemsControl);
+        var panel = presenter != null ? FindVisualChild<Panel>(presenter) : null;
+        return panel?.Children.Count ?? FindVisualChild<BalancedItemsPanel>(itemsControl)?.Children.Count ?? 0;
+    }
+
+    private static int GetItemsPanelChildCount(DependencyObject? root)
+    {
+        if (root == null) return 0;
+        if (root is BalancedItemsPanel panel) return panel.Children.Count;
+        if (root is not System.Windows.Media.Visual && root is not System.Windows.Media.Media3D.Visual3D) return 0;
+
+        int childCount = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < childCount; i++)
+        {
+            int count = GetItemsPanelChildCount(VisualTreeHelper.GetChild(root, i));
+            if (count > 0) return count;
+        }
+        return 0;
     }
 
     private void FolderRow_Click(object sender, MouseButtonEventArgs e)
@@ -2763,6 +3328,31 @@ InitializeComponent();
     {
         if (sender is MenuItem { Parent: ContextMenu { PlacementTarget: FrameworkElement { DataContext: MusicTrack vm } } })
             ViewModel?.RemoveTrackFromPlaylistCommand.Execute(vm);
+    }
+
+
+
+
+    private void SidebarBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        switch (ViewModel?.CurrentView)
+        {
+            case "artist_detail":
+                ArtistDetailBack_Click(sender, e);
+                break;
+            case "album_detail":
+                AlbumDetailBack_Click(sender, e);
+                break;
+            case "genre_detail":
+                GenreDetailBack_Click(sender, e);
+                break;
+            case "theme_edit":
+                ViewModel?.CancelThemeEditCommand.Execute(null);
+                break;
+            default:
+                ViewModel?.GoBackCommand.Execute(null);
+                break;
+        }
     }
 
     private void GenreDetailBack_Click(object sender, RoutedEventArgs e)
@@ -5930,7 +6520,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
             double blur = ViewModel?.WallpaperBlur ?? 0;
             if (blur < 0.5)
             {
-                BackgroundImage.Source = thumb;
+                SetWallpaperSources(thumb, thumb);
             }
             else
             {
@@ -5950,7 +6540,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
                 var result = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
                 result.Render(wrapper);
                 result.Freeze();
-                BackgroundImage.Source = result;
+                SetWallpaperSources(result, thumb);
             }
             LogHelper.LogInfo($"[Wallpaper] preview applied: previewMs={ElapsedMs(t0):0}");
         }
@@ -6416,7 +7006,14 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
             }
         }
         else if (e.PropertyName == nameof(MainViewModel.IsDrawerOpen))
+        {
             AnimateDrawerToggle(ViewModel?.IsDrawerOpen ?? false);
+            UpdateAppWindowTitleBarDragRegions();
+        }
+        else if (e.PropertyName == nameof(MainViewModel.CanNavigateBack))
+        {
+            UpdateAppWindowTitleBarDragRegions();
+        }
         else if (e.PropertyName == nameof(MainViewModel.IsStatusBarLoading))
         {
             // Stop the perpetual status-bar pulsing dots when a background
@@ -6431,6 +7028,10 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         }
 else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     {
+        UpdateAppWindowTitleBarDragRegions();
+    if (ViewModel?.CurrentView == "songs")
+        BeginTracksSurfaceProbe("library-entry", IsSongsGridView ? "grid" : "list");
+
     // Any page change leaves the column-handle context: the arrows and the X are a
     // live editing affordance, they must not survive a navigation to one of the
     // other track pages (folder/genre/artist detail, favourites, most play, recent...).
@@ -6521,6 +7122,8 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     }
 
     private static readonly System.Windows.Media.BitmapCache _fpBitmapCache = new();
+    private long _fullPlayerTransitionVersion;
+
     private void AnimateFullPlayerIn()
     {
         if (FullPlayerGrid == null) return;
@@ -6531,21 +7134,25 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             tt = new TranslateTransform(0, height);
             FullPlayerGrid.RenderTransform = tt;
         }
-        FullPlayerGrid.Opacity = 0;
-        tt.Y = height;
+        var transitionVersion = ++_fullPlayerTransitionVersion;
+        var startY = FullPlayerGrid.Visibility == Visibility.Visible ? tt.Y : height;
+        FullPlayerGrid.BeginAnimation(OpacityProperty, null);
+        FullPlayerGrid.Opacity = 1;
         FullPlayerGrid.Visibility = Visibility.Visible;
         FullPlayerGrid.IsHitTestVisible = false;
         FullPlayerGrid.CacheMode = _fpBitmapCache;
         var dur = TimeSpan.FromMilliseconds(380);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        tt.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(height, 0, dur) { EasingFunction = ease });
-        var fade = new DoubleAnimation(0, 1, dur) { EasingFunction = ease };
-        fade.Completed += (_, _) =>
+        var slide = new DoubleAnimation(startY, 0, dur) { EasingFunction = ease };
+        slide.Completed += (_, _) =>
         {
+            if (transitionVersion != _fullPlayerTransitionVersion) return;
+            tt.BeginAnimation(TranslateTransform.YProperty, null);
+            tt.Y = 0;
             FullPlayerGrid.CacheMode = null;
             FullPlayerGrid.IsHitTestVisible = true;
         };
-        FullPlayerGrid.BeginAnimation(OpacityProperty, fade);
+        tt.BeginAnimation(TranslateTransform.YProperty, slide);
     }
 
     private void AnimateFullPlayerOut()
@@ -6559,11 +7166,20 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         // Artist/Album close uses a plain fade instead of sliding down.
         bool slide = !_closeFullPlayerFadeOnly;
         _closeFullPlayerFadeOnly = false;
+        var transitionVersion = ++_fullPlayerTransitionVersion;
+        var currentOpacity = FullPlayerGrid.Opacity;
+        var currentY = FullPlayerGrid.RenderTransform is TranslateTransform currentTransform
+            ? currentTransform.Y
+            : 0;
         // Flatten any stale animation clocks first so the last one can never
         // keep the player visible.
         FullPlayerGrid.BeginAnimation(OpacityProperty, null);
         if (FullPlayerGrid.RenderTransform is TranslateTransform tt0)
+        {
             tt0.BeginAnimation(TranslateTransform.YProperty, null);
+            tt0.Y = currentY;
+        }
+        FullPlayerGrid.Opacity = currentOpacity;
 
         if (FullPlayerGrid.Visibility != Visibility.Visible)
         {
@@ -6573,6 +7189,21 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         }
         var dur = TimeSpan.FromMilliseconds(slide ? 280 : 220);
         var ease = new CubicEase { EasingMode = slide ? EasingMode.EaseIn : EasingMode.EaseInOut };
+        FullPlayerGrid.CacheMode = _fpBitmapCache;
+        var completion = new EventHandler((_, _) =>
+        {
+            if (transitionVersion != _fullPlayerTransitionVersion) return;
+            FullPlayerGrid.CacheMode = null;
+            FullPlayerGrid.BeginAnimation(OpacityProperty, null);
+            FullPlayerGrid.Visibility = Visibility.Collapsed;
+            FullPlayerGrid.Opacity = 1;
+            if (FullPlayerGrid.RenderTransform is TranslateTransform transform)
+            {
+                transform.BeginAnimation(TranslateTransform.YProperty, null);
+                transform.Y = 0;
+            }
+            RunPendingNavigation();
+        });
 
         if (slide)
         {
@@ -6583,20 +7214,17 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
                 tt = new TranslateTransform(0, 0);
                 FullPlayerGrid.RenderTransform = tt;
             }
-            tt.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, height, dur) { EasingFunction = ease });
-        }
-
-        FullPlayerGrid.CacheMode = _fpBitmapCache;
-        var fade = new DoubleAnimation(1, 0, dur) { EasingFunction = ease };
-        fade.Completed += (_, _) =>
-        {
-            FullPlayerGrid.CacheMode = null;
-            FullPlayerGrid.BeginAnimation(OpacityProperty, null);
-            FullPlayerGrid.Visibility = Visibility.Collapsed;
             FullPlayerGrid.Opacity = 1;
-            RunPendingNavigation();
-        };
-        FullPlayerGrid.BeginAnimation(OpacityProperty, fade);
+            var slideAnimation = new DoubleAnimation(currentY, height, dur) { EasingFunction = ease };
+            slideAnimation.Completed += completion;
+            tt.BeginAnimation(TranslateTransform.YProperty, slideAnimation);
+        }
+        else
+        {
+            var fade = new DoubleAnimation(currentOpacity, 0, dur) { EasingFunction = ease };
+            fade.Completed += completion;
+            FullPlayerGrid.BeginAnimation(OpacityProperty, fade);
+        }
     }
 
     private void RunFullPlayerTransitionProbe()
@@ -6972,13 +7600,20 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
     private void AnimateDrawerToggle(bool open)
     {
-        if (SidebarBorder == null) return;
+        if (SidebarBorder == null || SidebarBrandButton == null || SidebarBrandName == null) return;
 
-        double targetWidth = open ? 230 : 60;
-        var duration = TimeSpan.FromMilliseconds(240);
+        double targetWidth = open ? 230 : 50;
+        var duration = TimeSpan.FromMilliseconds(280);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var anim = new DoubleAnimation(SidebarBorder.ActualWidth, targetWidth, duration) { EasingFunction = ease };
-        SidebarBorder.BeginAnimation(FrameworkElement.WidthProperty, anim);
+        var widthAnim = new DoubleAnimation(SidebarBorder.ActualWidth, targetWidth, duration) { EasingFunction = ease };
+        widthAnim.Completed += (_, _) => UpdateAppWindowTitleBarDragRegions();
+        SidebarBorder.BeginAnimation(FrameworkElement.WidthProperty, widthAnim);
+        SidebarBrandButton.BeginAnimation(
+            FrameworkElement.WidthProperty,
+            new DoubleAnimation(SidebarBrandButton.ActualWidth, targetWidth, duration) { EasingFunction = ease });
+        SidebarBrandName.BeginAnimation(
+            UIElement.OpacityProperty,
+            new DoubleAnimation(SidebarBrandName.Opacity, open ? 1 : 0, TimeSpan.FromMilliseconds(160)));
     }
 
     private void AnimateSlideToPage()

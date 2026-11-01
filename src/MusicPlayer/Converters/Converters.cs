@@ -98,6 +98,7 @@ public class AlbumArtConverter : IValueConverter
 {
     public object? Convert(object? value, Type targetType, object parameter, CultureInfo culture)
     {
+        using var imageProbe = AlbumArtLoader.MeasureUiImage(AlbumArtUiMetric.Converter);
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
@@ -638,10 +639,14 @@ public class RoundedClipConverter : IMultiValueConverter
     public object? Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
     {
         double r = 16;
-        if (parameter is string s && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var p))
+        if (parameter is "sidebar")
+        {
+            r = values.Length > 2 && values[2] is bool drawerOpen && drawerOpen ? 20 : 25;
+        }
+        else if (parameter is string s && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var p))
             r = p;
 
-        if (values.Length == 2)
+        if (values.Length >= 2)
         {
             var w = ToFinite(values[0]);
             var h = ToFinite(values[1]);

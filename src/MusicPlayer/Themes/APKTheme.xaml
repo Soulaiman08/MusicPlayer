@@ -102,6 +102,12 @@
         <Setter Property="Foreground" Value="{StaticResource APK_TextLowBrush}"/>
     </Style>
 
+    <Style x:Key="APK_TextSubheader" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource APK_FontPrimary}"/>
+        <Setter Property="FontSize" Value="{StaticResource APK_FontSize_Small}"/>
+        <Setter Property="Foreground" Value="{StaticResource APK_TextMediumBrush}"/>
+    </Style>
+
     <!-- ===== DEFAULT ITEMS CONTROL (enables UI virtualization for all lists) ===== -->
     <Style TargetType="ItemsControl">
         <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True"/>
@@ -837,8 +843,8 @@
 
     <!-- App Header & Navigation Controls -->
     <Style x:Key="DS_HeaderButtonStyle" TargetType="{x:Type Button}">
-        <Setter Property="Background" Value="#12FFFFFF"/>
-        <Setter Property="BorderBrush" Value="#1CFFFFFF"/>
+        <Setter Property="Background" Value="#18FFFFFF"/>
+        <Setter Property="BorderBrush" Value="#28FFFFFF"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Width" Value="36"/>
         <Setter Property="Height" Value="36"/>
@@ -848,7 +854,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Button}">
-                    <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10">
+                    <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="12">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
@@ -933,16 +939,47 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Button}">
-                    <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="8" Padding="0">
+                    <Grid>
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="12"
+                                Padding="0" />
                         <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
-                    </Border>
+                    </Grid>
                     <ControlTemplate.Triggers>
+                        <DataTrigger Binding="{Binding DataContext.IsDrawerOpen, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="False">
+                            <Setter TargetName="border" Property="Width" Value="34"/>
+                            <Setter TargetName="border" Property="Height" Value="34"/>
+                            <Setter TargetName="border" Property="HorizontalAlignment" Value="Center"/>
+                            <Setter TargetName="border" Property="VerticalAlignment" Value="Center"/>
+                            <Setter TargetName="border" Property="CornerRadius" Value="17"/>
+                        </DataTrigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="border" Property="Background" Value="#14FFFFFF"/>
+                            <Setter TargetName="border" Property="Background" Value="#1FFFFFFF"/>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="border" Property="Background" Value="#24FFFFFF"/>
+                            <Setter TargetName="border" Property="Background" Value="#30FFFFFF"/>
                         </Trigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding DataContext.IsDrawerOpen, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="False"/>
+                                <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+                            </MultiDataTrigger.Conditions>
+                            <Setter TargetName="border" Property="Background" Value="#22FFFFFF"/>
+                            <Setter TargetName="border" Property="BorderBrush" Value="#30FFFFFF"/>
+                            <Setter TargetName="border" Property="BorderThickness" Value="1"/>
+                        </MultiDataTrigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding DataContext.IsDrawerOpen, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="False"/>
+                                <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+                            </MultiDataTrigger.Conditions>
+                            <Setter TargetName="border" Property="Background" Value="#35FFFFFF"/>
+                            <Setter TargetName="border" Property="BorderBrush" Value="#48FFFFFF"/>
+                            <Setter TargetName="border" Property="BorderThickness" Value="1"/>
+                        </MultiDataTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -1013,7 +1050,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Button}">
-                    <Border x:Name="border" Background="Transparent" CornerRadius="8">
+                    <Border x:Name="border" Background="Transparent" CornerRadius="10">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>

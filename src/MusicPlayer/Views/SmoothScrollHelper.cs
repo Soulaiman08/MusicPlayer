@@ -949,13 +949,15 @@ public static class SmoothScrollHelper
     private static long   _tabFirst;
     private static long   _tabLast;
     private static string _tabName = "";
+    private static string? _tabMode;
     private static int    _tabGt16;
     private static int    _tabGt33;
     private static int    _tabGc0AtStart;
     private static int    _tabGc1AtStart;
     private static int    _tabGc2AtStart;
+    private static AlbumArtPerfSnapshot _albumArtPerfAtStart;
 
-    internal static void BeginTabSlide(string tab)
+    internal static void BeginTabSlide(string tab, string? mode = null)
     {
         CancelActiveMotions();
         MarkInteraction();
@@ -967,12 +969,15 @@ public static class SmoothScrollHelper
             _tabGt16 = 0;
             _tabGt33 = 0;
             _tabName = tab;
+            _tabMode = mode;
             _tabT0 = _tabLast = _tabFirst = 0L;
             _tabT0 = Stopwatch.GetTimestamp();
             _tabLast = _tabT0;
             _tabGc0AtStart = System.GC.CollectionCount(0);
             _tabGc1AtStart = System.GC.CollectionCount(1);
             _tabGc2AtStart = System.GC.CollectionCount(2);
+            if (string.Equals(tab, "albums", StringComparison.Ordinal))
+                _albumArtPerfAtStart = AlbumArtLoader.GetPerfSnapshot();
             CompositionTarget.Rendering += OnTabSlideRender;
             if (_tabEndTimer != null) { _tabEndTimer.Stop(); _tabEndTimer.Tick -= OnTabSlideWindowEnd; }
             _tabEndTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -1026,7 +1031,8 @@ public static class SmoothScrollHelper
             if (n == 0)
             {
                 MusicPlayer.Utilities.LogHelper.LogInfo(
-                    $"PERF-TAB {_tabName}: firstFrameMs={firstMs:0.0} frames=0 (no render ticks)");
+                    $"PERF-TAB {_tabName} mode={_tabMode ?? "-"}: firstFrameMs={firstMs:0.0} frames=0 (no render ticks)");
+                LogAlbumArtPerfDelta();
                 return;
             }
             var sorted = new List<double>(_tabGaps);
@@ -1051,10 +1057,25 @@ public static class SmoothScrollHelper
                 wb.Append('@').Append(pairs[i].rel.ToString("0")).Append(':').Append(pairs[i].gap.ToString("0"));
             }
             MusicPlayer.Utilities.LogHelper.LogInfo(
-                $"PERF-TAB {_tabName}: firstFrameMs={firstMs:0.0} frames={n} avgMs={avg:0.00} medMs={med:0.00} p95Ms={p95:0.00} maxMs={max:0.00} gt16={_tabGt16} gt33={_tabGt33} gcD={gc0}/{gc1}/{gc2}{wb}");
+                $"PERF-TAB {_tabName} mode={_tabMode ?? "-"}: firstFrameMs={firstMs:0.0} frames={n} avgMs={avg:0.00} medMs={med:0.00} p95Ms={p95:0.00} maxMs={max:0.00} gt16={_tabGt16} gt33={_tabGt33} gcD={gc0}/{gc1}/{gc2}{wb}");
+            LogAlbumArtPerfDelta();
         }
         catch { }
         _tabGaps.Clear();
+    }
+
+    private static void LogAlbumArtPerfDelta()
+    {
+        if (!string.Equals(_tabName, "albums", StringComparison.Ordinal)) return;
+        var current = AlbumArtLoader.GetPerfSnapshot();
+        var start = _albumArtPerfAtStart;
+        double ticksToMs = 1000.0 / Stopwatch.Frequency;
+        MusicPlayer.Utilities.LogHelper.LogInfo(
+            $"PERF-ALBUM-ART calls={current.Calls - start.Calls} ui={current.UiCalls - start.UiCalls} worker={current.WorkerCalls - start.WorkerCalls} " +
+            $"cacheHit={current.CacheHits - start.CacheHits} cacheMiss={current.CacheMisses - start.CacheMisses} diskHit={current.DiskHits - start.DiskHits} thumbHit={current.ThumbnailHits - start.ThumbnailHits} " +
+            $"decode={current.DecodeCount - start.DecodeCount} decodeMs={(current.DecodeTicks - start.DecodeTicks) * ticksToMs:0.0} " +
+            $"uiDecode={current.UiDecodeCount - start.UiDecodeCount} uiDecodeMs={(current.UiDecodeTicks - start.UiDecodeTicks) * ticksToMs:0.0} " +
+            $"callMs={(current.CallTicks - start.CallTicks) * ticksToMs:0.0} uiCallMs={(current.UiCallTicks - start.UiCallTicks) * ticksToMs:0.0}");
     }
 
     public static void StartDiagnostics() { }

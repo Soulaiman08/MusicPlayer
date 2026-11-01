@@ -5,6 +5,8 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using MusicPlayer.Database;
@@ -14,6 +16,178 @@ using Microsoft.Extensions.Logging;
 
 namespace MusicPlayer.Library;
 
+internal readonly record struct AlbumArtPerfSnapshot(
+    long Calls,
+    long UiCalls,
+    long WorkerCalls,
+    long CacheHits,
+    long CacheMisses,
+    long DiskHits,
+    long ThumbnailHits,
+    long DecodeCount,
+    long DecodeTicks,
+    long UiDecodeCount,
+    long UiDecodeTicks,
+    long CallTicks,
+    long UiCallTicks);
+
+internal enum AlbumArtUiMetric
+{
+    Converter,
+    MemoryLookup,
+    DiskPath,
+    Decode
+}
+
+internal sealed class AlbumArtUiProbe
+{
+    private sealed class Metric
+    {
+        public long Count;
+        public long WallTicks;
+        public long CpuTicks;
+        public long CpuSamples;
+    }
+
+    internal readonly struct Measurement : IDisposable
+    {
+        private readonly AlbumArtUiProbe? _probe;
+        private readonly AlbumArtUiMetric _metric;
+        private readonly long _wallStarted;
+        private readonly long _cpuStarted;
+        private readonly bool _hasCpuStarted;
+
+        internal Measurement(AlbumArtUiProbe probe, AlbumArtUiMetric metric)
+        {
+            _probe = probe;
+            _metric = metric;
+            _wallStarted = Stopwatch.GetTimestamp();
+            _hasCpuStarted = AlbumArtLoader.TryGetCurrentThreadCpuTicks(out _cpuStarted);
+            probe.RecordMetricStarted(metric);
+        }
+
+        public void Dispose()
+        {
+            if (_probe == null) return;
+
+            long wallElapsed = Stopwatch.GetTimestamp() - _wallStarted;
+            bool hasCpuEnded = AlbumArtLoader.TryGetCurrentThreadCpuTicks(out long cpuEnded);
+            _probe.RecordMetricCompleted(
+                _metric,
+                wallElapsed,
+                _hasCpuStarted && hasCpuEnded ? cpuEnded - _cpuStarted : null);
+        }
+    }
+
+    private readonly string _trigger;
+    private readonly string _mode;
+    private readonly string _state;
+    private readonly long _started = Stopwatch.GetTimestamp();
+    private readonly bool _hasCpuStarted;
+    private readonly long _cpuStarted;
+    private readonly Metric _converter = new();
+    private readonly Metric _memoryLookup = new();
+    private readonly Metric _diskPath = new();
+    private readonly Metric _decode = new();
+    private long _memoryHits;
+    private long _memoryMisses;
+    private long _diskHits;
+    private long _diskMisses;
+    private long _decodeSuccesses;
+    private long _scrollSkips;
+
+    internal AlbumArtUiProbe(string trigger, string mode, string state)
+    {
+        _trigger = trigger;
+        _mode = mode;
+        _state = state;
+        _hasCpuStarted = AlbumArtLoader.TryGetCurrentThreadCpuTicks(out _cpuStarted);
+    }
+
+    internal Measurement Measure(AlbumArtUiMetric metric) => new(this, metric);
+
+    internal void RecordMemoryResult(bool hit)
+    {
+        if (hit) Interlocked.Increment(ref _memoryHits);
+        else Interlocked.Increment(ref _memoryMisses);
+    }
+
+    internal void RecordDiskResult(bool hit)
+    {
+        if (hit) Interlocked.Increment(ref _diskHits);
+        else Interlocked.Increment(ref _diskMisses);
+    }
+
+    internal void RecordDecodeResult(bool success)
+    {
+        if (success) Interlocked.Increment(ref _decodeSuccesses);
+    }
+
+    internal void RecordScrollSkip() => Interlocked.Increment(ref _scrollSkips);
+
+    internal void RecordMetricStarted(AlbumArtUiMetric metric) =>
+        Interlocked.Increment(ref GetMetric(metric).Count);
+
+    internal void RecordMetricCompleted(AlbumArtUiMetric metric, long wallTicks, long? cpuTicks)
+    {
+        var target = GetMetric(metric);
+        Interlocked.Add(ref target.WallTicks, wallTicks);
+        if (cpuTicks is long elapsedCpuTicks && elapsedCpuTicks >= 0)
+        {
+            Interlocked.Add(ref target.CpuTicks, elapsedCpuTicks);
+            Interlocked.Increment(ref target.CpuSamples);
+        }
+    }
+
+    internal string Complete(string endReason)
+    {
+        if (!AlbumArtLoader.EndUiImageProbe(this))
+            return $"TAB-IMAGE-PROBE trigger={_trigger} mode={_mode} state={_state} end={endReason} status=not-active";
+
+        double windowMs = (Stopwatch.GetTimestamp() - _started) * 1000.0 / Stopwatch.Frequency;
+        string uiCpuMs = _hasCpuStarted && AlbumArtLoader.TryGetCurrentThreadCpuTicks(out long cpuEnded)
+            ? $"{(cpuEnded - _cpuStarted) / 10000.0:0.0}"
+            : "unavailable";
+
+        return
+            $"TAB-IMAGE-PROBE trigger={_trigger} mode={_mode} state={_state} end={endReason} " +
+            $"windowMs={windowMs:0.0} uiCpuMs={uiCpuMs} " +
+            $"converters={ReadCount(_converter)} converterWallMs={ReadWallMs(_converter):0.0} converterCpuMs={ReadCpuMs(_converter)} " +
+            $"memoryLookups={ReadCount(_memoryLookup)} memoryHits={Interlocked.Read(ref _memoryHits)} memoryMisses={Interlocked.Read(ref _memoryMisses)} " +
+            $"memoryWallMs={ReadWallMs(_memoryLookup):0.0} memoryCpuMs={ReadCpuMs(_memoryLookup)} " +
+            $"diskHits={Interlocked.Read(ref _diskHits)} diskMisses={Interlocked.Read(ref _diskMisses)} " +
+            $"scrollSkips={Interlocked.Read(ref _scrollSkips)} " +
+            $"diskPaths={ReadCount(_diskPath)} diskWallMs={ReadWallMs(_diskPath):0.0} diskCpuMs={ReadCpuMs(_diskPath)} " +
+            $"decodes={ReadCount(_decode)} decodeSuccesses={Interlocked.Read(ref _decodeSuccesses)} " +
+            $"decodeWallMs={ReadWallMs(_decode):0.0} decodeCpuMs={ReadCpuMs(_decode)}";
+    }
+
+    private Metric GetMetric(AlbumArtUiMetric metric) => metric switch
+    {
+        AlbumArtUiMetric.Converter => _converter,
+        AlbumArtUiMetric.MemoryLookup => _memoryLookup,
+        AlbumArtUiMetric.DiskPath => _diskPath,
+        AlbumArtUiMetric.Decode => _decode,
+        _ => throw new ArgumentOutOfRangeException(nameof(metric))
+    };
+
+    private static long ReadCount(Metric metric) => Interlocked.Read(ref metric.Count);
+
+    private static double ReadWallMs(Metric metric) =>
+        Interlocked.Read(ref metric.WallTicks) * 1000.0 / Stopwatch.Frequency;
+
+    private static string ReadCpuMs(Metric metric)
+    {
+        long count = ReadCount(metric);
+        if (Interlocked.Read(ref metric.CpuSamples) != count) return "partial";
+
+        long cpuTicks = Interlocked.Read(ref metric.CpuTicks);
+        return count > 0 && cpuTicks < 1000
+            ? "<0.1-below-resolution"
+            : $"{cpuTicks / 10000.0:0.0}";
+    }
+}
+
 public class AlbumArtLoader
 {
     private readonly DatabaseService _db;
@@ -22,6 +196,7 @@ public class AlbumArtLoader
     private readonly ConcurrentDictionary<string, ImageSource?> _mediumCache = new(); // mini-player quality
     private readonly ConcurrentDictionary<string, ImageSource?> _fullQualityCache = new();
     private readonly ConcurrentDictionary<string, byte> _pendingParses = new();
+    private readonly ConcurrentDictionary<string, byte> _pendingMediumParses = new();
     private readonly ConcurrentQueue<string> _preloadQueue = new();
     private ImageSource? _defaultArt;
     private volatile bool _preloading;
@@ -32,6 +207,136 @@ public class AlbumArtLoader
     // growth/trim on the UI thread. The warm-ups and background parses simply
     // defer until scrolling settles.
     private static volatile bool _scrollingActive;
+    private static long _perfMediumCalls;
+    private static long _perfMediumUiCalls;
+    private static long _perfMediumWorkerCalls;
+    private static long _perfMediumCacheHits;
+    private static long _perfMediumCacheMisses;
+    private static long _perfMediumDiskHits;
+    private static long _perfMediumThumbnailHits;
+    private static long _perfMediumDecodeCount;
+    private static long _perfMediumDecodeTicks;
+    private static long _perfMediumUiDecodeCount;
+    private static long _perfMediumUiDecodeTicks;
+    private static long _perfMediumCallTicks;
+    private static long _perfMediumUiCallTicks;
+    private static AlbumArtUiProbe? _activeUiImageProbe;
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentThread();
+
+    [DllImport("kernel32.dll", SetLastError = false)]
+    private static extern bool GetThreadTimes(
+        IntPtr thread,
+        out long creationTime,
+        out long exitTime,
+        out long kernelTime,
+        out long userTime);
+
+    internal static AlbumArtUiProbe? BeginUiImageProbe(string trigger, string mode, string state)
+    {
+        if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") != "1")
+            return null;
+
+        var probe = new AlbumArtUiProbe(trigger, mode, state);
+        return Interlocked.CompareExchange(ref _activeUiImageProbe, probe, null) == null
+            ? probe
+            : null;
+    }
+
+    internal static bool EndUiImageProbe(AlbumArtUiProbe probe) =>
+        ReferenceEquals(Interlocked.CompareExchange(ref _activeUiImageProbe, null, probe), probe);
+
+    internal static AlbumArtUiProbe.Measurement MeasureUiImage(AlbumArtUiMetric metric)
+    {
+        var probe = Volatile.Read(ref _activeUiImageProbe);
+        return probe != null && System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true
+            ? probe.Measure(metric)
+            : default;
+    }
+
+    private static AlbumArtUiProbe? GetActiveUiImageProbe()
+    {
+        var probe = Volatile.Read(ref _activeUiImageProbe);
+        return System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true ? probe : null;
+    }
+
+    internal static bool TryGetCurrentThreadCpuTicks(out long ticks)
+    {
+        if (GetThreadTimes(GetCurrentThread(), out _, out _, out long kernelTime, out long userTime))
+        {
+            ticks = kernelTime + userTime;
+            return true;
+        }
+
+        ticks = 0;
+        return false;
+    }
+
+    private readonly struct PerfMeasurement : IDisposable
+    {
+        private readonly bool _enabled;
+        private readonly bool _isDecode;
+        private readonly bool _isUiThread;
+        private readonly long _started;
+
+        public PerfMeasurement(bool isDecode)
+        {
+            _enabled = Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1";
+            _isDecode = isDecode;
+            _isUiThread = _enabled && System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true;
+            _started = _enabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+
+            if (!_enabled) return;
+            if (isDecode)
+            {
+                Interlocked.Increment(ref _perfMediumDecodeCount);
+                if (_isUiThread) Interlocked.Increment(ref _perfMediumUiDecodeCount);
+            }
+            else
+            {
+                Interlocked.Increment(ref _perfMediumCalls);
+                if (_isUiThread) Interlocked.Increment(ref _perfMediumUiCalls);
+                else Interlocked.Increment(ref _perfMediumWorkerCalls);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (!_enabled) return;
+            long elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - _started;
+            if (_isDecode)
+            {
+                Interlocked.Add(ref _perfMediumDecodeTicks, elapsed);
+                if (_isUiThread) Interlocked.Add(ref _perfMediumUiDecodeTicks, elapsed);
+            }
+            else
+            {
+                Interlocked.Add(ref _perfMediumCallTicks, elapsed);
+                if (_isUiThread) Interlocked.Add(ref _perfMediumUiCallTicks, elapsed);
+            }
+        }
+    }
+
+    internal static AlbumArtPerfSnapshot GetPerfSnapshot() => new(
+        Interlocked.Read(ref _perfMediumCalls),
+        Interlocked.Read(ref _perfMediumUiCalls),
+        Interlocked.Read(ref _perfMediumWorkerCalls),
+        Interlocked.Read(ref _perfMediumCacheHits),
+        Interlocked.Read(ref _perfMediumCacheMisses),
+        Interlocked.Read(ref _perfMediumDiskHits),
+        Interlocked.Read(ref _perfMediumThumbnailHits),
+        Interlocked.Read(ref _perfMediumDecodeCount),
+        Interlocked.Read(ref _perfMediumDecodeTicks),
+        Interlocked.Read(ref _perfMediumUiDecodeCount),
+        Interlocked.Read(ref _perfMediumUiDecodeTicks),
+        Interlocked.Read(ref _perfMediumCallTicks),
+        Interlocked.Read(ref _perfMediumUiCallTicks));
+
+    private static void RecordMediumCacheHit() { if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1") Interlocked.Increment(ref _perfMediumCacheHits); }
+    private static void RecordMediumCacheMiss() { if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1") Interlocked.Increment(ref _perfMediumCacheMisses); }
+    private static void RecordMediumDiskHit() { if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1") Interlocked.Increment(ref _perfMediumDiskHits); }
+    private static void RecordMediumThumbnailHit() { if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1") Interlocked.Increment(ref _perfMediumThumbnailHits); }
 
     public static bool ScrollingActive => _scrollingActive;
 
@@ -80,13 +385,24 @@ public class AlbumArtLoader
         if (string.IsNullOrWhiteSpace(filePath))
             return GetDefaultAlbumArt();
 
-        if (_cache.TryGetValue(filePath, out var cached) && cached != null)
+        var uiProbe = GetActiveUiImageProbe();
+        bool cacheHit;
+        ImageSource? cached;
+        using (MeasureUiImage(AlbumArtUiMetric.MemoryLookup))
+            cacheHit = _cache.TryGetValue(filePath, out cached) && cached != null;
+
+        uiProbe?.RecordMemoryResult(cacheHit);
+        if (cacheHit)
             return cached;
 
         // While scrolling is active, return placeholder immediately — never block the UI thread on disk IO during scroll!
         if (_scrollingActive)
+        {
+            uiProbe?.RecordScrollSkip();
             return GetDefaultAlbumArt();
+        }
 
+        using var diskPathMeasurement = MeasureUiImage(AlbumArtUiMetric.DiskPath);
         try
         {
             var hash = GetMd5Hash(filePath);
@@ -96,9 +412,13 @@ public class AlbumArtLoader
             var existing = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
             if (existing != null)
             {
-                var img = LoadThumbnailFromFile(existing);
+                ImageSource? img;
+                using (MeasureUiImage(AlbumArtUiMetric.Decode))
+                    img = LoadThumbnailFromFile(existing);
+                uiProbe?.RecordDecodeResult(img != null);
                 if (img != null)
                 {
+                    uiProbe?.RecordDiskResult(true);
                     _cache[filePath] = img;
                     TrimCache();
                     return img;
@@ -111,6 +431,7 @@ public class AlbumArtLoader
         }
         catch { }
 
+        uiProbe?.RecordDiskResult(false);
         return GetDefaultAlbumArt();
     }
 
@@ -217,12 +538,17 @@ public class AlbumArtLoader
     // ── Medium quality (380px) — Mini Player ──────────────────────────────────
     public ImageSource? LoadMediumAlbumArt(MusicTrack? track)
     {
+        using var perfCall = new PerfMeasurement(isDecode: false);
         if (track == null) return GetDefaultAlbumArt();
         var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
         if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
 
         if (_mediumCache.TryGetValue(path, out var cached) && cached != null)
+        {
+            RecordMediumCacheHit();
             return cached;
+        }
+        RecordMediumCacheMiss();
 
         // 1. Try disk cache first at MediumDecodeSize (220px)
         try
@@ -234,9 +560,12 @@ public class AlbumArtLoader
             var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
             if (existingPath != null)
             {
-                var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
+                ImageSource? img;
+                using (new PerfMeasurement(isDecode: true))
+                    img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
                 if (img != null)
                 {
+                    RecordMediumDiskHit();
                     _mediumCache[path] = img;
                     TrimCache();
                     return img;
@@ -248,6 +577,7 @@ public class AlbumArtLoader
         // If thumbnail cache already has it in memory, use that instantly
         if (_cache.TryGetValue(path, out var thumb) && thumb != null && thumb != _defaultArt)
         {
+            RecordMediumThumbnailHit();
             _mediumCache[path] = thumb;
             return thumb;
         }
@@ -255,8 +585,20 @@ public class AlbumArtLoader
         if (_scrollingActive)
             return GetDefaultAlbumArt();
 
+        if (System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true)
+        {
+            // Cold cache misses were blocking the Albums tab while the view was still
+            // measuring the card. Defer the decode to a worker and keep the current UI
+            // frame responsive; the cache is still the source of truth when the next
+            // binding refresh occurs.
+            EnqueueMediumArtParse(path, track);
+            return GetDefaultAlbumArt();
+        }
+
         // 2. If disk cache miss or not yet created, decode from track at medium size
-        var mediumArt = DecodeMediumValidPicture(track);
+        ImageSource? mediumArt;
+        using (new PerfMeasurement(isDecode: true))
+            mediumArt = DecodeMediumValidPicture(track);
         if (mediumArt != null)
         {
             _mediumCache[path] = mediumArt;
@@ -278,10 +620,15 @@ public class AlbumArtLoader
 
     public ImageSource? LoadMediumAlbumArt(string? filePath)
     {
+        using var perfCall = new PerfMeasurement(isDecode: false);
         if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
 
         if (_mediumCache.TryGetValue(filePath, out var cached) && cached != null)
+        {
+            RecordMediumCacheHit();
             return cached;
+        }
+        RecordMediumCacheMiss();
 
         // Try loading from disk cache at medium decode size
         try
@@ -293,9 +640,12 @@ public class AlbumArtLoader
             var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
             if (existingPath != null)
             {
-                var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
+                ImageSource? img;
+                using (new PerfMeasurement(isDecode: true))
+                    img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
                 if (img != null)
                 {
+                    RecordMediumDiskHit();
                     _mediumCache[filePath] = img;
                     TrimCache();
                     return img;
@@ -307,6 +657,7 @@ public class AlbumArtLoader
         // If thumbnail cache already has it in memory, use that instantly
         if (_cache.TryGetValue(filePath, out var thumb) && thumb != null && thumb != _defaultArt)
         {
+            RecordMediumThumbnailHit();
             _mediumCache[filePath] = thumb;
             return thumb;
         }
@@ -314,9 +665,17 @@ public class AlbumArtLoader
         if (_scrollingActive)
             return GetDefaultAlbumArt();
 
+        if (System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true)
+        {
+            EnqueueMediumArtParse(filePath, null);
+            return GetDefaultAlbumArt();
+        }
+
         // Fallback: decode directly from file
         var dummy = new MusicTrack { FilePath = filePath };
-        var mediumArt = DecodeMediumValidPicture(dummy);
+        ImageSource? mediumArt;
+        using (new PerfMeasurement(isDecode: true))
+            mediumArt = DecodeMediumValidPicture(dummy);
         if (mediumArt != null)
         {
             _mediumCache[filePath] = mediumArt;
@@ -395,6 +754,39 @@ public class AlbumArtLoader
             finally
             {
                 _pendingParses.TryRemove(path, out _);
+            }
+        });
+    }
+
+    private void EnqueueMediumArtParse(string path, MusicTrack? track)
+    {
+        if (_pendingMediumParses.ContainsKey(path)) return;
+        _pendingMediumParses[path] = 0;
+
+        Task.Run(async () =>
+        {
+            try
+            {
+                await _decodeGate.WaitAsync();
+                try
+                {
+                    if (_mediumCache.TryGetValue(path, out var done) && done != null)
+                        return;
+
+                    var sourceTrack = track ?? new MusicTrack { FilePath = path };
+                    var img = DecodeMediumValidPicture(sourceTrack);
+                    if (img != null)
+                    {
+                        _mediumCache[path] = img;
+                        _cache.TryAdd(path, img);
+                    }
+                }
+                finally { _decodeGate.Release(); }
+            }
+            catch { }
+            finally
+            {
+                _pendingMediumParses.TryRemove(path, out _);
             }
         });
     }

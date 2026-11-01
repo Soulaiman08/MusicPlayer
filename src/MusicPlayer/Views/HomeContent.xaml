@@ -7,16 +7,16 @@
       <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
     </Grid.RowDefinitions>
-    <StackPanel Grid.Row="0" Margin="0,16,0,0">
+    <StackPanel Grid.Row="0" Margin="0,0,0,0">
     <!-- Section 1: Library Quick Access -->
-    <Grid Margin="0,0,0,12">
+    <Grid Margin="0,0,0,18">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <StackPanel VerticalAlignment="Center">
-        <TextBlock Text="Your library" FontSize="24" FontWeight="SemiBold" Foreground="#F5F7FB" VerticalAlignment="Center" />
-        <TextBlock Text="Pick up where you left off, or explore your collection." FontSize="12.5" Foreground="#B9C2D0" Margin="0,4,0,0" />
+        <TextBlock Text="Your library" FontSize="32" FontWeight="Bold" Foreground="#FFFFFFFF" SnapsToDevicePixels="True" TextOptions.TextRenderingMode="ClearType" />
+        <TextBlock Text="Pick up where you left off, or explore your collection." FontSize="13.5" Foreground="#B0BFD4" Margin="0,5,0,0" />
       </StackPanel>
     </Grid>
 
@@ -32,14 +32,14 @@
       </Grid.RowDefinitions>
 
       <!-- Card 0: ALL SONGS -->
-      <Border Grid.Row="0" Grid.Column="0" Height="84" Margin="0,0,12,12" BorderThickness="1" CornerRadius="12" Cursor="Hand" MouseLeftButtonUp="AllSongsCard_Click" SnapsToDevicePixels="True">
+      <Border Grid.Row="0" Grid.Column="0" Height="84" Margin="0,0,12,12" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="AllSongsCard_Click" SnapsToDevicePixels="True">
 <Border.Style>
           <Style TargetType="Border">
-            <Setter Property="Background" Value="#14FFFFFF" />
-            <Setter Property="BorderBrush" Value="#20FFFFFF" />
+            <Setter Property="Background" Value="#1CFFFFFF" />
+            <Setter Property="BorderBrush" Value="#28FFFFFF" />
             <Setter Property="Effect">
               <Setter.Value>
-                <DropShadowEffect BlurRadius="12" ShadowDepth="1" Direction="270" Opacity="0.12" Color="#000000" RenderingBias="Performance" />
+                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
               </Setter.Value>
             </Setter>
             <Style.Triggers>
@@ -72,14 +72,14 @@
       </Border>
 
       <!-- Card 1: FOLDERS -->
-      <Border Grid.Row="0" Grid.Column="1" Height="84" Margin="0,0,12,12" BorderThickness="1" CornerRadius="12" Cursor="Hand" MouseLeftButtonUp="FoldersCard_Click" SnapsToDevicePixels="True">
+      <Border Grid.Row="0" Grid.Column="1" Height="84" Margin="0,0,12,12" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="FoldersCard_Click" SnapsToDevicePixels="True">
 <Border.Style>
           <Style TargetType="Border">
-            <Setter Property="Background" Value="#14FFFFFF" />
-            <Setter Property="BorderBrush" Value="#20FFFFFF" />
+            <Setter Property="Background" Value="#1CFFFFFF" />
+            <Setter Property="BorderBrush" Value="#28FFFFFF" />
             <Setter Property="Effect">
               <Setter.Value>
-                <DropShadowEffect BlurRadius="12" ShadowDepth="1" Direction="270" Opacity="0.12" Color="#000000" RenderingBias="Performance" />
+                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
               </Setter.Value>
             </Setter>
             <Style.Triggers>
@@ -112,14 +112,14 @@
       </Border>
 
       <!-- Card 2: FAVORITES -->
-      <Border Grid.Row="0" Grid.Column="2" Height="84" Margin="0,0,0,12" BorderThickness="1" CornerRadius="12" Cursor="Hand" MouseLeftButtonUp="FavoritesCard_Click" SnapsToDevicePixels="True">
+      <Border Grid.Row="0" Grid.Column="2" Height="84" Margin="0,0,0,12" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="FavoritesCard_Click" SnapsToDevicePixels="True">
 <Border.Style>
           <Style TargetType="Border">
-            <Setter Property="Background" Value="#14FFFFFF" />
-            <Setter Property="BorderBrush" Value="#20FFFFFF" />
+            <Setter Property="Background" Value="#1CFFFFFF" />
+            <Setter Property="BorderBrush" Value="#28FFFFFF" />
             <Setter Property="Effect">
               <Setter.Value>
-                <DropShadowEffect BlurRadius="12" ShadowDepth="1" Direction="270" Opacity="0.12" Color="#000000" RenderingBias="Performance" />
+                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
               </Setter.Value>
             </Setter>
             <Style.Triggers>
@@ -152,14 +152,14 @@
       </Border>
 
       <!-- Card 3: RECENT PLAY -->
-      <Border Grid.Row="1" Grid.Column="0" Height="84" Margin="0,0,12,0" BorderThickness="1" CornerRadius="12" Cursor="Hand" MouseLeftButtonUp="RecentPlayCard_Click" SnapsToDevicePixels="True">
+      <Border Grid.Row="1" Grid.Column="0" Height="84" Margin="0,0,12,0" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="RecentPlayCard_Click" SnapsToDevicePixels="True">
 <Border.Style>
           <Style TargetType="Border">
-            <Setter Property="Background" Value="#14FFFFFF" />
-            <Setter Property="BorderBrush" Value="#20FFFFFF" />
+            <Setter Property="Background" Value="#1CFFFFFF" />
+            <Setter Property="BorderBrush" Value="#28FFFFFF" />
             <Setter Property="Effect">
               <Setter.Value>
-                <DropShadowEffect BlurRadius="12" ShadowDepth="1" Direction="270" Opacity="0.12" Color="#000000" RenderingBias="Performance" />
+                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
               </Setter.Value>
             </Setter>
             <Style.Triggers>
@@ -192,14 +192,14 @@
       </Border>
 
       <!-- Card 4: RECENT ADD -->
-      <Border Grid.Row="1" Grid.Column="1" Height="84" Margin="0,0,12,0" BorderThickness="1" CornerRadius="12" Cursor="Hand" MouseLeftButtonUp="RecentAddCard_Click" SnapsToDevicePixels="True">
+      <Border Grid.Row="1" Grid.Column="1" Height="84" Margin="0,0,12,0" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="RecentAddCard_Click" SnapsToDevicePixels="True">
 <Border.Style>
           <Style TargetType="Border">
-            <Setter Property="Background" Value="#14FFFFFF" />
-            <Setter Property="BorderBrush" Value="#20FFFFFF" />
+            <Setter Property="Background" Value="#1CFFFFFF" />
+            <Setter Property="BorderBrush" Value="#28FFFFFF" />
             <Setter Property="Effect">
               <Setter.Value>
-                <DropShadowEffect BlurRadius="12" ShadowDepth="1" Direction="270" Opacity="0.12" Color="#000000" RenderingBias="Performance" />
+                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
               </Setter.Value>
             </Setter>
             <Style.Triggers>
@@ -232,14 +232,14 @@
       </Border>
 
       <!-- Card 5: MOST PLAY -->
-      <Border Grid.Row="1" Grid.Column="2" Height="84" Margin="0,0,0,0" BorderThickness="1" CornerRadius="12" Cursor="Hand" MouseLeftButtonUp="MostPlayCard_Click" SnapsToDevicePixels="True">
+      <Border Grid.Row="1" Grid.Column="2" Height="84" Margin="0,0,0,0" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="MostPlayCard_Click" SnapsToDevicePixels="True">
 <Border.Style>
           <Style TargetType="Border">
-            <Setter Property="Background" Value="#14FFFFFF" />
-            <Setter Property="BorderBrush" Value="#20FFFFFF" />
+            <Setter Property="Background" Value="#1CFFFFFF" />
+            <Setter Property="BorderBrush" Value="#28FFFFFF" />
             <Setter Property="Effect">
               <Setter.Value>
-                <DropShadowEffect BlurRadius="12" ShadowDepth="1" Direction="270" Opacity="0.12" Color="#000000" RenderingBias="Performance" />
+                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
               </Setter.Value>
             </Setter>
             <Style.Triggers>
@@ -314,14 +314,14 @@
       </ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate>
         <DataTemplate>
-          <Border Width="190" Height="74" BorderThickness="1" CornerRadius="12" Margin="0,0,12,12" Padding="12" Cursor="Hand" MouseLeftButtonUp="PlaylistItem_Click" SnapsToDevicePixels="True">
+          <Border Width="190" Height="74" BorderThickness="1" CornerRadius="16" Margin="0,0,12,12" Padding="12" Cursor="Hand" MouseLeftButtonUp="PlaylistItem_Click" SnapsToDevicePixels="True">
 <Border.Style>
           <Style TargetType="Border">
-            <Setter Property="Background" Value="#14FFFFFF" />
-            <Setter Property="BorderBrush" Value="#20FFFFFF" />
+            <Setter Property="Background" Value="#1CFFFFFF" />
+            <Setter Property="BorderBrush" Value="#28FFFFFF" />
                 <Setter Property="Effect">
                   <Setter.Value>
-                    <DropShadowEffect BlurRadius="12" ShadowDepth="1" Direction="270" Opacity="0.15" Color="#000000" RenderingBias="Performance" />
+                    <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
                   </Setter.Value>
                 </Setter>
                 <Style.Triggers>
