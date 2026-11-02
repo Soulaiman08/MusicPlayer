@@ -42,12 +42,12 @@ public class MusicScanner
     
     public async Task ScanFoldersAsync(IEnumerable<string> folders, CancellationToken cancellationToken = default)
     {
-        LastScannedRoots.Clear();
-        LastFailedRoots.Clear();
-        LastRootStatus.Clear();
         lock (_scanGate)
         {
             if (IsScanning) { _logger.LogWarning("Scan already in progress, skipping"); return; }
+            LastScannedRoots.Clear();
+            LastFailedRoots.Clear();
+            LastRootStatus.Clear();
             IsScanning = true;
         }
 
@@ -246,12 +246,12 @@ public class MusicScanner
 
     public async Task<(int Added, int Updated, int Removed)> RefreshAndSyncLibraryAsync(CancellationToken cancellationToken = default)
     {
-        LastScannedRoots.Clear();
-        LastFailedRoots.Clear();
-        LastRootStatus.Clear();
         lock (_scanGate)
         {
             if (IsScanning) return (0, 0, 0);
+            LastScannedRoots.Clear();
+            LastFailedRoots.Clear();
+            LastRootStatus.Clear();
             IsScanning = true;
         }
         int added = 0;
@@ -339,15 +339,30 @@ public class MusicScanner
                 {
                     foreach (var t in allDbTracks)
                     {
-                        if (string.IsNullOrEmpty(t.FilePath) || !System.IO.File.Exists(t.FilePath))
-                        {
-                            _db.DeleteTrack(t.Id);
-                            removed++;
-                        }
-                        else
+                        if (string.IsNullOrEmpty(t.FilePath)) continue;
+                        if (System.IO.File.Exists(t.FilePath))
                         {
                             dbTracksByPath[t.FilePath] = t;
+                            continue;
                         }
+                        // Only delete if the track belongs to a root that is currently
+                        // available and in the scan set. Never delete due to transient
+                        // unavailability of an external/unscanned root.
+                        var trackRoot = rootFolders.FirstOrDefault(r =>
+                            PathContainment.IsWithin(t.FilePath, r));
+                        if (trackRoot == null) continue; // unknown root -> keep
+                        if (!Directory.Exists(trackRoot)) continue; // root unavailable -> keep
+                        try
+                        {
+                            // Verify the root is actually enumerable (not access-denied).
+                            Directory.EnumerateFiles(trackRoot).GetEnumerator().Dispose();
+                        }
+                        catch
+                        {
+                            continue; // inaccessible -> keep
+                        }
+                        _db.DeleteTrack(t.Id);
+                        removed++;
                     }
                     _db.Commit();
                 }

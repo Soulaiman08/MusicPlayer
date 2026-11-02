@@ -2534,14 +2534,20 @@ InitializeComponent();
         catch { }
     }
 
+    private bool _isClosing;
+    private bool _allowFinalClose;
+
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
-        if (e.Cancel) return;
+        if (_allowFinalClose) return; // final close: do not cancel
+        if (_isClosing) { e.Cancel = true; return; } // reentrant: ignore
+        _isClosing = true;
         e.Cancel = true;
         try { CancelQueueDrag("WindowClosing"); } catch { }
         try { _trayService?.RemoveIcon(); } catch { }
         try { if (ViewModel != null) await ViewModel.StopBackgroundTasksAsync(); } catch { }
         try { SaveWindowState(); } catch { }
+        _allowFinalClose = true;
         try { Close(); } catch { }
 
         // Shutdown is handled by App.OnExit (single owner for service disposal).

@@ -198,8 +198,10 @@ public class AudioEngine : IDisposable
     {
         var t = Task.Run(() =>
         {
-            try { oldDevice.Stop(); } catch { }
-            try { oldDevice.Dispose(); } catch { }
+            try { oldDevice.Stop(); }
+            catch (Exception ex) { try { LogHelper.LogError("RetireDevice.Stop", ex); } catch { } }
+            try { oldDevice.Dispose(); }
+            catch (Exception ex) { try { LogHelper.LogError("RetireDevice.Dispose", ex); } catch { } }
         });
         lock (_retireLock) { _retiredDeviceTasks.Add(t); }
         // Clean up completed tasks to avoid unbounded growth.
@@ -982,6 +984,7 @@ public class AudioEngine : IDisposable
     private volatile int _loadGeneration = 0;
     private Thread? _workerThread = null;
     private volatile bool _disposed = false;
+    private int _deferredDisposeStarted;
     // Lifecycle state machine: 0=Created,1=Active,2=Stopping,3=Disposed.
     private int _engineState = 0;
     private const int StateCreated = 0;
@@ -1147,27 +1150,29 @@ public class AudioEngine : IDisposable
         // If the worker is still alive, do NOT dispose resources it may use.
         if (wt != null && wt.IsAlive)
         {
-            LogHelper.LogError("AudioEngine.Dispose: worker thread still alive after timeout; deferring resource disposal", new TimeoutException());
-            // Defer cleanup: when the worker eventually stops, dispose resources on a background thread.
-            Task.Run(() =>
+            if (Interlocked.Exchange(ref _deferredDisposeStarted, 1) == 0)
             {
-                try { wt.Join(10000); } catch { }
-                if (wt.IsAlive) return;
-                try
+                LogHelper.LogError("AudioEngine.Dispose: worker thread still alive after timeout; deferring resource disposal", new TimeoutException());
+                Task.Run(() =>
                 {
-                    try { AudioAnalyzer.Instance.Attach(null); } catch { }
-                    if (_outputDevice != null)
+                    try { wt.Join(10000); } catch { }
+                    if (wt.IsAlive) return;
+                    try
                     {
-                        try { _outputDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped; } catch { }
-                        try { _outputDevice.Stop(); } catch { }
-                        try { _outputDevice.Dispose(); } catch { }
-                        _outputDevice = null;
+                        try { AudioAnalyzer.Instance.Attach(null); } catch { }
+                        if (_outputDevice != null)
+                        {
+                            try { _outputDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped; } catch { }
+                            try { _outputDevice.Stop(); } catch { }
+                            try { _outputDevice.Dispose(); } catch { }
+                            _outputDevice = null;
+                        }
+                        try { _audioFile?.Dispose(); } catch { }
+                        _audioFile = null;
                     }
-                    try { _audioFile?.Dispose(); } catch { }
-                    _audioFile = null;
-                }
-                catch (Exception ex) { LogHelper.LogError("Deferred AudioEngine dispose failed", ex); }
-            });
+                    catch (Exception ex) { LogHelper.LogError("Deferred AudioEngine dispose failed", ex); }
+                });
+            }
             Interlocked.Exchange(ref _engineState, StateDisposed);
             return;
         }
