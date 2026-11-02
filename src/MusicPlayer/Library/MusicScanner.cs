@@ -78,11 +78,39 @@ public class MusicScanner
                     if (!Directory.Exists(folder))
                     {
                         _logger.LogWarning("Folder does not exist: {Folder}", folder);
+                        LastFailedRoots.Add(folder);
+                        LastRootStatus[folder] = ScanRootStatus.RootUnavailable;
                         continue;
                     }
 
-                    var enumComplete = true;
-                    var allFiles = EnumerateFilesSafe(folder, out enumComplete).ToArray();
+                    var enumComplete = false;
+                    IReadOnlyList<string> enumerated;
+                    try
+                    {
+                        enumerated = EnumerateRootFiles(folder, cancellationToken, out enumComplete);
+                    }
+                    catch (UnauthorizedAccessException ex)
+                    {
+                        _logger.LogWarning(ex, "Access denied while enumerating folder: {Folder}", folder);
+                        LastFailedRoots.Add(folder);
+                        LastRootStatus[folder] = ScanRootStatus.AccessDenied;
+                        continue;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        LastFailedRoots.Add(folder);
+                        LastRootStatus[folder] = ScanRootStatus.Cancelled;
+                        continue;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to enumerate folder: {Folder}", folder);
+                        LastFailedRoots.Add(folder);
+                        LastRootStatus[folder] = ScanRootStatus.Failed;
+                        continue;
+                    }
+
+                    var allFiles = enumerated.ToArray();
                     _logger.LogInformation("Total files in {Folder}: {Count}", folder, allFiles.Length);
 
                     var files = allFiles
@@ -330,13 +358,79 @@ public class MusicScanner
                 bool excludeByDuration = _db.GetSettingBool("pref_ignore_60seconds_music");
                 bool excludeBySize = _db.GetSettingBool("pref_exclude_music_by_size", true);
 
-                // 2. Remove missing tracks whose files were deleted or moved from disk
+                // 2. Enumerate every candidate root fully BEFORE any deletion decision.
+                // A root is deletable only when this recursive pass completed without
+                // access errors or cancellation.
+                var folderFiles = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+                var fullyEnumeratedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var rootEnumStatus = new Dictionary<string, ScanRootStatus>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var folder in rootFolders)
+                {
+                    folderFiles[folder] = Array.Empty<string>();
+                    ScanRootStatus status;
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        status = ScanRootStatus.Cancelled;
+                    }
+                    else if (!Directory.Exists(folder))
+                    {
+                        status = ScanRootStatus.RootUnavailable;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var files = EnumerateRootFiles(folder, cancellationToken, out var complete);
+                            folderFiles[folder] = files.ToArray();
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                status = ScanRootStatus.Cancelled;
+                            }
+                            else if (!complete)
+                            {
+                                status = ScanRootStatus.Partial;
+                            }
+                            else
+                            {
+                                status = ScanRootStatus.Completed;
+                                fullyEnumeratedRoots.Add(folder);
+                            }
+                        }
+                        catch (UnauthorizedAccessException ex)
+                        {
+                            _logger.LogWarning(ex, "Access denied while enumerating folder: {Folder}", folder);
+                            status = ScanRootStatus.AccessDenied;
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            status = ScanRootStatus.Cancelled;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to enumerate folder: {Folder}", folder);
+                            status = ScanRootStatus.Failed;
+                        }
+                    }
+
+                    rootEnumStatus[folder] = status;
+                    LastRootStatus[folder] = status;
+                    if (status != ScanRootStatus.Completed)
+                    {
+                        LastFailedRoots.Add(folder);
+                    }
+                }
+
+                // 3. Remove missing tracks. Deletion is restricted to files that
+                // belong to a root whose recursive enumeration completed above.
                 var allDbTracks = _db.GetAllTracks();
                 var dbTracksByPath = new Dictionary<string, MusicTrack>(StringComparer.OrdinalIgnoreCase);
 
                 _db.BeginTransaction();
                 try
                 {
+                    int removedInTransaction = 0;
                     foreach (var t in allDbTracks)
                     {
                         if (string.IsNullOrEmpty(t.FilePath)) continue;
@@ -345,175 +439,195 @@ public class MusicScanner
                             dbTracksByPath[t.FilePath] = t;
                             continue;
                         }
-                        // Only delete if the track belongs to a root that is currently
-                        // available and in the scan set. Never delete due to transient
-                        // unavailability of an external/unscanned root.
-                        var trackRoot = rootFolders.FirstOrDefault(r =>
+
+                        // Cancellation or any ambiguous state means keep the record.
+                        if (cancellationToken.IsCancellationRequested) continue;
+
+                        var trackRoot = fullyEnumeratedRoots.FirstOrDefault(r =>
                             PathContainment.IsWithin(t.FilePath, r));
-                        if (trackRoot == null) continue; // unknown root -> keep
-                        if (!Directory.Exists(trackRoot)) continue; // root unavailable -> keep
-                        try
+                        if (trackRoot == null) continue; // unknown/unavailable root -> keep
+
+                        if (!rootEnumStatus.TryGetValue(trackRoot, out var status) ||
+                            status != ScanRootStatus.Completed)
                         {
-                            // Verify the root is actually enumerable (not access-denied).
-                            Directory.EnumerateFiles(trackRoot).GetEnumerator().Dispose();
+                            continue; // partial/failed/cancelled -> keep
                         }
-                        catch
+
+                        if (!folderFiles.TryGetValue(trackRoot, out var enumeratedFiles))
                         {
-                            continue; // inaccessible -> keep
+                            continue; // no trusted enumeration result -> keep
                         }
+
+                        if (enumeratedFiles.Contains(t.FilePath, StringComparer.OrdinalIgnoreCase))
+                        {
+                            continue; // defensive: listed as present -> keep
+                        }
+
+                        if (!Directory.Exists(trackRoot)) continue; // root vanished -> keep
+
                         _db.DeleteTrack(t.Id);
-                        removed++;
+                        removedInTransaction++;
                     }
                     _db.Commit();
+                    removed += removedInTransaction;
                 }
-                catch
+                catch (Exception ex)
                 {
                     try { _db.Rollback(); } catch { }
+                    _logger.LogError(ex, "Error while removing missing tracks");
                 }
 
-                // 3. Scan all root folders on disk for new and modified audio files
-                var folderFiles = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-                foreach (var folder in rootFolders)
-                {
-                    if (!Directory.Exists(folder)) { folderFiles[folder] = Array.Empty<string>(); continue; }
-                    try { var c = true;
-                            folderFiles[folder] = EnumerateFilesSafe(folder, out c).ToArray();
-                            if (!c) LastRootStatus[folder] = ScanRootStatus.Partial; }
-                    catch (Exception ex) { _logger.LogWarning(ex, "Failed to enumerate files in folder: {Folder}", folder); folderFiles[folder] = Array.Empty<string>(); }
-                }
-
+                // 4. Index files using the same enumeration results (no second pass).
                 _db.BeginTransaction();
                 int batchCount = 0;
                 try
                 {
                     foreach (var folder in rootFolders)
                     {
-                        if (cancellationToken.IsCancellationRequested) break;
-                        if (!Directory.Exists(folder)) continue;
+                        var status = rootEnumStatus.TryGetValue(folder, out var rootStatus)
+                            ? rootStatus
+                            : ScanRootStatus.Failed;
 
-                                             if (!folderFiles.TryGetValue(folder, out var allFiles)) allFiles = Array.Empty<string>();
-
-                        foreach (var file in allFiles)
+                        if (status == ScanRootStatus.Completed || status == ScanRootStatus.Partial)
                         {
-                            if (cancellationToken.IsCancellationRequested) break;
-                            if (!IsMusicFile(file)) continue;
-
-                            var dir = Path.GetDirectoryName(file)?.ToLowerInvariant() ?? "";
-                            if (hiddenFolders.Any(h => PathContainment.IsWithin(dir, h))) continue;
-
-                            FileInfo fileInfo;
-                            try
+                            if (!Directory.Exists(folder))
                             {
-                                fileInfo = new FileInfo(file);
+                                status = ScanRootStatus.RootUnavailable;
                             }
-                            catch
+                            else if (folderFiles.TryGetValue(folder, out var allFiles))
                             {
-                                continue;
-                            }
-
-                            if (excludeBySize && fileInfo.Length < minSize) continue;
-
-                            if (dbTracksByPath.TryGetValue(file, out var existingTrack))
-                            {
-                                // Existing track: check if file was modified or refresh metadata
-                                try
+                                foreach (var file in allFiles)
                                 {
-                                    long fileModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds();
-                                    if (existingTrack.DateModified != fileModified || existingTrack.FileSize != fileInfo.Length)
+                                    if (cancellationToken.IsCancellationRequested)
                                     {
-                                        using var tagFile = TagLib.File.Create(file);
-                                        if (excludeByDuration && tagFile.Properties.Duration.TotalMilliseconds < minDuration)
-                                            continue;
+                                        status = ScanRootStatus.Cancelled;
+                                        break;
+                                    }
+                                    if (!IsMusicFile(file)) continue;
 
-                                        var newTitle = tagFile.Tag.Title ?? Path.GetFileNameWithoutExtension(file);
-                                        var newArtist = tagFile.Tag.FirstPerformer ?? "Unknown Artist";
-                                        var newAlbum = tagFile.Tag.Album ?? "Unknown Album";
-                                        var newGenre = tagFile.Tag.FirstGenre ?? "";
-                                        var newDuration = (long)tagFile.Properties.Duration.TotalMilliseconds;
+                                    var dir = Path.GetDirectoryName(file)?.ToLowerInvariant() ?? "";
+                                    if (hiddenFolders.Any(h => PathContainment.IsWithin(dir, h))) continue;
 
-                                        existingTrack.Title = newTitle;
-                                        existingTrack.Artist = newArtist;
-                                        existingTrack.Album = newAlbum;
-                                        existingTrack.AlbumArtist = tagFile.Tag.FirstAlbumArtist ?? "";
-                                        existingTrack.Genre = newGenre;
-                                        existingTrack.Year = (int)tagFile.Tag.Year;
-                                        existingTrack.TrackNumber = (int)tagFile.Tag.Track;
-                                        existingTrack.DiscNumber = (int)tagFile.Tag.Disc;
-                                        existingTrack.Duration = newDuration;
-                                        existingTrack.FileSize = fileInfo.Length;
-                                        existingTrack.Bitrate = (int)tagFile.Properties.AudioBitrate;
-                                        existingTrack.SampleRate = (int)tagFile.Properties.AudioSampleRate;
-                                        existingTrack.Channels = tagFile.Properties.AudioChannels;
-                                        existingTrack.DateModified = fileModified;
+                                    FileInfo fileInfo;
+                                    try
+                                    {
+                                        fileInfo = new FileInfo(file);
+                                    }
+                                    catch
+                                    {
+                                        continue;
+                                    }
 
-                                        _db.UpdateTrack(existingTrack);
-                                        updated++;
-                                        batchCount++;
+                                    if (excludeBySize && fileInfo.Length < minSize) continue;
+
+                                    if (dbTracksByPath.TryGetValue(file, out var existingTrack))
+                                    {
+                                        // Existing track: check if file was modified or refresh metadata
+                                        try
+                                        {
+                                            long fileModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds();
+                                            if (existingTrack.DateModified != fileModified || existingTrack.FileSize != fileInfo.Length)
+                                            {
+                                                using var tagFile = TagLib.File.Create(file);
+                                                if (excludeByDuration && tagFile.Properties.Duration.TotalMilliseconds < minDuration)
+                                                    continue;
+
+                                                var newTitle = tagFile.Tag.Title ?? Path.GetFileNameWithoutExtension(file);
+                                                var newArtist = tagFile.Tag.FirstPerformer ?? "Unknown Artist";
+                                                var newAlbum = tagFile.Tag.Album ?? "Unknown Album";
+                                                var newGenre = tagFile.Tag.FirstGenre ?? "";
+                                                var newDuration = (long)tagFile.Properties.Duration.TotalMilliseconds;
+
+                                                existingTrack.Title = newTitle;
+                                                existingTrack.Artist = newArtist;
+                                                existingTrack.Album = newAlbum;
+                                                existingTrack.AlbumArtist = tagFile.Tag.FirstAlbumArtist ?? "";
+                                                existingTrack.Genre = newGenre;
+                                                existingTrack.Year = (int)tagFile.Tag.Year;
+                                                existingTrack.TrackNumber = (int)tagFile.Tag.Track;
+                                                existingTrack.DiscNumber = (int)tagFile.Tag.Disc;
+                                                existingTrack.Duration = newDuration;
+                                                existingTrack.FileSize = fileInfo.Length;
+                                                existingTrack.Bitrate = (int)tagFile.Properties.AudioBitrate;
+                                                existingTrack.SampleRate = (int)tagFile.Properties.AudioSampleRate;
+                                                existingTrack.Channels = tagFile.Properties.AudioChannels;
+                                                existingTrack.DateModified = fileModified;
+
+                                                _db.UpdateTrack(existingTrack);
+                                                updated++;
+                                                batchCount++;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                    else
+                                    {
+                                        // New track added to the folder!
+                                        try
+                                        {
+                                            using var tagFile = TagLib.File.Create(file);
+                                            if (excludeByDuration && tagFile.Properties.Duration.TotalMilliseconds < minDuration)
+                                                continue;
+
+                                            var newTrack = new MusicTrack
+                                            {
+                                                FilePath = file,
+                                                Title = tagFile.Tag.Title ?? Path.GetFileNameWithoutExtension(file),
+                                                Artist = tagFile.Tag.FirstPerformer ?? "Unknown Artist",
+                                                Album = tagFile.Tag.Album ?? "Unknown Album",
+                                                AlbumArtist = tagFile.Tag.FirstAlbumArtist ?? "",
+                                                Genre = tagFile.Tag.FirstGenre ?? "",
+                                                Year = (int)tagFile.Tag.Year,
+                                                TrackNumber = (int)tagFile.Tag.Track,
+                                                DiscNumber = (int)tagFile.Tag.Disc,
+                                                Duration = (long)tagFile.Properties.Duration.TotalMilliseconds,
+                                                FileSize = fileInfo.Length,
+                                                Bitrate = (int)tagFile.Properties.AudioBitrate,
+                                                SampleRate = (int)tagFile.Properties.AudioSampleRate,
+                                                Channels = tagFile.Properties.AudioChannels,
+                                                DateAdded = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
+                                                DateModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
+                                                FolderPath = folder
+                                            };
+
+                                            _db.InsertTrack(newTrack);
+                                            dbTracksByPath[file] = newTrack;
+                                            added++;
+                                            batchCount++;
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            _logger.LogWarning(ex, "Failed to parse new music file: {File}", file);
+                                        }
+                                    }
+
+                                    if (batchCount >= 50)
+                                    {
+                                        _db.Commit();
+                                        _db.BeginTransaction();
+                                        batchCount = 0;
                                     }
                                 }
-                                catch { }
                             }
-                            else
+
+                            if (cancellationToken.IsCancellationRequested)
                             {
-                                // New track added to the folder!
-                                try
-                                {
-                                    using var tagFile = TagLib.File.Create(file);
-                                    if (excludeByDuration && tagFile.Properties.Duration.TotalMilliseconds < minDuration)
-                                        continue;
-
-                                    var newTrack = new MusicTrack
-                                    {
-                                        FilePath = file,
-                                        Title = tagFile.Tag.Title ?? Path.GetFileNameWithoutExtension(file),
-                                        Artist = tagFile.Tag.FirstPerformer ?? "Unknown Artist",
-                                        Album = tagFile.Tag.Album ?? "Unknown Album",
-                                        AlbumArtist = tagFile.Tag.FirstAlbumArtist ?? "",
-                                        Genre = tagFile.Tag.FirstGenre ?? "",
-                                        Year = (int)tagFile.Tag.Year,
-                                        TrackNumber = (int)tagFile.Tag.Track,
-                                        DiscNumber = (int)tagFile.Tag.Disc,
-                                        Duration = (long)tagFile.Properties.Duration.TotalMilliseconds,
-                                        FileSize = fileInfo.Length,
-                                        Bitrate = (int)tagFile.Properties.AudioBitrate,
-                                        SampleRate = (int)tagFile.Properties.AudioSampleRate,
-                                        Channels = tagFile.Properties.AudioChannels,
-                                        DateAdded = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
-                                        DateModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
-                                        FolderPath = folder
-                                    };
-
-                                    _db.InsertTrack(newTrack);
-                                    dbTracksByPath[file] = newTrack;
-                                    added++;
-                                    batchCount++;
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogWarning(ex, "Failed to parse new music file: {File}", file);
-                                }
-                            }
-
-                            if (batchCount >= 50)
-                            {
-                                _db.Commit();
-                                _db.BeginTransaction();
-                                batchCount = 0;
+                                status = ScanRootStatus.Cancelled;
                             }
                         }
-                        if (cancellationToken.IsCancellationRequested)
-                        {
-                            LastFailedRoots.Add(folder);
-                            LastRootStatus[folder] = ScanRootStatus.Cancelled;
-                        }
-                        else if (LastRootStatus.TryGetValue(folder, out var st) && st == ScanRootStatus.Partial)
-                        {
-                            LastFailedRoots.Add(folder);
-                        }
-                        else
+
+                        // Completed is assigned only after enumeration AND indexing
+                        // finished. A Partial root can never be promoted here.
+                        if (status == ScanRootStatus.Completed)
                         {
                             LastScannedRoots.Add(folder);
                             LastRootStatus[folder] = ScanRootStatus.Completed;
+                        }
+                        else
+                        {
+                            LastScannedRoots.Remove(folder);
+                            LastFailedRoots.Add(folder);
+                            LastRootStatus[folder] = status;
                         }
                     }
                     _db.Commit();
@@ -522,6 +636,16 @@ public class MusicScanner
                 {
                     try { _db.Rollback(); } catch { }
                     _logger.LogError(ex, "Error during refresh and sync");
+                    // No root may be reported as completed if indexing failed.
+                    foreach (var folder in rootFolders)
+                    {
+                        LastScannedRoots.Remove(folder);
+                        if (rootEnumStatus.TryGetValue(folder, out var s) && s == ScanRootStatus.Completed)
+                        {
+                            LastRootStatus[folder] = ScanRootStatus.Failed;
+                            LastFailedRoots.Add(folder);
+                        }
+                    }
                 }
 
                 // Update managed folder scan dates
@@ -539,6 +663,14 @@ public class MusicScanner
 
         return (added, updated, removed);
     }
+
+    /// <summary>
+    /// Enumerates a managed root recursively and reports whether the whole tree
+    /// was readable. Test seams override this to simulate access failures
+    /// deterministically; production uses <see cref="EnumerateFilesSafe"/>.
+    /// </summary>
+    protected virtual IReadOnlyList<string> EnumerateRootFiles(string root, CancellationToken cancellationToken, out bool complete)
+        => EnumerateFilesSafe(root, out complete).ToArray();
 
     private static IEnumerable<string> EnumerateFilesSafe(string root, out bool complete)
     {

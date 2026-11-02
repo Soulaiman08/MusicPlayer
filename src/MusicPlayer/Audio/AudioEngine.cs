@@ -151,6 +151,15 @@ public class AudioEngine : IDisposable
         }
     }
 
+    /// <summary>
+    /// Creates the reader that owns the source file. Kept virtual so tests can
+    /// observe real disposal of the reader without touching a physical device.
+    /// </summary>
+    protected virtual AudioFileReader CreateAudioFileReader(string filePath)
+    {
+        return new AudioFileReader(filePath);
+    }
+
     private void TryFallbackToDevice(int deviceNumber)
     {
         var oldDevice = _outputDevice;
@@ -193,20 +202,31 @@ public class AudioEngine : IDisposable
     /// hung NAudio Stop/Dispose can never block the load pipeline. The new device
     /// is created independently; if the old device number is momentarily still
     /// allocated, the Init retry loops below wait for it to free up.
+    /// Returns true only when both Stop and Dispose completed without error.
     /// </summary>
-    protected virtual Task RetireDeviceAsync(IWavePlayer oldDevice)
+    protected virtual Task<bool> RetireDeviceAsync(IWavePlayer oldDevice)
     {
         var t = Task.Run(() =>
         {
+            bool ok = true;
             try { oldDevice.Stop(); }
-            catch (Exception ex) { try { LogHelper.LogError("RetireDevice.Stop", ex); } catch { } }
+            catch (Exception ex)
+            {
+                ok = false;
+                try { LogHelper.LogError("RetireDevice.Stop", ex); } catch { }
+            }
             try { oldDevice.Dispose(); }
-            catch (Exception ex) { try { LogHelper.LogError("RetireDevice.Dispose", ex); } catch { } }
+            catch (Exception ex)
+            {
+                ok = false;
+                try { LogHelper.LogError("RetireDevice.Dispose", ex); } catch { }
+            }
+            return ok;
         });
-        lock (_retireLock) { _retiredDeviceTasks.Add(t); }
-        // Clean up completed tasks to avoid unbounded growth.
         lock (_retireLock)
         {
+            _retiredDeviceTasks.Add(t);
+            // Completed tasks no longer need to be awaited; keep the list bounded.
             _retiredDeviceTasks.RemoveAll(x => x.IsCompleted);
         }
         return t;
@@ -434,33 +454,51 @@ public class AudioEngine : IDisposable
         _positionTimer.Stop();
         var oldDevice = _outputDevice;
         _outputDevice = null;
-        Task? retireTask = null;
+        var oldReader = _audioFile;
+        _audioFile = null;
+        Task<bool>? retireTask = null;
         if (oldDevice != null)
         {
             try { oldDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped; } catch { }
             retireTask = RetireDeviceAsync(oldDevice);
         }
 
-        // Ensure the old output device has fully stopped before freeing the
-        // AudioFileReader it was reading from.
-        bool retired = true;
-        if (retireTask != null)
+        // Ownership: oldReader is only released when no old device can use it.
+        if (oldReader != null)
         {
-            try { retired = retireTask.Wait(5000); }
-            catch (Exception ex) { LogHelper.LogError("RetireDevice wait failed", ex); retired = false; }
-        }
+            if (retireTask == null)
+            {
+                DisposeReaderOnce(oldReader, "LoadTrack:no-device");
+            }
+            else
+            {
+                bool completed;
+                try { completed = retireTask.Wait(RetireWaitTimeout); }
+                catch (Exception ex)
+                {
+                    LogHelper.LogError("RetireDevice wait failed", ex);
+                    completed = false;
+                }
 
-        if (retired)
-        {
-            try { _audioFile?.Dispose(); } catch { }
+                if (!completed)
+                {
+                    // Timeout: the worker still owns the reader. Keep it in a
+                    // tracked cleanup task that continues waiting for retirement.
+                    LogHelper.LogError("RetireDevice timed out; deferring AudioFileReader disposal", new TimeoutException());
+                    ScheduleReaderCleanup(oldReader, retireTask);
+                }
+                else if (retireTask.Status == TaskStatus.RanToCompletion && retireTask.Result)
+                {
+                    DisposeReaderOnce(oldReader, "LoadTrack:retired");
+                }
+                else
+                {
+                    // Stop/Dispose failed: ownership is unconfirmed, so keep the
+                    // reader alive instead of freeing it under the device.
+                    RetainUnconfirmedReader(oldReader, "LoadTrack:retire-failed");
+                }
+            }
         }
-        else
-        {
-            // Timeout: do NOT dispose the reader the old device may still use.
-            // Abandon reference; the device keeps it alive until retire completes.
-            LogHelper.LogError("RetireDevice timed out; deferring AudioFileReader disposal", new TimeoutException());
-        }
-        _audioFile = null;
         _loadFailedForCurrentTrack = false;
 
         try
@@ -475,7 +513,7 @@ public class AudioEngine : IDisposable
             LogHelper.LogInfo($"[PLAYBACK] Thread={threadId} (ThreadPool={isThreadPool}): LoadTrack start for '{track.Title}' ({track.FilePath})");
 
             long tReader0 = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            _audioFile = new AudioFileReader(track.FilePath);
+            _audioFile = CreateAudioFileReader(track.FilePath);
             long tReader = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - tReader0;
             LogHelper.LogInfo($"[PLAYBACK] Thread={threadId}: AudioFileReader={tReader}ms");
 
@@ -984,16 +1022,68 @@ public class AudioEngine : IDisposable
     private volatile int _loadGeneration = 0;
     private Thread? _workerThread = null;
     private volatile bool _disposed = false;
-    private int _deferredDisposeStarted;
     // Lifecycle state machine: 0=Created,1=Active,2=Stopping,3=Disposed.
     private int _engineState = 0;
     private const int StateCreated = 0;
     private const int StateActive = 1;
     private const int StateStopping = 2;
     private const int StateDisposed = 3;
-    // Tracked retired-device tasks so Dispose can await them.
+
+    // How long LoadTrack waits for one device retirement before handing the
+    // reader to the tracked deferred-cleanup path.
+    internal TimeSpan RetireWaitTimeout { get; set; } = TimeSpan.FromSeconds(5);
+    // Synchronous Dispose fallback: window shutdown awaits ShutdownAsync first,
+    // so this bound should only matter during abnormal process teardown.
+    internal TimeSpan ShutdownSyncWaitTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    private readonly object _shutdownGate = new();
+    private Task? _shutdownTask;
+
+    // Tracked retired-device tasks and reader cleanup tasks so shutdown can
+    // await them instead of dropping fire-and-forget work.
     private readonly object _retireLock = new();
-    private readonly List<Task> _retiredDeviceTasks = new();
+    private readonly List<Task<bool>> _retiredDeviceTasks = new();
+    private readonly List<Task> _cleanupTasks = new();
+    private readonly List<AudioFileReader> _unconfirmedReaders = new();
+
+    private void DisposeReaderOnce(AudioFileReader? reader, string source)
+    {
+        if (reader == null) return;
+        try { reader.Dispose(); }
+        catch (Exception ex) { LogHelper.LogError($"AudioEngine reader dispose failed ({source})", ex); }
+    }
+
+    private void RetainUnconfirmedReader(AudioFileReader reader, string source)
+    {
+        // A failed Stop/Dispose means we cannot prove the device stopped using
+        // the reader. Keep ownership explicitly instead of freeing it unsafely.
+        lock (_retireLock) { _unconfirmedReaders.Add(reader); }
+        LogHelper.LogError($"AudioEngine retained AudioFileReader after {source}", new InvalidOperationException("Device retirement did not complete successfully."));
+    }
+
+    private void ScheduleReaderCleanup(AudioFileReader reader, Task<bool> retireTask)
+    {
+        Task cleanup = Task.Run(async () =>
+        {
+            bool retired = false;
+            try { retired = await retireTask.ConfigureAwait(false); }
+            catch (Exception ex) { LogHelper.LogError("Deferred reader cleanup: retirement faulted", ex); }
+
+            if (retired)
+            {
+                DisposeReaderOnce(reader, "deferred-retire");
+            }
+            else
+            {
+                RetainUnconfirmedReader(reader, "deferred-retire-failed");
+            }
+        });
+        lock (_retireLock)
+        {
+            _cleanupTasks.Add(cleanup);
+            _cleanupTasks.RemoveAll(x => x.IsCompleted);
+        }
+    }
 
     private void OnPositionTimerElapsed(object? sender, ElapsedEventArgs e)
     {
@@ -1126,87 +1216,155 @@ public class AudioEngine : IDisposable
         }
     }
 
-    public void Dispose()
+    public Task ShutdownAsync()
     {
-        if (_disposed) return;
-        _disposed = true;
-        Interlocked.Exchange(ref _engineState, StateStopping);
+        return BeginShutdown();
+    }
 
-        // Stop the timer first so no further callbacks fire.
-        try { _positionTimer?.Stop(); } catch { }
-        try { _positionTimer?.Dispose(); } catch { }
-
-        // Cancel any in-flight worker.
-        lock (_playbackLock)
+    private Task BeginShutdown()
+    {
+        lock (_shutdownGate)
         {
-            _queuedTrack = null;
-            _playbackWorkerRunning = false;
-        }
-        var wt = _workerThread;
-        if (wt != null && wt.IsAlive)
-        {
-            try { wt.Join(5000); } catch { }
-        }
-        // If the worker is still alive, do NOT dispose resources it may use.
-        if (wt != null && wt.IsAlive)
-        {
-            if (Interlocked.Exchange(ref _deferredDisposeStarted, 1) == 0)
-            {
-                LogHelper.LogError("AudioEngine.Dispose: worker thread still alive after timeout; deferring resource disposal", new TimeoutException());
-                Task.Run(() =>
-                {
-                    try { wt.Join(10000); } catch { }
-                    if (wt.IsAlive) return;
-                    try
-                    {
-                        try { AudioAnalyzer.Instance.Attach(null); } catch { }
-                        if (_outputDevice != null)
-                        {
-                            try { _outputDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped; } catch { }
-                            try { _outputDevice.Stop(); } catch { }
-                            try { _outputDevice.Dispose(); } catch { }
-                            _outputDevice = null;
-                        }
-                        try { _audioFile?.Dispose(); } catch { }
-                        _audioFile = null;
-                    }
-                    catch (Exception ex) { LogHelper.LogError("Deferred AudioEngine dispose failed", ex); }
-                });
-            }
-            Interlocked.Exchange(ref _engineState, StateDisposed);
-            return;
-        }
+            if (_shutdownTask != null) return _shutdownTask;
 
-        // Wait for retired device tasks.
-        List<Task> retired;
-        lock (_retireLock) { retired = _retiredDeviceTasks.ToList(); }
-        try { Task.WaitAll(retired.ToArray(), 5000); } catch (Exception ex) { LogHelper.LogError("Retired device wait failed", ex); }
-        foreach (var t in retired)
-        {
-            if (!t.IsCompleted)
-            {
-                LogHelper.LogError("AudioEngine.Dispose: retired device task not completed", new TimeoutException());
-            }
+            _disposed = true;
+            Interlocked.Exchange(ref _engineState, StateStopping);
+            _shutdownTask = Task.Run(ShutdownCoreAsync);
+            return _shutdownTask;
         }
-        lock (_retireLock) { _retiredDeviceTasks.Clear(); }
+    }
 
-        try { AudioAnalyzer.Instance.Attach(null); } catch { }
-
+    private async Task ShutdownCoreAsync()
+    {
         try
         {
-            if (_outputDevice != null)
+            // Stop timers first so no further callbacks fire.
+            try { _positionTimer.Stop(); } catch { }
+            try { _positionTimer.Dispose(); } catch { }
+
+            // Reject queued work and wait for the playback worker to finish.
+            lock (_playbackLock)
             {
-                try { _outputDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped; } catch { }
-                try { _outputDevice.Stop(); } catch { }
-                try { _outputDevice.Dispose(); } catch { }
-                _outputDevice = null;
+                _queuedTrack = null;
+                _playbackWorkerRunning = false;
+            }
+            var worker = _workerThread;
+            if (worker != null && worker.IsAlive)
+            {
+                try
+                {
+                    await Task.Run(() =>
+                    {
+                        try { worker.Join(); } catch { }
+                    }).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    LogHelper.LogError("AudioEngine.Shutdown: worker join failed", ex);
+                }
+            }
+
+            // Await every retired device. A failed retirement is reported and
+            // its reader stays in _unconfirmedReaders (no unsafe disposal).
+            Task<bool>[] retired;
+            lock (_retireLock) { retired = _retiredDeviceTasks.ToArray(); }
+            foreach (var task in retired)
+            {
+                try
+                {
+                    if (!await task.ConfigureAwait(false))
+                    {
+                        LogHelper.LogError("AudioEngine.Shutdown: device retirement failed", new InvalidOperationException("Stop/Dispose reported failure."));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogHelper.LogError("AudioEngine.Shutdown: device retirement faulted", ex);
+                }
+            }
+
+            // Cleanup tasks own readers whose device retirement outlived the
+            // LoadTrack wait. Await them until they reach a final result.
+            Task[] cleanup;
+            lock (_retireLock) { cleanup = _cleanupTasks.ToArray(); }
+            foreach (var task in cleanup)
+            {
+                try { await task.ConfigureAwait(false); }
+                catch (Exception ex) { LogHelper.LogError("AudioEngine.Shutdown: deferred cleanup faulted", ex); }
+            }
+
+            // The current device is the only remaining consumer of _audioFile.
+            bool deviceRetired = true;
+            var device = _outputDevice;
+            _outputDevice = null;
+            if (device != null)
+            {
+                try { device.PlaybackStopped -= OnOutputDevicePlaybackStopped; }
+                catch (Exception ex) { LogHelper.LogError("AudioEngine.Shutdown: detach PlaybackStopped failed", ex); }
+
+                try { device.Stop(); }
+                catch (Exception ex)
+                {
+                    deviceRetired = false;
+                    LogHelper.LogError("AudioEngine.Shutdown: device Stop failed", ex);
+                }
+
+                try { device.Dispose(); }
+                catch (Exception ex)
+                {
+                    deviceRetired = false;
+                    LogHelper.LogError("AudioEngine.Shutdown: device Dispose failed", ex);
+                }
+            }
+
+            try { AudioAnalyzer.Instance.Attach(null); }
+            catch (Exception ex) { LogHelper.LogError("AudioEngine.Shutdown: AudioAnalyzer detach failed", ex); }
+
+            var reader = _audioFile;
+            _audioFile = null;
+            if (reader != null)
+            {
+                if (deviceRetired)
+                {
+                    DisposeReaderOnce(reader, "shutdown");
+                }
+                else
+                {
+                    RetainUnconfirmedReader(reader, "shutdown-device-failed");
+                }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("AudioEngine.Shutdown failed", ex);
+        }
+        finally
+        {
+            lock (_retireLock)
+            {
+                _retiredDeviceTasks.Clear();
+                _cleanupTasks.Clear();
+            }
+            Interlocked.Exchange(ref _engineState, StateDisposed);
+        }
+    }
 
-        try { _audioFile?.Dispose(); } catch { }
-        _audioFile = null;
-
-        Interlocked.Exchange(ref _engineState, StateDisposed);
+    public void Dispose()
+    {
+        Task shutdown = BeginShutdown();
+        if (!shutdown.IsCompleted)
+        {
+            try
+            {
+                if (!shutdown.Wait(ShutdownSyncWaitTimeout))
+                {
+                    LogHelper.LogError("AudioEngine.Dispose: shutdown did not complete within the synchronous wait", new TimeoutException());
+                }
+            }
+            catch (Exception ex)
+            {
+                LogHelper.LogError("AudioEngine.Dispose: shutdown faulted", ex);
+            }
+        }
     }
 }

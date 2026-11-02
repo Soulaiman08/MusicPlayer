@@ -2543,12 +2543,18 @@ InitializeComponent();
         if (_isClosing) { e.Cancel = true; return; } // reentrant: ignore
         _isClosing = true;
         e.Cancel = true;
-        try { CancelQueueDrag("WindowClosing"); } catch { }
-        try { _trayService?.RemoveIcon(); } catch { }
-        try { if (ViewModel != null) await ViewModel.StopBackgroundTasksAsync(); } catch { }
-        try { SaveWindowState(); } catch { }
-        _allowFinalClose = true;
-        try { Close(); } catch { }
+        try
+        {
+            try { CancelQueueDrag("WindowClosing"); } catch { }
+            try { _trayService?.RemoveIcon(); } catch { }
+            try { if (ViewModel != null) await ViewModel.ShutdownAsync(); } catch { }
+            try { SaveWindowState(); } catch { }
+        }
+        finally
+        {
+            _allowFinalClose = true;
+            try { Close(); } catch { }
+        }
 
         // Shutdown is handled by App.OnExit (single owner for service disposal).
         // No forced kill: previously a 3s watchdog called Environment.Exit(0)

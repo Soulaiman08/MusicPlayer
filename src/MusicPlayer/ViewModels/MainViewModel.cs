@@ -53,8 +53,7 @@ public partial class MainViewModel : ViewModelBase
 	private readonly WindowsIntegrationService? _winIntegration;
 
 	private (List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages)? _preloadedArtistResult;
-	private readonly CancellationTokenSource _backgroundCts = new();
-	private readonly List<Task> _backgroundTasks = new();
+	private readonly BackgroundTaskRegistry _backgroundTaskRegistry;
 
 	private DispatcherTimer? _lyricAdvanceTimer;
 
@@ -4171,6 +4170,7 @@ public partial class MainViewModel : ViewModelBase
 		_artistImages = artistImages;
 		_logger = logger;
 		_winIntegration = winIntegration;
+		_backgroundTaskRegistry = new BackgroundTaskRegistry(logger);
 		EqPreset[] presets = EqPreset.Presets;
 		foreach (EqPreset item in presets)
 		{
@@ -4287,52 +4287,61 @@ public partial class MainViewModel : ViewModelBase
 		UpdateQueueSummary();
 		IsInitializing = false;
 		// Row-thumbnail warmup runs immediately in background so the entire library is cached in RAM.
-		var warmTask = Task.Run(async delegate
+		StartTrackedBackgroundTask("WarmUpAndRefresh", ct => WarmUpAndRefreshAsync(sortedTracks, ct));
+		StartTrackedBackgroundTask("WallpaperWarmupLoop", async ct =>
 		{
-			try { await WarmUpAndRefreshAsync(sortedTracks, _backgroundCts.Token); }
-			catch (OperationCanceledException) { }
-			catch (Exception ex) { _logger.LogError(ex, "WarmUpAndRefreshAsync failed"); }
-		}, _backgroundCts.Token);
-		lock (_backgroundTasks) { _backgroundTasks.Add(warmTask); }
-		var wallTask = Task.Run(async delegate
-		{
-			try
+			while (!ct.IsCancellationRequested)
 			{
-				var ct = _backgroundCts.Token;
-				while (!ct.IsCancellationRequested)
-				{
-					await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-						quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, ct);
-					if (ct.IsCancellationRequested) break;
-					if (await EnsureWallpapersLoadedAsync(false, true)) break;
-				}
+				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
+					quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, ct);
+				if (ct.IsCancellationRequested) break;
+				if (await EnsureWallpapersLoadedAsync(false, true, ct)) break;
 			}
-			catch (OperationCanceledException) { }
-			catch (Exception ex) { _logger.LogError(ex, "Wallpaper warmup loop failed"); }
-		}, _backgroundCts.Token);
-		lock (_backgroundTasks) { _backgroundTasks.Add(wallTask); }
+		});
 		// Re-crop all existing cached artist images with smart face-centered square crop.
 		// Cancelled while the user interacts, resumed when they pause — re-cropping is
 		// idempotent (already square files are skipped), so restarting stays cheap.
-		var upgradeTask = Task.Run(() => RunUpgradeArtistCacheAsync(_backgroundCts.Token), _backgroundCts.Token);
-		lock (_backgroundTasks) { _backgroundTasks.Add(upgradeTask); }
+		StartTrackedBackgroundTask("UpgradeArtistCache", ct => RunUpgradeArtistCacheAsync(ct));
+	}
+
+	private bool StartTrackedBackgroundTask(string name, Func<CancellationToken, Task> operation)
+	{
+		return _backgroundTaskRegistry.TryStart(name, operation);
 	}
 
 	public void CancelBackgroundTasks()
 	{
-		try { _backgroundCts.Cancel(); } catch { }
+		_backgroundTaskRegistry.Cancel();
 	}
 
-	public async Task StopBackgroundTasksAsync()
+	public Task StopBackgroundTasksAsync()
 	{
-		try { _backgroundCts.Cancel(); } catch { }
-		List<Task> snapshot;
-		lock (_backgroundTasks) { snapshot = _backgroundTasks.ToList(); }
-		try { await Task.WhenAll(snapshot); }
-		catch (OperationCanceledException) { }
-		catch (Exception ex) { _logger.LogError(ex, "Background task stop failed"); }
-		lock (_backgroundTasks) { _backgroundTasks.Clear(); }
-		try { _backgroundCts.Dispose(); } catch { }
+		return _backgroundTaskRegistry.StopAsync();
+	}
+
+	/// <summary>
+	/// Ordered shutdown used by the window: stop every registered background
+	/// task first (they may still use DI services), then stop the audio engine
+	/// and await its workers/retirements.
+	/// </summary>
+	public async Task ShutdownAsync()
+	{
+		// Stop UI-scoped delayed work before service shutdown. These tasks are
+		// short-lived and are not part of the DI-service registry, but they can
+		// still touch the engine/dispatcher after the window closes.
+		try { _sleepTimerCts?.Cancel(); } catch (ObjectDisposedException) { }
+		try { _sleepTimerTicker?.Stop(); } catch { }
+		try { _searchCts?.Cancel(); } catch (ObjectDisposedException) { }
+
+		await StopBackgroundTasksAsync().ConfigureAwait(false);
+		try
+		{
+			await _playback.Engine.ShutdownAsync().ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Audio engine shutdown failed");
+		}
 	}
 
 	private async Task RunUpgradeArtistCacheAsync(CancellationToken cancellationToken = default)
@@ -4342,35 +4351,100 @@ public partial class MainViewModel : ViewModelBase
 			await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, cancellationToken);
 			while (!cancellationToken.IsCancellationRequested)
 			{
-				using CancellationTokenSource cts = new CancellationTokenSource();
-				Task work = _artistImages.UpgradeExistingCacheAsync(cts.Token);
-				Task watchdog = Task.Run(async delegate
-				{
-					while (!work.IsCompleted)
-					{
-						if (MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow())
-						{
-							cts.Cancel();
-							break;
-						}
-						await Task.Delay(400);
-					}
-				});
-				await work;
-				await watchdog;
-				if (!cts.IsCancellationRequested) break;
-				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue);
+				bool retry = await RunCancellableWorkWithWatchdogAsync(
+					ct => _artistImages.UpgradeExistingCacheAsync(ct),
+					() => MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(),
+					cancellationToken);
+				if (!retry) break;
+				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
+					quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, cancellationToken);
 			}
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			// Application shutdown.
+		}
+	}
+
+	/// <summary>
+	/// Runs a cancellable unit of background work with a watchdog, using a
+	/// linked token. Both the work and the watchdog are awaited; neither can
+	/// outlive this method.
+	/// </summary>
+	internal static async Task<bool> RunCancellableWorkWithWatchdogAsync(
+		Func<CancellationToken, Task> workFactory,
+		Func<bool> isInteracting,
+		CancellationToken lifetimeToken,
+		int pollMs = 400)
+	{
+		using var linked = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
+		Task work;
+		try
+		{
+			work = workFactory(linked.Token) ?? Task.CompletedTask;
 		}
 		catch
 		{
+			linked.Cancel();
+			throw;
 		}
+
+		bool cancelledByWatchdog = false;
+		Task watchdog = Task.Run(async delegate
+		{
+			try
+			{
+				while (!work.IsCompleted)
+				{
+					if (lifetimeToken.IsCancellationRequested)
+					{
+						linked.Cancel();
+						break;
+					}
+					if (isInteracting())
+					{
+						cancelledByWatchdog = true;
+						linked.Cancel();
+						break;
+					}
+					await Task.Delay(pollMs, lifetimeToken).ConfigureAwait(false);
+				}
+			}
+			catch (OperationCanceledException)
+			{
+				linked.Cancel();
+			}
+		});
+
+		try
+		{
+			await work.ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (linked.IsCancellationRequested)
+		{
+			// Cancelled by shutdown or by the watchdog.
+		}
+		finally
+		{
+			if (!work.IsCompleted)
+			{
+				try { linked.Cancel(); } catch (ObjectDisposedException) { }
+			}
+			try { await watchdog.ConfigureAwait(false); }
+			catch (OperationCanceledException) { }
+		}
+
+		return cancelledByWatchdog;
 	}
 
 	private async Task WarmUpAndRefreshAsync(List<MusicTrack> tracks, CancellationToken cancellationToken = default)
 	{
 		var sw = System.Diagnostics.Stopwatch.StartNew();
+		cancellationToken.ThrowIfCancellationRequested();
+		// WarmUpArtCacheAsync does not expose a token; await it fully rather than
+		// pretending it was cancelled.
 		await _albumArt.WarmUpArtCacheAsync(tracks);
+		cancellationToken.ThrowIfCancellationRequested();
 		long warmMs = sw.ElapsedMilliseconds;
 		await DispatchAsync(delegate
 		{
@@ -5946,7 +6020,7 @@ private async void LoadArtists()
 			long fillMs = swFill.ElapsedMilliseconds;
 			PerfTabData("artists", Artists.Count);
 			var swKick = System.Diagnostics.Stopwatch.StartNew();
-			_ = FetchMissingArtistImagesAsync(result.Items);
+			StartTrackedBackgroundTask("FetchMissingArtistImages", ct => FetchMissingArtistImagesAsync(result.Items, ct));
 			if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
 				LogHelper.LogInfo($"TAB-ARTISTS sortMs={sortMs} fillMs={fillMs} fetchKickMs={swKick.ElapsedMilliseconds}");
 		}
@@ -6017,7 +6091,7 @@ private async void LoadArtists()
 		}
 	}
 
-	private async Task FetchMissingArtistImagesAsync(List<MusicTrack> items)
+	private async Task FetchMissingArtistImagesAsync(List<MusicTrack> items, CancellationToken cancellationToken = default)
 	{
 		try
 		{
@@ -6034,39 +6108,58 @@ private async void LoadArtists()
 				if (t.Artist.Trim().Length <= 2) continue;
 				missing.Add(t);
 			}
+			if (missing.Count == 0 || cancellationToken.IsCancellationRequested) return;
+
 			await Task.Run(async delegate
 			{
 				SemaphoreSlim sem = new SemaphoreSlim(6);
-				await Task.WhenAll(missing.Select((Func<MusicTrack, Task>)async delegate(MusicTrack track)
+				try
 				{
-					await sem.WaitAsync();
-					try
+					await Task.WhenAll(missing.Select((Func<MusicTrack, Task>)async delegate(MusicTrack track)
 					{
-						string path = await _artistImages.GetArtistImageAsync(track.Artist);
-						if (path != null)
+						await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
+						try
 						{
-							await DispatchAsync(delegate
+							cancellationToken.ThrowIfCancellationRequested();
+							string path = await _artistImages.GetArtistImageAsync(track.Artist, cancellationToken).ConfigureAwait(false);
+							if (path != null)
 							{
-							if (!ArtistImages.ContainsKey(track.Artist))
+								cancellationToken.ThrowIfCancellationRequested();
+								await DispatchAsync(delegate
 								{
-									ArtistImages[track.Artist] = path;
-									OnPropertyChanged(nameof(ArtistImages));
-								}
-					});
+									if (!ArtistImages.ContainsKey(track.Artist))
+									{
+										ArtistImages[track.Artist] = path;
+										OnPropertyChanged(nameof(ArtistImages));
+									}
+								});
+							}
+						}
+						catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+						{
+						}
+						catch (Exception ex)
+						{
+							_logger.LogWarning(ex, "Failed to fetch artist image: {Artist}", track.Artist);
+						}
+						finally
+						{
+							sem.Release();
+						}
+					}));
 				}
-			}
-					catch
-					{
-					}
-					finally
-					{
-						sem.Release();
-					}
-				}));
-			});
+				finally
+				{
+					sem.Dispose();
+				}
+			}, cancellationToken);
 		}
-		catch
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "FetchMissingArtistImagesAsync failed");
 		}
 	}
 
@@ -7834,8 +7927,9 @@ private async void LoadFolders()
 	private bool _isLoadingWallpapers;
 	/// <returns>true when wallpapers are loaded (or someone else is loading them);
 	/// false when aborted because the user interacted — the caller should retry later.</returns>
-	private async Task<bool> EnsureWallpapersLoadedAsync(bool forceReload = false, bool abortIfUserActive = false)
+	private async Task<bool> EnsureWallpapersLoadedAsync(bool forceReload = false, bool abortIfUserActive = false, CancellationToken cancellationToken = default)
 	{
+		if (cancellationToken.IsCancellationRequested) return false;
 		if (!forceReload && Wallpapers.Count > 0)
 		{
 			FilterWallpapers();
@@ -7853,11 +7947,13 @@ private async void LoadFolders()
 			{
 				var cats = new List<string>();
 				var items = new List<WallpaperItem>();
+				if (cancellationToken.IsCancellationRequested) return (cats, items, aborted: true);
 				var dir = new System.IO.DirectoryInfo(System.IO.Path.Combine(baseDir, "Wallpaper"));
 				LogHelper.LogInfo($"[Wallpaper] scan dir='{(dir.Exists ? dir.FullName : "(missing)")}' exists={dir.Exists}");
 				if (!dir.Exists) return (cats, items, aborted: false);
 				foreach (var sub in dir.GetDirectories())
 				{
+					if (cancellationToken.IsCancellationRequested) return (cats, items, aborted: true);
 					if (sub.Name == "Thumbnails") continue;
 					cats.Add(sub.Name);
 					var thumbDir = new System.IO.DirectoryInfo(System.IO.Path.Combine(baseDir, "Wallpaper", "Thumbnails", sub.Name));
@@ -7867,6 +7963,11 @@ private async void LoadFolders()
 						// When running from the background gate, hand control back
 						// within one file if the user returns — the caller retries
 						// after the next quiet window (return-lag guard).
+						if (cancellationToken.IsCancellationRequested)
+						{
+							LogHelper.LogInfo($"[Wallpaper] abort (shutdown) after {items.Count} items");
+							return (cats, items, aborted: true);
+						}
 						if (abortIfUserActive && MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow())
 						{
 							LogHelper.LogInfo($"[Wallpaper] abort (user interacting) after {items.Count} items");
@@ -7902,6 +8003,7 @@ private async void LoadFolders()
 			});
 
 			if (result.aborted) return false;
+			if (cancellationToken.IsCancellationRequested) return false;
 
 			await DispatchAsync(() =>
 			{
@@ -7915,7 +8017,15 @@ private async void LoadFolders()
 			});
 			return true;
 		}
-		catch { return true; }
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			return false;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "EnsureWallpapersLoadedAsync failed");
+			return true;
+		}
 		finally
 		{
 			_isLoadingWallpapers = false;
@@ -7929,7 +8039,7 @@ private async void LoadFolders()
 			FilterWallpapers();
 			return;
 		}
-		_ = EnsureWallpapersLoadedAsync();
+		StartTrackedBackgroundTask("EnsureWallpapersLoaded", ct => EnsureWallpapersLoadedAsync(false, false, ct));
 	}
 	private void FilterWallpapers()
 	{
