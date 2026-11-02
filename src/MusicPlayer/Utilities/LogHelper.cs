@@ -13,6 +13,7 @@ public static class LogHelper
     private static readonly AutoResetEvent _wake = new(false);
     private static readonly Thread _writerThread;
     private static volatile bool _running = true;
+    private static readonly object _flushLock = new();
 
     static LogHelper()
     {
@@ -61,6 +62,14 @@ public static class LogHelper
             }
             catch { }
 
+            if (!_running)
+            {
+                // Shutdown in progress: write synchronously (best effort) instead of
+                // enqueueing into a queue that may never be drained.
+                try { File.AppendAllText(logFile, line); } catch { }
+                if (docLog != null) try { File.AppendAllText(docLog, line); } catch { }
+                return;
+            }
             _logQueue.Enqueue((logFile, docLog, line));
             _wake.Set();
         }
@@ -95,10 +104,26 @@ public static class LogHelper
 
     public static void Flush()
     {
-        _running = false;
-        _wake.Set();
-        // Give the writer thread a bounded moment to drain, then drain synchronously.
-        try { _writerThread.Join(1000); } catch { }
-        DrainQueue();
+        lock (_flushLock)
+        {
+            if (_running)
+            {
+                _running = false;
+                _wake.Set();
+                try { _writerThread.Join(2000); } catch { }
+            }
+
+            // Only drain synchronously if the writer thread is no longer running,
+            // otherwise we would race with it on the log files.
+            if (!_writerThread.IsAlive)
+            {
+                DrainQueue();
+            }
+            else
+            {
+                try { File.AppendAllText(Path.Combine(AppPaths.LogsPath, "error_" + DateTime.Now.ToString("yyyyMMdd") + ".log"),
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [LogHelper] Flush timed out; writer thread still alive\n"); } catch { }
+            }
+        }
     }
 }

@@ -96,8 +96,13 @@ public class AudioEngine : IDisposable
         get => _deviceNumber;
         set
         {
+            if (_disposed) return;
+            if (Volatile.Read(ref _engineState) >= StateStopping) return;
             if (_deviceNumber == value) return;
-            _deviceNumber = value;
+            lock (_playbackLock)
+            {
+                _deviceNumber = value;
+            }
             if (_outputDevice != null)
             {
                 try
@@ -125,7 +130,7 @@ public class AudioEngine : IDisposable
         }
     }
 
-    private IWavePlayer CreateOutputDevice()
+    protected virtual IWavePlayer CreateOutputDevice()
     {
         if (_deviceNumber >= 0)
         {
@@ -189,17 +194,20 @@ public class AudioEngine : IDisposable
     /// is created independently; if the old device number is momentarily still
     /// allocated, the Init retry loops below wait for it to free up.
     /// </summary>
-    private void RetireDeviceAsync(IWavePlayer oldDevice)
+    protected virtual Task RetireDeviceAsync(IWavePlayer oldDevice)
     {
-        try
+        var t = Task.Run(() =>
         {
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try { oldDevice.Stop(); } catch { }
-                try { oldDevice.Dispose(); } catch { }
-            });
+            try { oldDevice.Stop(); } catch { }
+            try { oldDevice.Dispose(); } catch { }
+        });
+        lock (_retireLock) { _retiredDeviceTasks.Add(t); }
+        // Clean up completed tasks to avoid unbounded growth.
+        lock (_retireLock)
+        {
+            _retiredDeviceTasks.RemoveAll(x => x.IsCompleted);
         }
-        catch { }
+        return t;
     }
 
     /// <summary>
@@ -418,18 +426,38 @@ public class AudioEngine : IDisposable
 
     public void LoadTrack(MusicTrack track)
     {
+        if (Volatile.Read(ref _engineState) >= StateStopping) { _loadingTrack = false; return; }
         _isPlaying = false;
         _loadingTrack = true;
         _positionTimer.Stop();
         var oldDevice = _outputDevice;
         _outputDevice = null;
+        Task? retireTask = null;
         if (oldDevice != null)
         {
             try { oldDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped; } catch { }
-            RetireDeviceAsync(oldDevice);
+            retireTask = RetireDeviceAsync(oldDevice);
         }
 
-        _audioFile?.Dispose();
+        // Ensure the old output device has fully stopped before freeing the
+        // AudioFileReader it was reading from.
+        bool retired = true;
+        if (retireTask != null)
+        {
+            try { retired = retireTask.Wait(5000); }
+            catch (Exception ex) { LogHelper.LogError("RetireDevice wait failed", ex); retired = false; }
+        }
+
+        if (retired)
+        {
+            try { _audioFile?.Dispose(); } catch { }
+        }
+        else
+        {
+            // Timeout: do NOT dispose the reader the old device may still use.
+            // Abandon reference; the device keeps it alive until retire completes.
+            LogHelper.LogError("RetireDevice timed out; deferring AudioFileReader disposal", new TimeoutException());
+        }
         _audioFile = null;
         _loadFailedForCurrentTrack = false;
 
@@ -539,6 +567,7 @@ public class AudioEngine : IDisposable
 
     public void Play()
     {
+        if (_disposed || Volatile.Read(ref _engineState) >= StateStopping) return;
         if (_audioFile == null && _currentTrack != null && !_loadFailedForCurrentTrack)
         {
             LoadAndPlayAsync(_currentTrack);
@@ -597,7 +626,10 @@ public class AudioEngine : IDisposable
     /// </summary>
     public void LoadAndPlayAsync(MusicTrack track)
     {
-        if (track == null || _disposed) return;
+        if (track == null) return;
+        if (_disposed) return;
+        if (Volatile.Read(ref _engineState) >= StateStopping) return;
+        Interlocked.CompareExchange(ref _engineState, StateActive, StateCreated);
 
         lock (_playbackLock)
         {
@@ -638,7 +670,7 @@ public class AudioEngine : IDisposable
         {
             while (true)
             {
-                if (_disposed) { lock (_playbackLock) { _playbackWorkerRunning = false; _queuedTrack = null; } return; }
+                if (_disposed || Volatile.Read(ref _engineState) >= StateStopping) { lock (_playbackLock) { _playbackWorkerRunning = false; _queuedTrack = null; } return; }
 
                 MusicTrack track;
                 int gen;
@@ -661,11 +693,22 @@ public class AudioEngine : IDisposable
                 LoadTrack(track);
                 // Re-check generation after the (potentially long) load: if a newer
                 // request arrived mid-load, do not start playback of the stale track.
-                if (gen != _loadGeneration || _disposed)
+                bool adopted = false;
+                lock (_playbackLock)
+                {
+                    if (gen == _loadGeneration && _queuedTrack == null && !_disposed &&
+                        Volatile.Read(ref _engineState) < StateStopping)
+                    {
+                        adopted = true;
+                    }
+                }
+                if (!adopted || _disposed || Volatile.Read(ref _engineState) >= StateStopping)
                 {
                     LogHelper.LogInfo("[PLAYBACK] PlaybackWorker: load completed but request superseded; not playing");
                     continue;
                 }
+                // Final guard against a request that slipped in between adoption and Play.
+                if (gen != _loadGeneration) { continue; }
                 Play();
                 LogHelper.LogInfo($"PlaybackWorker: load+play={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - w0}ms");
             }
@@ -680,6 +723,7 @@ public class AudioEngine : IDisposable
 
     public void Pause()
     {
+        if (_disposed || Volatile.Read(ref _engineState) >= StateStopping) return;
         if (_outputDevice == null) return;
 
         try
@@ -709,6 +753,7 @@ public class AudioEngine : IDisposable
 
     public void Stop()
     {
+        if (_disposed || Volatile.Read(ref _engineState) >= StateStopping) return;
         if (_outputDevice == null) return;
 
         try
@@ -934,13 +979,22 @@ public class AudioEngine : IDisposable
     // so firing them from this worker is safe.
     private MusicTrack? _queuedTrack = null;
     private bool _playbackWorkerRunning = false;
-    private int _loadGeneration = 0;
+    private volatile int _loadGeneration = 0;
     private Thread? _workerThread = null;
     private volatile bool _disposed = false;
+    // Lifecycle state machine: 0=Created,1=Active,2=Stopping,3=Disposed.
+    private int _engineState = 0;
+    private const int StateCreated = 0;
+    private const int StateActive = 1;
+    private const int StateStopping = 2;
+    private const int StateDisposed = 3;
+    // Tracked retired-device tasks so Dispose can await them.
+    private readonly object _retireLock = new();
+    private readonly List<Task> _retiredDeviceTasks = new();
 
     private void OnPositionTimerElapsed(object? sender, ElapsedEventArgs e)
     {
-        if (_disposed) return;
+        if (_disposed || Volatile.Read(ref _engineState) >= StateStopping) return;
         // Conservative watchdog: if the engine sits idle with a valid current
         // track but no file loaded (a load that never completed) for ~2s,
         // reload the track. Guarded by _loadingTrack / _loadFailedForCurrentTrack
@@ -1033,7 +1087,7 @@ public class AudioEngine : IDisposable
 
     private void OnOutputDevicePlaybackStopped(object? sender, StoppedEventArgs e)
     {
-        if (_disposed) return;
+        if (_disposed || Volatile.Read(ref _engineState) >= StateStopping) return;
         LogHelper.LogInfo($"[PLAYBACK] OnOutputDevicePlaybackStopped: _isPlaying={_isPlaying}, _loadingTrack={_loadingTrack}, error={e.Exception?.Message ?? "none"}");
         if (_loadingTrack) return; // LoadTrack is disposing the old device — don't double-advance
         if (!_isPlaying) return;   // intentional pause/stop — don't advance
@@ -1073,6 +1127,7 @@ public class AudioEngine : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        Interlocked.Exchange(ref _engineState, StateStopping);
 
         // Stop the timer first so no further callbacks fire.
         try { _positionTimer?.Stop(); } catch { }
@@ -1087,8 +1142,48 @@ public class AudioEngine : IDisposable
         var wt = _workerThread;
         if (wt != null && wt.IsAlive)
         {
-            try { wt.Join(3000); } catch { }
+            try { wt.Join(5000); } catch { }
         }
+        // If the worker is still alive, do NOT dispose resources it may use.
+        if (wt != null && wt.IsAlive)
+        {
+            LogHelper.LogError("AudioEngine.Dispose: worker thread still alive after timeout; deferring resource disposal", new TimeoutException());
+            // Defer cleanup: when the worker eventually stops, dispose resources on a background thread.
+            Task.Run(() =>
+            {
+                try { wt.Join(10000); } catch { }
+                if (wt.IsAlive) return;
+                try
+                {
+                    try { AudioAnalyzer.Instance.Attach(null); } catch { }
+                    if (_outputDevice != null)
+                    {
+                        try { _outputDevice.PlaybackStopped -= OnOutputDevicePlaybackStopped; } catch { }
+                        try { _outputDevice.Stop(); } catch { }
+                        try { _outputDevice.Dispose(); } catch { }
+                        _outputDevice = null;
+                    }
+                    try { _audioFile?.Dispose(); } catch { }
+                    _audioFile = null;
+                }
+                catch (Exception ex) { LogHelper.LogError("Deferred AudioEngine dispose failed", ex); }
+            });
+            Interlocked.Exchange(ref _engineState, StateDisposed);
+            return;
+        }
+
+        // Wait for retired device tasks.
+        List<Task> retired;
+        lock (_retireLock) { retired = _retiredDeviceTasks.ToList(); }
+        try { Task.WaitAll(retired.ToArray(), 5000); } catch (Exception ex) { LogHelper.LogError("Retired device wait failed", ex); }
+        foreach (var t in retired)
+        {
+            if (!t.IsCompleted)
+            {
+                LogHelper.LogError("AudioEngine.Dispose: retired device task not completed", new TimeoutException());
+            }
+        }
+        lock (_retireLock) { _retiredDeviceTasks.Clear(); }
 
         try { AudioAnalyzer.Instance.Attach(null); } catch { }
 
@@ -1106,5 +1201,7 @@ public class AudioEngine : IDisposable
 
         try { _audioFile?.Dispose(); } catch { }
         _audioFile = null;
+
+        Interlocked.Exchange(ref _engineState, StateDisposed);
     }
 }

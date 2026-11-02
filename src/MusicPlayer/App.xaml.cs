@@ -494,15 +494,14 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         AllowSleep();
-        // Single owner for service disposal: service host owns AudioEngine + DatabaseService.
+        // ServiceProvider is the sole owner of singleton services (including
+        // AudioEngine and DatabaseService). ServiceHost only coordinates; it must
+        // not dispose services owned by the container.
         try { _serviceHost?.Stop(); } catch { }
-        try { ServiceProvider?.GetService<WindowsIntegrationService>()?.Dispose(); } catch { }
-        try { ServiceProvider?.GetService<SystemTrayService>()?.Dispose(); } catch { }
         try { _singleInstanceMutex?.ReleaseMutex(); } catch { }
         try { _singleInstanceMutex?.Dispose(); } catch { }
         try { (ServiceProvider as IDisposable)?.Dispose(); } catch { }
         base.OnExit(e);
-        Environment.Exit(0);
     }
 }
 
@@ -524,7 +523,7 @@ internal class MusicPlayerServiceHost
 
     public void Stop()
     {
-        _engine?.Dispose();
-        _db?.Dispose();
+        // No-op: ServiceProvider owns and disposes AudioEngine/DatabaseService.
+        // Manual disposal here would cause double disposal.
     }
 }

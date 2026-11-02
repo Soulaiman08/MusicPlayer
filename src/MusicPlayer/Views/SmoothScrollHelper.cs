@@ -1115,13 +1115,15 @@ public static class SmoothScrollHelper
     /// right then is exactly what stalls those first frames.
     /// </summary>
     internal static async Task WaitUntilIdleForBackgroundAsync(
-        int quietMs = 4000, double minAgeMs = 45000, int maxWaitMs = 300000)
+        int quietMs = 4000, double minAgeMs = 45000, int maxWaitMs = 300000,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             long t0 = Stopwatch.GetTimestamp();
             while (true)
             {
+                if (cancellationToken.IsCancellationRequested) return;
                 double ageMs = (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
                 if (ageMs >= maxWaitMs) return;
 

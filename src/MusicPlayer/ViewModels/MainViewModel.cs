@@ -53,6 +53,8 @@ public partial class MainViewModel : ViewModelBase
 	private readonly WindowsIntegrationService? _winIntegration;
 
 	private (List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages)? _preloadedArtistResult;
+	private readonly CancellationTokenSource _backgroundCts = new();
+	private readonly List<Task> _backgroundTasks = new();
 
 	private DispatcherTimer? _lyricAdvanceTimer;
 
@@ -4220,10 +4222,6 @@ public partial class MainViewModel : ViewModelBase
 			_db.CleanOrphanTracks();
 		});
 		statusCallback?.Invoke("Scanning folders...");
-		await Task.Run(delegate
-		{
-			_scanner.ForceResetScanning();
-		});
 		List<ManagedMusicFolder> list = await Task.Run(() => _db.GetManagedFolders());
 		_logger.LogInformation("Found {Count} managed folders to scan", list.Count);
 		foreach (ManagedMusicFolder mf in list)
@@ -4245,7 +4243,7 @@ public partial class MainViewModel : ViewModelBase
 		}
 		await Task.Run(delegate
 		{
-			_db.RemoveMissingTracks();
+			_db.RemoveMissingTracks(_scanner.LastScannedRoots);
 		});
 		await Task.Run(() => _scanner.BackfillDateAdded());
 		Task<(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount)> countsTask = Task.Run(() => _db.GetAllCounts());
@@ -4289,40 +4287,60 @@ public partial class MainViewModel : ViewModelBase
 		UpdateQueueSummary();
 		IsInitializing = false;
 		// Row-thumbnail warmup runs immediately in background so the entire library is cached in RAM.
-		_ = Task.Run(async delegate
+		var warmTask = Task.Run(async delegate
 		{
-			try { await WarmUpAndRefreshAsync(sortedTracks); }
+			try { await WarmUpAndRefreshAsync(sortedTracks, _backgroundCts.Token); }
+			catch (OperationCanceledException) { }
 			catch (Exception ex) { _logger.LogError(ex, "WarmUpAndRefreshAsync failed"); }
-		});
-		_ = Task.Run(async delegate
+		}, _backgroundCts.Token);
+		lock (_backgroundTasks) { _backgroundTasks.Add(warmTask); }
+		var wallTask = Task.Run(async delegate
 		{
 			try
 			{
-				// 30s-quiet (not 4s): wallpaper decoding only runs during a genuine
-				// pause, aborts per file the instant the user interacts, and retries
-				// until it completes — so returning to the app never meets a
-				// wallpaper job already in flight (was a source of return-lag).
-				while (true)
+				var ct = _backgroundCts.Token;
+				while (!ct.IsCancellationRequested)
 				{
 					await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-						quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue);
+						quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, ct);
+					if (ct.IsCancellationRequested) break;
 					if (await EnsureWallpapersLoadedAsync(false, true)) break;
 				}
 			}
+			catch (OperationCanceledException) { }
 			catch (Exception ex) { _logger.LogError(ex, "Wallpaper warmup loop failed"); }
-		});
+		}, _backgroundCts.Token);
+		lock (_backgroundTasks) { _backgroundTasks.Add(wallTask); }
 		// Re-crop all existing cached artist images with smart face-centered square crop.
 		// Cancelled while the user interacts, resumed when they pause — re-cropping is
 		// idempotent (already square files are skipped), so restarting stays cheap.
-		_ = Task.Run(RunUpgradeArtistCacheAsync);
+		var upgradeTask = Task.Run(() => RunUpgradeArtistCacheAsync(_backgroundCts.Token), _backgroundCts.Token);
+		lock (_backgroundTasks) { _backgroundTasks.Add(upgradeTask); }
 	}
 
-	private async Task RunUpgradeArtistCacheAsync()
+	public void CancelBackgroundTasks()
+	{
+		try { _backgroundCts.Cancel(); } catch { }
+	}
+
+	public async Task StopBackgroundTasksAsync()
+	{
+		try { _backgroundCts.Cancel(); } catch { }
+		List<Task> snapshot;
+		lock (_backgroundTasks) { snapshot = _backgroundTasks.ToList(); }
+		try { await Task.WhenAll(snapshot); }
+		catch (OperationCanceledException) { }
+		catch (Exception ex) { _logger.LogError(ex, "Background task stop failed"); }
+		lock (_backgroundTasks) { _backgroundTasks.Clear(); }
+		try { _backgroundCts.Dispose(); } catch { }
+	}
+
+	private async Task RunUpgradeArtistCacheAsync(CancellationToken cancellationToken = default)
 	{
 		try
 		{
-			await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue);
-			while (true)
+			await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, cancellationToken);
+			while (!cancellationToken.IsCancellationRequested)
 			{
 				using CancellationTokenSource cts = new CancellationTokenSource();
 				Task work = _artistImages.UpgradeExistingCacheAsync(cts.Token);
@@ -4349,7 +4367,7 @@ public partial class MainViewModel : ViewModelBase
 		}
 	}
 
-	private async Task WarmUpAndRefreshAsync(List<MusicTrack> tracks)
+	private async Task WarmUpAndRefreshAsync(List<MusicTrack> tracks, CancellationToken cancellationToken = default)
 	{
 		var sw = System.Diagnostics.Stopwatch.StartNew();
 		await _albumArt.WarmUpArtCacheAsync(tracks);

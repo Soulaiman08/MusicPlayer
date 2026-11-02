@@ -4,6 +4,10 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{934AAF42-B4D6-476A-951B-9B366C01CA05}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{B1C2D3E4-F5A6-7890-ABCD-EF1234567890}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MusicPlayer.Tests", "tests\MusicPlayer.Tests\MusicPlayer.Tests\MusicPlayer.Tests.csproj", "{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MusicPlayer", "src\MusicPlayer\MusicPlayer.csproj", "{D9EF9329-AC10-421A-BE70-7545D323B1DE}"
 EndProject
 Global
@@ -20,7 +24,12 @@ Global
 		{D9EF9329-AC10-421A-BE70-7545D323B1DE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D9EF9329-AC10-421A-BE70-7545D323B1DE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
+		{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}.Release|Any CPU.Build.0 = Release|Any CPU
 	GlobalSection(NestedProjects) = preSolution
 		{D9EF9329-AC10-421A-BE70-7545D323B1DE} = {934AAF42-B4D6-476A-951B-9B366C01CA05}
+		{A1B2C3D4-E5F6-7890-ABCD-1234567890AB} = {B1C2D3E4-F5A6-7890-ABCD-EF1234567890}
 	EndGlobalSection
 EndGlobal

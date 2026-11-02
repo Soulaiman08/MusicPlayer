@@ -16,11 +16,13 @@ public class DatabaseService
     private readonly object _sync = new();
     private int _txDepth;
     private int _txOwnerThreadId;
+    private volatile bool _disposedDb;
 
     private bool IsTransactionOwner => _txDepth > 0 && _txOwnerThreadId == Environment.CurrentManagedThreadId;
 
     private IDisposable LockIfNeeded()
     {
+        if (_disposedDb) throw new ObjectDisposedException(nameof(DatabaseService));
         if (IsTransactionOwner) return new NoOpScope();
         Monitor.Enter(_sync);
         return new LockScope(this);
@@ -28,28 +30,35 @@ public class DatabaseService
 
     private void EnterTransaction()
     {
+        if (_disposedDb) throw new ObjectDisposedException(nameof(DatabaseService));
         if (_txDepth == 0)
         {
             Monitor.Enter(_sync);
             _txOwnerThreadId = Environment.CurrentManagedThreadId;
+            _txDepth = 1;
         }
-        else if (_txOwnerThreadId != Environment.CurrentManagedThreadId)
+        else if (_txOwnerThreadId == Environment.CurrentManagedThreadId)
         {
-            // Should not happen in practice; block to be safe.
+            _txDepth++;
+        }
+        else
+        {
             Monitor.Enter(_sync);
             _txOwnerThreadId = Environment.CurrentManagedThreadId;
+            _txDepth = 1;
         }
-        _txDepth++;
     }
 
     private void ExitTransaction()
     {
+        if (_txOwnerThreadId != Environment.CurrentManagedThreadId)
+            throw new InvalidOperationException("ExitTransaction called by non-owner thread.");
         if (_txDepth > 0) _txDepth--;
         if (_txDepth <= 0)
         {
             _txDepth = 0;
             _txOwnerThreadId = 0;
-            try { Monitor.Exit(_sync); } catch { }
+            Monitor.Exit(_sync);
         }
     }
 
@@ -205,22 +214,37 @@ public class DatabaseService
         return _db.Table<MusicTrack>().FirstOrDefault(t => t.FilePath == path);
     }
 
-    public void RemoveMissingTracks()
+    public void RemoveMissingTracks(IEnumerable<string>? scannedRoots = null)
     {
+        if (scannedRoots == null || !scannedRoots.Any())
+        {
+            _logger.LogWarning("RemoveMissingTracks: no scanned roots provided; skipping to protect library data.");
+            return;
+        }
+
+        var normalizedRoots = scannedRoots
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r =>
+            {
+                try { return System.IO.Path.GetFullPath(r.Trim()).TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar); }
+                catch { return r.Trim(); }
+            })
+            .ToList();
+
         using var _ = LockIfNeeded();
         var allTracks = _db.Table<MusicTrack>().ToList();
         int removed = 0;
         foreach (var track in allTracks)
         {
             if (string.IsNullOrEmpty(track.FilePath)) continue;
-            if (!System.IO.File.Exists(track.FilePath))
-            {
-                _db.Delete<MusicTrack>(track.Id);
-                removed++;
-            }
+            if (System.IO.File.Exists(track.FilePath)) continue;
+            // Only consider tracks that belong to a successfully scanned root.
+            if (!normalizedRoots.Any(root => PathContainment.IsWithin(track.FilePath, root))) continue;
+            _db.Delete<MusicTrack>(track.Id);
+            removed++;
         }
         if (removed > 0)
-            _logger.LogInformation("Removed {Count} tracks whose files no longer exist", removed);
+            _logger.LogInformation("Removed {Count} tracks whose files no longer exist (within scanned roots)", removed);
     }
 
     public int InsertTrack(MusicTrack track)
@@ -359,19 +383,55 @@ public class DatabaseService
     public void BeginTransaction()
     {
         EnterTransaction();
-        _db.BeginTransaction();
+        try { _db.BeginTransaction(); }
+        catch { ExitTransaction(); throw; }
     }
 
     public void Commit()
     {
-        _db.Commit();
-        ExitTransaction();
+        if (_txOwnerThreadId != Environment.CurrentManagedThreadId)
+            throw new InvalidOperationException("Commit called by non-owner thread.");
+        try { _db.Commit(); }
+        finally { ExitTransaction(); }
     }
 
     public void Rollback()
     {
+        if (_txOwnerThreadId != Environment.CurrentManagedThreadId)
+            throw new InvalidOperationException("Rollback called by non-owner thread.");
         try { _db.Rollback(); } catch { }
-        ExitTransaction();
+        finally { ExitTransaction(); }
+    }
+
+    public void ExecuteInTransaction(Action action)
+    {
+        BeginTransaction();
+        try
+        {
+            action();
+            Commit();
+        }
+        catch
+        {
+            try { Rollback(); } catch { }
+            throw;
+        }
+    }
+
+    public T ExecuteInTransaction<T>(Func<T> func)
+    {
+        BeginTransaction();
+        try
+        {
+            var result = func();
+            Commit();
+            return result;
+        }
+        catch
+        {
+            try { Rollback(); } catch { }
+            throw;
+        }
     }
 
     // Playlists
@@ -902,7 +962,17 @@ public class DatabaseService
 
     public void Dispose()
     {
-        try { _db?.Close(); } catch { }
-        try { _db?.Dispose(); } catch { }
+        if (_disposedDb) return;
+        _disposedDb = true;
+        try
+        {
+            Monitor.Enter(_sync);
+            try { _db?.Close(); } catch (Exception ex) { try { _logger.LogError(ex, "Database close failed"); } catch { } }
+            try { _db?.Dispose(); } catch (Exception ex) { try { _logger.LogError(ex, "Database dispose failed"); } catch { } }
+        }
+        finally
+        {
+            try { Monitor.Exit(_sync); } catch { }
+        }
     }
 }

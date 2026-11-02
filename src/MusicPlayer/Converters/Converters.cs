@@ -768,7 +768,7 @@ public class FallbackIfEmptyConverter : IValueConverter
         => throw new NotImplementedException();
 }
 
-// ─────────────────────────────────────────────���───────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 // InverseBoolToVisibilityConverter — Visible when false, Collapsed when true
 // ─────────────────────────────────────────────────────────────────────────────
 public class InverseBoolToVisibilityConverter : IValueConverter

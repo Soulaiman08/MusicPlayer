@@ -12,6 +12,8 @@ using Microsoft.Extensions.Logging;
 
 namespace MusicPlayer.Library;
 
+public enum ScanRootStatus { NotStarted, Completed, Partial, Failed, Cancelled, RootUnavailable, AccessDenied }
+
 public class MusicScanner
 {
     private readonly object _scanGate = new();
@@ -28,8 +30,9 @@ public class MusicScanner
     public event EventHandler<string>? FileScanned;
     public event EventHandler? ScanCompleted;
     public bool IsScanning { get; private set; }
-    
-    public void ForceResetScanning() => IsScanning = false;
+    public HashSet<string> LastScannedRoots { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> LastFailedRoots { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, ScanRootStatus> LastRootStatus { get; } = new(StringComparer.OrdinalIgnoreCase);
     
     public MusicScanner(DatabaseService db, ILogger<MusicScanner> logger)
     {
@@ -39,6 +42,9 @@ public class MusicScanner
     
     public async Task ScanFoldersAsync(IEnumerable<string> folders, CancellationToken cancellationToken = default)
     {
+        LastScannedRoots.Clear();
+        LastFailedRoots.Clear();
+        LastRootStatus.Clear();
         lock (_scanGate)
         {
             if (IsScanning) { _logger.LogWarning("Scan already in progress, skipping"); return; }
@@ -75,33 +81,34 @@ public class MusicScanner
                         continue;
                     }
 
-                    var allFiles = EnumerateFilesSafe(folder).ToArray();
+                    var enumComplete = true;
+                    var allFiles = EnumerateFilesSafe(folder, out enumComplete).ToArray();
                     _logger.LogInformation("Total files in {Folder}: {Count}", folder, allFiles.Length);
-                    
+
                     var files = allFiles
                         .Where(f => SupportedExtensions.Contains(Path.GetExtension(f).ToLower()))
                         .ToList();
-                    
+
                     _logger.LogInformation("Music files in {Folder}: {Count}", folder, files.Count);
 
-                    _db.BeginTransaction();
+                    // Parse metadata OUTSIDE the SQLite transaction.
+                    var parsedTracks = new List<MusicTrack>();
                     foreach (var file in files)
                     {
                         if (cancellationToken.IsCancellationRequested) break;
-                        
                         try
                         {
                             var dir = Path.GetDirectoryName(file)?.ToLower() ?? "";
                             if (hiddenFolders.Any(h => PathContainment.IsWithin(dir, h))) continue;
-                            
+
                             var fileInfo = new FileInfo(file);
                             if (excludeBySize && fileInfo.Length < minSize) continue;
-                            
+
                             using var tagFile = TagLib.File.Create(file);
-                            
+
                             if (excludeByDuration && tagFile.Properties.Duration.TotalMilliseconds < minDuration)
                                 continue;
-                            
+
                             var track = new MusicTrack
                             {
                                 FilePath = file,
@@ -122,8 +129,8 @@ public class MusicScanner
                                 DateModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
                                 FolderPath = folder
                             };
-                            
-                            _db.InsertOrIgnoreTrack(track);
+
+                            parsedTracks.Add(track);
                             count++;
                             FileScanned?.Invoke(this, file);
                             ProgressChanged?.Invoke(this, count);
@@ -133,11 +140,44 @@ public class MusicScanner
                             _logger.LogWarning(ex, "Failed to scan file: {File}", file);
                         }
                     }
-                    _db.Commit();
+
+                    // Short batched writes.
+                    _db.BeginTransaction();
+                    try
+                    {
+                        foreach (var track in parsedTracks)
+                        {
+                            if (cancellationToken.IsCancellationRequested) break;
+                            _db.InsertOrIgnoreTrack(track);
+                        }
+                        _db.Commit();
+                    }
+                    catch
+                    {
+                        try { _db.Rollback(); } catch { }
+                    }
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        LastFailedRoots.Add(folder);
+                        LastRootStatus[folder] = ScanRootStatus.Cancelled;
+                    }
+                    else if (!enumComplete)
+                    {
+                        LastFailedRoots.Add(folder);
+                        LastRootStatus[folder] = ScanRootStatus.Partial;
+                    }
+                    else
+                    {
+                        LastScannedRoots.Add(folder);
+                        LastRootStatus[folder] = ScanRootStatus.Completed;
+                    }
                 }
                 catch (Exception ex)
                 {
                     try { _db.Rollback(); } catch { }
+                    LastFailedRoots.Add(folder);
+                    LastRootStatus[folder] = ScanRootStatus.Failed;
                     _logger.LogWarning(ex, "Failed to scan folder: {Folder}", folder);
                 }
             }
@@ -206,6 +246,9 @@ public class MusicScanner
 
     public async Task<(int Added, int Updated, int Removed)> RefreshAndSyncLibraryAsync(CancellationToken cancellationToken = default)
     {
+        LastScannedRoots.Clear();
+        LastFailedRoots.Clear();
+        LastRootStatus.Clear();
         lock (_scanGate)
         {
             if (IsScanning) return (0, 0, 0);
@@ -314,6 +357,16 @@ public class MusicScanner
                 }
 
                 // 3. Scan all root folders on disk for new and modified audio files
+                var folderFiles = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+                foreach (var folder in rootFolders)
+                {
+                    if (!Directory.Exists(folder)) { folderFiles[folder] = Array.Empty<string>(); continue; }
+                    try { var c = true;
+                            folderFiles[folder] = EnumerateFilesSafe(folder, out c).ToArray();
+                            if (!c) LastRootStatus[folder] = ScanRootStatus.Partial; }
+                    catch (Exception ex) { _logger.LogWarning(ex, "Failed to enumerate files in folder: {Folder}", folder); folderFiles[folder] = Array.Empty<string>(); }
+                }
+
                 _db.BeginTransaction();
                 int batchCount = 0;
                 try
@@ -323,16 +376,7 @@ public class MusicScanner
                         if (cancellationToken.IsCancellationRequested) break;
                         if (!Directory.Exists(folder)) continue;
 
-                        string[] allFiles;
-                        try
-                        {
-                            allFiles = EnumerateFilesSafe(folder).ToArray();
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to enumerate files in folder: {Folder}", folder);
-                            continue;
-                        }
+                                             if (!folderFiles.TryGetValue(folder, out var allFiles)) allFiles = Array.Empty<string>();
 
                         foreach (var file in allFiles)
                         {
@@ -442,6 +486,20 @@ public class MusicScanner
                                 batchCount = 0;
                             }
                         }
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            LastFailedRoots.Add(folder);
+                            LastRootStatus[folder] = ScanRootStatus.Cancelled;
+                        }
+                        else if (LastRootStatus.TryGetValue(folder, out var st) && st == ScanRootStatus.Partial)
+                        {
+                            LastFailedRoots.Add(folder);
+                        }
+                        else
+                        {
+                            LastScannedRoots.Add(folder);
+                            LastRootStatus[folder] = ScanRootStatus.Completed;
+                        }
                     }
                     _db.Commit();
                 }
@@ -467,27 +525,65 @@ public class MusicScanner
         return (added, updated, removed);
     }
 
-    private static IEnumerable<string> EnumerateFilesSafe(string root)
+    private static IEnumerable<string> EnumerateFilesSafe(string root, out bool complete)
     {
+        complete = true;
         var result = new List<string>();
-        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return result;
+        if (string.IsNullOrWhiteSpace(root)) { complete = false; return result; }
+        string fullRoot;
+        try { fullRoot = Path.GetFullPath(root.Trim()); }
+        catch { complete = false; return result; }
+        if (!Directory.Exists(fullRoot)) { complete = false; return result; }
+
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var stack = new Stack<string>();
-        stack.Push(root);
+        stack.Push(fullRoot);
         while (stack.Count > 0)
         {
             var dir = stack.Pop();
+            string fullDir;
+            try { fullDir = Path.GetFullPath(dir); }
+            catch { continue; }
+            if (!visited.Add(fullDir)) continue; // avoid cycles
+            if (!Directory.Exists(fullDir)) continue;
+
+            // Do not follow reparse points (junctions/symlinks) by default.
             try
             {
-                foreach (var f in Directory.GetFiles(dir))
+                var di = new DirectoryInfo(fullDir);
+                if ((di.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+                {
+                    if (!string.Equals(fullDir, fullRoot, StringComparison.OrdinalIgnoreCase))
+                        continue; // skip nested reparse points
+                }
+            }
+            catch { }
+
+            // Containment: do not escape root.
+            if (!PathContainment.IsWithin(fullDir, fullRoot)) continue;
+
+            try
+            {
+                foreach (var f in Directory.GetFiles(fullDir))
                     result.Add(f);
             }
-            catch { }
+            catch { complete = false; }
+
             try
             {
-                foreach (var d in Directory.GetDirectories(dir))
+                foreach (var d in Directory.GetDirectories(fullDir))
+                {
+                    try
+                    {
+                        var sub = new DirectoryInfo(d);
+                        if ((sub.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+                            continue; // skip junctions/symlinks
+                    }
+                    catch { continue; }
                     stack.Push(d);
+                }
             }
-            catch { }
+            catch { complete = false; }
         }
         return result;
     }

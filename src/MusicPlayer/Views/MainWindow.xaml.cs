@@ -2534,11 +2534,15 @@ InitializeComponent();
         catch { }
     }
 
-    private void Window_Closing(object? sender, CancelEventArgs e)
+    private async void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (e.Cancel) return;
+        e.Cancel = true;
         try { CancelQueueDrag("WindowClosing"); } catch { }
         try { _trayService?.RemoveIcon(); } catch { }
+        try { if (ViewModel != null) await ViewModel.StopBackgroundTasksAsync(); } catch { }
         try { SaveWindowState(); } catch { }
+        try { Close(); } catch { }
 
         // Shutdown is handled by App.OnExit (single owner for service disposal).
         // No forced kill: previously a 3s watchdog called Environment.Exit(0)
