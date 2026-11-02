@@ -345,6 +345,7 @@ namespace MusicPlayer.Tests
                 for (int i = 0; i < readers.Length; i++)
                 {
                     Assert.True(readers[i].IsDisposed, "Reader " + i + " was not disposed.");
+                    Assert.Equal(1, readers[i].DisposeCalls);
                 }
                 for (int i = 0; i < devices.Length; i++)
                 {
@@ -354,6 +355,301 @@ namespace MusicPlayer.Tests
             }
             finally
             {
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task DeviceNumberSwitch_WaitsForConfirmedRetirementBeforeAttachingReplacement()
+        {
+            var engine = new TestAudioEngine
+            {
+                RetireWaitTimeout = TimeSpan.FromSeconds(5)
+            };
+            try
+            {
+                engine.LoadTrack(Track("switch-a.wav"));
+                FakeWavePlayer firstDevice = engine.DeviceSnapshot[0];
+                TrackingAudioFileReader reader = engine.ReaderSnapshot[0];
+                firstDevice.HangOnStop = true;
+
+                Task switchTask = Task.Run(() => { engine.DeviceNumber = 1; });
+                await Task.Delay(150);
+
+                Assert.False(switchTask.IsCompleted,
+                    "Device switch must not complete while the old device is still live.");
+                Assert.Single(engine.DeviceSnapshot);
+                Assert.False(reader.IsDisposed);
+
+                firstDevice.ReleaseStop();
+                await switchTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+                Assert.Equal(2, engine.DeviceSnapshot.Length);
+                Assert.Equal(1, engine.DeviceSnapshot[1].InitCalls);
+                Assert.False(reader.IsDisposed);
+                Assert.Equal(1, firstDevice.StopCalls);
+                Assert.Equal(1, firstDevice.DisposeCalls);
+
+                await engine.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(reader.IsDisposed);
+                Assert.Equal(1, reader.DisposeCalls);
+            }
+            finally
+            {
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task DeviceNumberSwitch_RetirementFailure_DoesNotAttachReplacement()
+        {
+            var engine = new TestAudioEngine();
+            try
+            {
+                engine.LoadTrack(Track("switch-fail.wav"));
+                FakeWavePlayer firstDevice = engine.DeviceSnapshot[0];
+                TrackingAudioFileReader reader = engine.ReaderSnapshot[0];
+                firstDevice.ThrowOnStop = true;
+
+                engine.DeviceNumber = 1;
+
+                Assert.Single(engine.DeviceSnapshot);
+                Assert.False(reader.IsDisposed);
+
+                AudioShutdownResult result =
+                    await engine.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+                Assert.Equal(AudioShutdownOutcome.Quarantined, result.Outcome);
+                Assert.False(reader.IsDisposed);
+                Assert.True(result.QuarantinedReaders > 0 || result.QuarantinedDevices > 0);
+            }
+            finally
+            {
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task DeviceNumberSwitch_RetirementTimeout_DoesNotAttachReplacement_AndDefersReader()
+        {
+            var engine = new TestAudioEngine
+            {
+                RetireWaitTimeout = TimeSpan.FromMilliseconds(100)
+            };
+            try
+            {
+                engine.LoadTrack(Track("switch-timeout.wav"));
+                FakeWavePlayer firstDevice = engine.DeviceSnapshot[0];
+                TrackingAudioFileReader reader = engine.ReaderSnapshot[0];
+                firstDevice.HangOnStop = true;
+
+                var sw = Stopwatch.StartNew();
+                engine.DeviceNumber = 1;
+                sw.Stop();
+
+                Assert.True(sw.Elapsed >= TimeSpan.FromMilliseconds(80));
+                Assert.Single(engine.DeviceSnapshot);
+                Assert.False(reader.IsDisposed);
+
+                firstDevice.ReleaseStop();
+                await WaitUntilAsync(() => reader.IsDisposed, TimeSpan.FromSeconds(5));
+                Assert.Equal(1, reader.DisposeCalls);
+            }
+            finally
+            {
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task PlayFailure_FallbackWaitsForConfirmedRetirementBeforePlaying()
+        {
+            var engine = new TestAudioEngine();
+            try
+            {
+                engine.LoadTrack(Track("fallback-a.wav"));
+                FakeWavePlayer firstDevice = engine.DeviceSnapshot[0];
+                TrackingAudioFileReader reader = engine.ReaderSnapshot[0];
+                firstDevice.ThrowOnPlay = true;
+
+                engine.Play();
+
+                Assert.Equal(2, engine.DeviceSnapshot.Length);
+                Assert.Equal(1, firstDevice.StopCalls);
+                Assert.Equal(1, firstDevice.DisposeCalls);
+                Assert.Equal(1, engine.DeviceSnapshot[1].InitCalls);
+                Assert.Equal(1, engine.DeviceSnapshot[1].PlayCalls);
+                Assert.False(reader.IsDisposed);
+
+                await engine.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(reader.IsDisposed);
+                Assert.Equal(1, reader.DisposeCalls);
+            }
+            finally
+            {
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task PlayFailure_FallbackRetirementTimeout_DoesNotAttachReplacement()
+        {
+            var engine = new TestAudioEngine
+            {
+                RetireWaitTimeout = TimeSpan.FromMilliseconds(100)
+            };
+            try
+            {
+                engine.LoadTrack(Track("fallback-timeout.wav"));
+                FakeWavePlayer firstDevice = engine.DeviceSnapshot[0];
+                TrackingAudioFileReader reader = engine.ReaderSnapshot[0];
+                firstDevice.ThrowOnPlay = true;
+                firstDevice.HangOnStop = true;
+
+                engine.Play();
+
+                Assert.Single(engine.DeviceSnapshot);
+                Assert.False(reader.IsDisposed);
+
+                firstDevice.ReleaseStop();
+                await WaitUntilAsync(() => reader.IsDisposed, TimeSpan.FromSeconds(5));
+                Assert.Equal(1, reader.DisposeCalls);
+            }
+            finally
+            {
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task ConcurrentLoadTrackCalls_AreSerializedAndDisposeEachReaderOnce()
+        {
+            var engine = new TestAudioEngine();
+            try
+            {
+                MusicTrack[] tracks = Enumerable.Range(0, 4)
+                    .Select(i => Track("concurrent-" + i + ".wav"))
+                    .ToArray();
+
+                await Task.WhenAll(tracks.Select(track => Task.Run(() => engine.LoadTrack(track))))
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+
+                Assert.Equal(4, engine.DeviceSnapshot.Length);
+                Assert.Equal(4, engine.ReaderSnapshot.Length);
+
+                await engine.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+                foreach (FakeWavePlayer device in engine.DeviceSnapshot)
+                {
+                    Assert.Equal(1, device.StopCalls);
+                    Assert.Equal(1, device.DisposeCalls);
+                }
+                foreach (TrackingAudioFileReader reader in engine.ReaderSnapshot)
+                {
+                    Assert.True(reader.IsDisposed);
+                    Assert.Equal(1, reader.DisposeCalls);
+                }
+            }
+            finally
+            {
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task ConcurrentLoadTrackAndDeviceSwitch_AreSerialized()
+        {
+            var engine = new BlockingDeviceEngine
+            {
+                RetireWaitTimeout = TimeSpan.FromSeconds(5)
+            };
+            try
+            {
+                Task loadTask = Task.Run(() => engine.LoadTrack(Track("serialized-load.wav")));
+                Assert.True(engine.DeviceEntered.Wait(TimeSpan.FromSeconds(5)));
+
+                Task switchTask = Task.Run(() => { engine.DeviceNumber = 1; });
+                await Task.Delay(150);
+                Assert.False(switchTask.IsCompleted,
+                    "Device switch must wait for the in-flight load to release the transition lock.");
+
+                engine.ReleaseDevice.Set();
+                await loadTask.WaitAsync(TimeSpan.FromSeconds(5));
+                await switchTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+                Assert.Equal(2, engine.DeviceSnapshot.Length);
+                Assert.False(engine.ReaderSnapshot[0].IsDisposed);
+            }
+            finally
+            {
+                engine.ReleaseDevice.Set();
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task ShutdownDeadline_QuarantinesHungDeviceWithoutInfiniteWait()
+        {
+            var engine = new TestAudioEngine
+            {
+                ShutdownTimeout = TimeSpan.FromMilliseconds(250)
+            };
+            try
+            {
+                engine.LoadTrack(Track("shutdown-deadline.wav"));
+                FakeWavePlayer device = engine.DeviceSnapshot[0];
+                TrackingAudioFileReader reader = engine.ReaderSnapshot[0];
+                device.HangOnStop = true;
+
+                var sw = Stopwatch.StartNew();
+                AudioShutdownResult result =
+                    await engine.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                sw.Stop();
+
+                Assert.Equal(AudioShutdownOutcome.Quarantined, result.Outcome);
+                Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3),
+                    "Shutdown must return at its deadline instead of waiting forever.");
+                Assert.False(reader.IsDisposed);
+                Assert.Equal(1, device.StopCalls);
+                Assert.True(result.QuarantinedReaders > 0);
+            }
+            finally
+            {
+                engine.DeviceSnapshot[0].ReleaseStop();
+                engine.Dispose();
+            }
+        }
+
+        [Fact]
+        public async Task ShutdownDuringBlockedLoad_ReturnsBoundedAndQuarantinesInFlightWork()
+        {
+            var engine = new BlockingDeviceEngine
+            {
+                ShutdownTimeout = TimeSpan.FromMilliseconds(250),
+                RetireWaitTimeout = TimeSpan.FromMilliseconds(100)
+            };
+            try
+            {
+                engine.LoadAndPlayAsync(Track("blocked-shutdown.wav"));
+                Assert.True(engine.DeviceEntered.Wait(TimeSpan.FromSeconds(5)));
+                TrackingAudioFileReader reader = engine.ReaderSnapshot[0];
+
+                var sw = Stopwatch.StartNew();
+                AudioShutdownResult result =
+                    await engine.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                sw.Stop();
+
+                Assert.Equal(AudioShutdownOutcome.Quarantined, result.Outcome);
+                Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3));
+                Assert.False(reader.IsDisposed);
+
+                engine.ReleaseDevice.Set();
+                await WaitUntilAsync(() => reader.IsDisposed, TimeSpan.FromSeconds(5));
+                Assert.Equal(1, reader.DisposeCalls);
+            }
+            finally
+            {
+                engine.ReleaseDevice.Set();
                 engine.Dispose();
             }
         }
@@ -459,6 +755,7 @@ namespace MusicPlayer.Tests
 
             public bool ThrowOnStop { get; set; }
             public bool ThrowOnDispose { get; set; }
+            public bool ThrowOnPlay { get; set; }
             public bool HangOnStop { get; set; }
             public int StopCalls { get; private set; }
             public int DisposeCalls { get; private set; }
@@ -473,6 +770,10 @@ namespace MusicPlayer.Tests
             public void Play()
             {
                 PlayCalls++;
+                if (ThrowOnPlay)
+                {
+                    throw new InvalidOperationException("simulated Play failure");
+                }
                 PlaybackState = PlaybackState.Playing;
             }
 
@@ -518,9 +819,11 @@ namespace MusicPlayer.Tests
             }
 
             public bool IsDisposed { get; private set; }
+            public int DisposeCalls { get; private set; }
 
             protected override void Dispose(bool disposing)
             {
+                DisposeCalls++;
                 IsDisposed = true;
                 base.Dispose(disposing);
             }

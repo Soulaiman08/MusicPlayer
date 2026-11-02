@@ -2547,7 +2547,23 @@ InitializeComponent();
         {
             try { CancelQueueDrag("WindowClosing"); } catch { }
             try { _trayService?.RemoveIcon(); } catch { }
-            try { if (ViewModel != null) await ViewModel.ShutdownAsync(); } catch { }
+            try
+            {
+                if (ViewModel != null)
+                {
+                    Task shutdown = ViewModel.ShutdownAsync();
+                    Task finished = await Task.WhenAny(shutdown, Task.Delay(TimeSpan.FromSeconds(25)));
+                    if (finished != shutdown)
+                    {
+                        LogHelper.LogError("MainWindow: shutdown did not finish within the window fallback deadline", new TimeoutException());
+                    }
+                    else
+                    {
+                        await shutdown;
+                    }
+                }
+            }
+            catch { }
             try { SaveWindowState(); } catch { }
         }
         finally

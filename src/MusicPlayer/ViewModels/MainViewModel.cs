@@ -54,6 +54,17 @@ public partial class MainViewModel : ViewModelBase
 
 	private (List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages)? _preloadedArtistResult;
 	private readonly BackgroundTaskRegistry _backgroundTaskRegistry;
+	private readonly UiOperationTracker _uiOps;
+	private readonly object _shutdownGate = new();
+	private Task? _shutdownTask;
+	private readonly object _transientTimerGate = new();
+	private readonly List<DispatcherTimer> _transientTimers = new();
+
+	// Bounds for each shutdown stage. The total is finite and smaller than the
+	// window-level fallback, so normal shutdown never reaches the fallback.
+	internal TimeSpan UiOperationShutdownTimeout { get; set; } = TimeSpan.FromSeconds(5);
+	internal TimeSpan BackgroundShutdownTimeout { get; set; } = TimeSpan.FromSeconds(5);
+	internal TimeSpan AudioShutdownWaitTimeout { get; set; } = TimeSpan.FromSeconds(12);
 
 	private DispatcherTimer? _lyricAdvanceTimer;
 
@@ -2031,9 +2042,11 @@ public partial class MainViewModel : ViewModelBase
 		IsStatusBarLoading = false;
 		IsStatusBarVisible = true;
 		var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(durationMs) };
+		TrackTransientTimer(timer);
 		timer.Tick += (_, _) =>
 		{
 			timer.Stop();
+			lock (_transientTimerGate) { _transientTimers.Remove(timer); }
 			if (!IsStatusBarLoading)
 			{
 				IsStatusBarVisible = false;
@@ -2060,9 +2073,11 @@ public partial class MainViewModel : ViewModelBase
 		IsStatusBarHiddenLinkVisible = true;
 		IsStatusBarVisible = true;
 		var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(4000) };
+		TrackTransientTimer(timer);
 		timer.Tick += (_, _) =>
 		{
 			timer.Stop();
+			lock (_transientTimerGate) { _transientTimers.Remove(timer); }
 			IsStatusBarVisible = false;
 			IsStatusBarHiddenLinkVisible = false;
 		};
@@ -4171,6 +4186,7 @@ public partial class MainViewModel : ViewModelBase
 		_logger = logger;
 		_winIntegration = winIntegration;
 		_backgroundTaskRegistry = new BackgroundTaskRegistry(logger);
+		_uiOps = new UiOperationTracker(logger);
 		EqPreset[] presets = EqPreset.Presets;
 		foreach (EqPreset item in presets)
 		{
@@ -4209,46 +4225,41 @@ public partial class MainViewModel : ViewModelBase
 		};
 	}
 
-	public async Task InitializeAsync(Action<string>? statusCallback = null)
+	public async Task InitializeAsync(Action<string>? statusCallback = null, CancellationToken cancellationToken = default)
 	{
+		// Initialization is one UI-scoped operation: shutdown either waits for it
+		// to finish or cancels it, but never disposes DI services underneath it.
+		using var operation = _uiOps.TryBegin(nameof(InitializeAsync));
+		if (operation == null) return;
+		using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _uiOps.Token);
+		CancellationToken token = linked.Token;
+
 		statusCallback?.Invoke("Loading settings...");
 		await Task.Run(delegate
 		{
 			LoadSettings();
 		});
+		if (token.IsCancellationRequested) return;
 		statusCallback?.Invoke("Loading library...");
 		await Task.Run(delegate
 		{
 			_db.CleanOrphanTracks();
 		});
+		if (token.IsCancellationRequested) return;
 		statusCallback?.Invoke("Scanning folders...");
-		List<ManagedMusicFolder> list = await Task.Run(() => _db.GetManagedFolders());
-		_logger.LogInformation("Found {Count} managed folders to scan", list.Count);
-		foreach (ManagedMusicFolder mf in list)
-		{
-			_logger.LogInformation("Scanning folder: {Path}", mf.Path);
-			try
-			{
-				await _scanner.ScanFolderAsync(mf.Path);
-				await Task.Run(delegate
-				{
-					_db.UpdateManagedFolderLastScan(mf.Id);
-				});
-				_logger.LogInformation("Scan completed for: {Path}", mf.Path);
-			}
-			catch (Exception exception)
-			{
-				_logger.LogError(exception, "Failed to scan folder: {Folder}", mf.Path);
-			}
-		}
-		await Task.Run(delegate
-		{
-			_db.RemoveMissingTracks(_scanner.LastScannedRoots);
-		});
+		// One authoritative refresh/sync pass: a root that is unavailable,
+		// partially enumerated, denied, or cancelled can never authorize deletion.
+		var scanResult = await _scanner.RefreshAndSyncLibraryAsync(token);
+		_logger.LogInformation(
+			"Library refresh completed: added={Added}, updated={Updated}, removed={Removed}",
+			scanResult.Added, scanResult.Updated, scanResult.Removed);
+		if (token.IsCancellationRequested) return;
 		await Task.Run(() => _scanner.BackfillDateAdded());
+		if (token.IsCancellationRequested) return;
 		Task<(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount)> countsTask = Task.Run(() => _db.GetAllCounts());
 		Task<List<MusicTrack>> tracksTask = Task.Run(() => _db.GetManagedFolderTracksSorted((LibrarySortOrder == "date_added") ? "date_added" : ((LibrarySortOrder == "duration") ? "duration" : ((LibrarySortOrder == "size") ? "size" : ((LibrarySortOrder == "year") ? "year" : "title"))), (LibrarySortOrder == "date_added") ? (!IsLibrarySortDescending) : IsLibrarySortDescending).Take(5000).ToList());
 		await Task.WhenAll(countsTask, tracksTask);
+		if (token.IsCancellationRequested) return;
 		(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount) counts = countsTask.Result;
 		List<MusicTrack> sortedTracks = tracksTask.Result;
 		await DispatchAsync(delegate
@@ -4263,11 +4274,14 @@ public partial class MainViewModel : ViewModelBase
 				HomeCards[5].Count = counts.MostPlayedCount.ToString();
 			}
 		});
+		if (token.IsCancellationRequested) return;
 		await Task.Yield();
+		if (token.IsCancellationRequested) return;
 		await DispatchAsync(delegate
 		{
 			Tracks.ReplaceAll(sortedTracks);
 		});
+		if (token.IsCancellationRequested) return;
 		statusCallback?.Invoke("Loading artists...");
 		try
 		{
@@ -4276,10 +4290,12 @@ public partial class MainViewModel : ViewModelBase
 		catch
 		{
 		}
+		if (token.IsCancellationRequested) return;
 		if (sortedTracks != null && sortedTracks.Count > 0)
 		{
-			await _albumArt.PreloadTrackArtwork(sortedTracks.Take(60));
+			await _albumArt.PreloadTrackArtwork(sortedTracks.Take(60), token);
 		}
+		if (token.IsCancellationRequested) return;
 		GC.Collect(0);
 		LoadPlaylists();
 		RestoreQueueOnStartup();
@@ -4320,27 +4336,121 @@ public partial class MainViewModel : ViewModelBase
 	}
 
 	/// <summary>
-	/// Ordered shutdown used by the window: stop every registered background
-	/// task first (they may still use DI services), then stop the audio engine
-	/// and await its workers/retirements.
+	/// Ordered, idempotent shutdown used by the window. Every stage that can
+	/// touch a DI service is stopped or awaited before the container is
+	/// disposed. Each stage is bounded; a timeout is logged as a failure and
+	/// never treated as proof that the work stopped.
 	/// </summary>
-	public async Task ShutdownAsync()
+	public Task ShutdownAsync()
 	{
-		// Stop UI-scoped delayed work before service shutdown. These tasks are
-		// short-lived and are not part of the DI-service registry, but they can
-		// still touch the engine/dispatcher after the window closes.
-		try { _sleepTimerCts?.Cancel(); } catch (ObjectDisposedException) { }
-		try { _sleepTimerTicker?.Stop(); } catch { }
-		try { _searchCts?.Cancel(); } catch (ObjectDisposedException) { }
+		lock (_shutdownGate)
+		{
+			return _shutdownTask ??= ShutdownCoreAsync();
+		}
+	}
 
-		await StopBackgroundTasksAsync().ConfigureAwait(false);
+	private async Task ShutdownCoreAsync()
+	{
+		// Stop dispatcher-based delayed work on the calling (UI) thread before
+		// any awaited stage. Cancellation is requested first; disposal happens
+		// only after scoped tasks have finished.
+		StopDispatcherTimer(ref _sleepTimerTicker);
+		StopDispatcherTimer(ref _themeEditBlurTimer);
+		StopDispatcherTimer(ref _lyricAdvanceTimer);
+		StopTransientTimers();
+		TryCancel(_sleepTimerCts);
+		TryCancel(_searchCts);
+
 		try
 		{
-			await _playback.Engine.ShutdownAsync().ConfigureAwait(false);
+			bool uiStopped = await _uiOps.StopAsync(UiOperationShutdownTimeout).ConfigureAwait(false);
+			if (!uiStopped)
+			{
+				_logger.LogError(
+					"UI operations did not finish within {Timeout}; continuing shutdown without assuming they stopped.",
+					UiOperationShutdownTimeout);
+			}
+
+			bool backgroundStopped = await _backgroundTaskRegistry
+				.StopAsync(BackgroundShutdownTimeout)
+				.ConfigureAwait(false);
+			if (!backgroundStopped)
+			{
+				_logger.LogError(
+					"Background tasks did not finish within {Timeout}; continuing shutdown without assuming they stopped.",
+					BackgroundShutdownTimeout);
+			}
+
+			Task<AudioShutdownResult> audioShutdown = _playback.Engine.ShutdownAsync();
+			Task completed = await Task.WhenAny(audioShutdown, Task.Delay(AudioShutdownWaitTimeout))
+				.ConfigureAwait(false);
+			if (completed != audioShutdown)
+			{
+				_logger.LogError(
+					"Audio engine shutdown did not finish within {Timeout}; resources were not assumed released.",
+					AudioShutdownWaitTimeout);
+				return;
+			}
+
+			AudioShutdownResult result = await audioShutdown.ConfigureAwait(false);
+			if (result.Outcome != AudioShutdownOutcome.Completed)
+			{
+				_logger.LogError(
+					"Audio engine shutdown outcome={Outcome} readers={Readers} devices={Devices}: {Reason}",
+					result.Outcome, result.QuarantinedReaders, result.QuarantinedDevices, result.QuarantineReason);
+			}
 		}
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "Audio engine shutdown failed");
+		}
+		finally
+		{
+			DisposeCancellationSource(ref _sleepTimerCts);
+			DisposeCancellationSource(ref _searchCts);
+		}
+	}
+
+	private static void TryCancel(CancellationTokenSource? source)
+	{
+		try { source?.Cancel(); }
+		catch (ObjectDisposedException) { }
+	}
+
+	private static void DisposeCancellationSource(ref CancellationTokenSource? source)
+	{
+		CancellationTokenSource? value = source;
+		source = null;
+		try { value?.Dispose(); }
+		catch (ObjectDisposedException) { }
+	}
+
+	private static void StopDispatcherTimer(ref DispatcherTimer? timer)
+	{
+		DispatcherTimer? value = timer;
+		timer = null;
+		if (value == null) return;
+		try { value.Stop(); }
+		catch (ObjectDisposedException) { }
+	}
+
+	private void TrackTransientTimer(DispatcherTimer timer)
+	{
+		lock (_transientTimerGate) { _transientTimers.Add(timer); }
+	}
+
+	private void StopTransientTimers()
+	{
+		DispatcherTimer[] timers;
+		lock (_transientTimerGate)
+		{
+			timers = _transientTimers.ToArray();
+			_transientTimers.Clear();
+		}
+		foreach (DispatcherTimer timer in timers)
+		{
+			try { timer.Stop(); }
+			catch (ObjectDisposedException) { }
 		}
 	}
 
@@ -4441,9 +4551,7 @@ public partial class MainViewModel : ViewModelBase
 	{
 		var sw = System.Diagnostics.Stopwatch.StartNew();
 		cancellationToken.ThrowIfCancellationRequested();
-		// WarmUpArtCacheAsync does not expose a token; await it fully rather than
-		// pretending it was cancelled.
-		await _albumArt.WarmUpArtCacheAsync(tracks);
+		await _albumArt.WarmUpArtCacheAsync(tracks, cancellationToken);
 		cancellationToken.ThrowIfCancellationRequested();
 		long warmMs = sw.ElapsedMilliseconds;
 		await DispatchAsync(delegate
@@ -4454,26 +4562,50 @@ public partial class MainViewModel : ViewModelBase
 		LogHelper.LogInfo($"WARMUP done warmMs={warmMs} totalMs={sw.ElapsedMilliseconds}");
 	}
 
-	private static Task DispatchAsync(Action action)
+	private Task DispatchAsync(Action action)
 	{
-		Action action2 = action;
-		TaskCompletionSource tcs = new TaskCompletionSource();
-		Application current = Application.Current;
-		if (current != null)
+		// Shutdown owns the dispatcher lifetime: queued UI work must not complete
+		// after (or hang forever because of) a stopped dispatcher.
+		if (_uiOps.IsStopping)
 		{
-			((DispatcherObject)current).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-			{
-				try
-				{
-					action2();
-					tcs.SetResult();
-				}
-				catch (Exception exception)
-				{
-					tcs.SetException(exception);
-				}
-			}, Array.Empty<object>());
+			return Task.FromCanceled(new CancellationToken(canceled: true));
 		}
+
+		Application? current = Application.Current;
+		if (current == null)
+		{
+			// No WPF application (unit tests / early startup): execute inline so
+			// the returned task always reaches a terminal state.
+			try
+			{
+				action();
+				return Task.CompletedTask;
+			}
+			catch (Exception exception)
+			{
+				return Task.FromException(exception);
+			}
+		}
+
+		if (current.Dispatcher.HasShutdownStarted || current.Dispatcher.HasShutdownFinished)
+		{
+			return Task.FromCanceled(new CancellationToken(canceled: true));
+		}
+
+		Action action2 = action;
+		TaskCompletionSource tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		current.Dispatcher.BeginInvoke((Delegate)(Action)delegate
+		{
+			try
+			{
+				action2();
+				tcs.SetResult();
+			}
+			catch (Exception exception)
+			{
+				tcs.SetException(exception);
+			}
+		}, Array.Empty<object>());
 		return tcs.Task;
 	}
 
@@ -4559,13 +4691,20 @@ public partial class MainViewModel : ViewModelBase
 		};
 	}
 
-	private static void Dispatch(Action action)
+	private void Dispatch(Action action)
 	{
-		Application current = Application.Current;
-		if (current != null)
+		if (_uiOps.IsStopping) return;
+
+		Application? current = Application.Current;
+		if (current == null)
 		{
-			((DispatcherObject)current).Dispatcher.BeginInvoke((Delegate)action, Array.Empty<object>());
+			try { action(); }
+			catch (Exception exception) { _logger.LogError(exception, "Inline dispatch failed"); }
+			return;
 		}
+
+		if (current.Dispatcher.HasShutdownStarted || current.Dispatcher.HasShutdownFinished) return;
+		current.Dispatcher.BeginInvoke((Delegate)action, Array.Empty<object>());
 	}
 
 	private void InitializeHomeCards()
@@ -5899,6 +6038,8 @@ public partial class MainViewModel : ViewModelBase
 
 	public async void LoadLibrary()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadLibrary));
+		if (operation == null) return;
 		try
 		{
 			List<MusicTrack> tracks;
@@ -5917,7 +6058,7 @@ public partial class MainViewModel : ViewModelBase
 					HomeCards[5].Count = counts.MostPlayedCount.ToString();
 				}
 			});
-			await _albumArt.WarmUpArtCacheAsync(tracks);
+			await _albumArt.WarmUpArtCacheAsync(tracks, _uiOps.Token);
 			await DispatchAsync(delegate
 			{
 				OnPropertyChanged("DisplayedTracks");
@@ -5941,6 +6082,8 @@ public partial class MainViewModel : ViewModelBase
 
 	public async void UpdateHomeCardCounts()
 	{
+		using var operation = _uiOps.TryBegin(nameof(UpdateHomeCardCounts));
+		if (operation == null) return;
 		try
 		{
 			if (HomeCards.Count < 6)
@@ -5971,6 +6114,8 @@ public partial class MainViewModel : ViewModelBase
 
 	private async void LoadAlbums()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadAlbums));
+		if (operation == null) return;
 		try
 		{
 			List<MusicTrack> items = await Task.Run(() => (from g in _db.GetAllTracks()
@@ -5993,6 +6138,8 @@ public partial class MainViewModel : ViewModelBase
 
 private async void LoadArtists()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadArtists));
+		if (operation == null) return;
 		try
 		{
 			(List<MusicTrack>, List<KeyValuePair<string, string>>) tuple = _preloadedArtistResult ?? (await BuildArtistItemsAsync());
@@ -6189,6 +6336,8 @@ private async void LoadArtists()
 
 	private async void LoadGenres()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadGenres));
+		if (operation == null) return;
 		try
 		{
 			List<MusicTrack> genres = await Task.Run(() => (from g in (from t in _db.GetAllTracks()
@@ -6217,6 +6366,8 @@ private async void LoadArtists()
 
 private async void LoadFolders()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadFolders));
+		if (operation == null) return;
 		try
 		{
 			List<FolderItem> folderItems = await Task.Run(delegate
@@ -6252,6 +6403,8 @@ private async void LoadFolders()
 
 	private async void LoadFolderDetail(string folderPath)
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadFolderDetail));
+		if (operation == null) return;
 		string folderPath2 = folderPath;
 		try
 		{
@@ -6274,6 +6427,8 @@ private async void LoadFolders()
 
 	private async void LoadArtistDetail(string artistName)
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadArtistDetail));
+		if (operation == null) return;
 		string artistName2 = artistName;
 		try
 		{
@@ -6330,7 +6485,7 @@ private async void LoadFolders()
 				});
 				return;
 			}
-			string fetched = await _artistImages.GetArtistImageAsync(artistName2);
+			string fetched = await _artistImages.GetArtistImageAsync(artistName2, _uiOps.Token);
 			if (fetched != null)
 			{
 				await DispatchAsync(delegate
@@ -6356,6 +6511,8 @@ private async void LoadFolders()
 
 	private async void LoadAlbumDetail(string albumName, string artistName, MusicTrack? artSource = null)
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadAlbumDetail));
+		if (operation == null) return;
 		string albumName2 = albumName;
 		string artistName2 = artistName;
 		try
@@ -6434,6 +6591,8 @@ private async void LoadFolders()
 
 	private async void LoadPlaylistDetail(int playlistId, string playlistName)
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadPlaylistDetail));
+		if (operation == null) return;
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetPlaylistTracks(playlistId).ToList());
@@ -6466,6 +6625,8 @@ private async void LoadFolders()
 
 	private async void LoadPlaylists()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadPlaylists));
+		if (operation == null) return;
 		try
 		{
 			List<PlaylistViewModel> items = await Task.Run(delegate
@@ -6494,6 +6655,8 @@ private async void LoadFolders()
 
 	private async void LoadFavoriteTracks()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadFavoriteTracks));
+		if (operation == null) return;
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetFavoriteTracks());
@@ -6509,6 +6672,8 @@ private async void LoadFolders()
 
 	private async void LoadRecentPlayTracks()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadRecentPlayTracks));
+		if (operation == null) return;
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetRecentPlay());
@@ -6524,6 +6689,8 @@ private async void LoadFolders()
 
 	private async void LoadRecentAddTracks()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadRecentAddTracks));
+		if (operation == null) return;
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetRecentAdd());
@@ -6539,6 +6706,8 @@ private async void LoadFolders()
 
 	private async void LoadMostPlayedTracks()
 	{
+		using var operation = _uiOps.TryBegin(nameof(LoadMostPlayedTracks));
+		if (operation == null) return;
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetMostPlay());
@@ -7466,8 +7635,12 @@ private async void LoadFolders()
 	}
 	private void StartSleepTimer(int minutes)
 	{
-		_sleepTimerCts?.Cancel();
-		_sleepTimerCts = new CancellationTokenSource();
+		if (_uiOps.IsStopping) return;
+		CancellationTokenSource? previous = _sleepTimerCts;
+		_sleepTimerCts = null;
+		try { previous?.Cancel(); } catch (ObjectDisposedException) { }
+		try { previous?.Dispose(); } catch (ObjectDisposedException) { }
+		_sleepTimerCts = CancellationTokenSource.CreateLinkedTokenSource(_uiOps.Token);
 		var token = _sleepTimerCts.Token;
 		SleepTimerSelectedMinutes = minutes;
 		OnPropertyChanged(nameof(IsManualSleepTimerActive));
@@ -7480,6 +7653,8 @@ private async void LoadFolders()
 	}
 	private async Task RunSleepTimerAsync(int minutes, CancellationToken token)
 	{
+		using var operation = _uiOps.TryBegin("SleepTimer");
+		if (operation == null) return;
 		try
 		{
 			await Task.Delay(TimeSpan.FromMinutes(minutes), token);
@@ -7496,8 +7671,10 @@ private async void LoadFolders()
 	}
 	private void CancelSleepTimer()
 	{
-		_sleepTimerCts?.Cancel();
+		CancellationTokenSource? cts = _sleepTimerCts;
 		_sleepTimerCts = null;
+		try { cts?.Cancel(); } catch (ObjectDisposedException) { }
+		try { cts?.Dispose(); } catch (ObjectDisposedException) { }
 		_sleepTimerTicker?.Stop();
 		_sleepTimerEndTime = null;
 		_isManualSleepTimer = false;
@@ -8164,48 +8341,54 @@ private async void LoadFolders()
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]
 	private void OnSearchQueryChanged(string value)
 	{
+		IDisposable? operation = _uiOps.TryBegin("Search");
+		if (operation == null) return;
 		string value2 = value;
-		_searchCts?.Cancel();
-		_searchCts = new CancellationTokenSource();
-		CancellationToken token = _searchCts.Token;
+
+		CancellationTokenSource? previous = _searchCts;
+		try { previous?.Cancel(); } catch (ObjectDisposedException) { }
+		try { previous?.Dispose(); } catch (ObjectDisposedException) { }
+
+		CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(_uiOps.Token);
+		_searchCts = linked;
+		CancellationToken token = linked.Token;
 		ObservableCollection<MusicTrack> source = GetCurrentViewSource();
 		Task.Run(async delegate
 		{
 			try
 			{
 				await Task.Delay(200, token);
-				if (!token.IsCancellationRequested)
+				if (token.IsCancellationRequested) return;
+
+				List<MusicTrack> results;
+				if (string.IsNullOrWhiteSpace(value2))
 				{
-					List<MusicTrack> results;
-					if (string.IsNullOrWhiteSpace(value2))
-					{
-						results = new List<MusicTrack>();
-					}
-					else
-					{
-						string q = value2.Trim();
-						results = source.Where((MusicTrack t) => (!string.IsNullOrEmpty(t.Title) && t.Title.Contains(q, StringComparison.OrdinalIgnoreCase)) || (!string.IsNullOrEmpty(t.Artist) && t.Artist.Contains(q, StringComparison.OrdinalIgnoreCase)) || (!string.IsNullOrEmpty(t.Album) && t.Album.Contains(q, StringComparison.OrdinalIgnoreCase))).ToList();
-					}
-					string qTrim = value2?.Trim() ?? "";
-					bool flag = !string.IsNullOrWhiteSpace(qTrim);
-					List<MusicTrack> filteredArtists = (flag ? Artists.Where((MusicTrack t) => !string.IsNullOrEmpty(t.Artist) && t.Artist.Contains(qTrim, StringComparison.OrdinalIgnoreCase)).ToList() : new List<MusicTrack>());
-					List<MusicTrack> filteredAlbums = (flag ? Albums.Where((MusicTrack t) => !string.IsNullOrEmpty(t.Album) && t.Album.Contains(qTrim, StringComparison.OrdinalIgnoreCase)).ToList() : new List<MusicTrack>());
-					List<MusicTrack> filteredGenres = (flag ? Genres.Where((MusicTrack t) => !string.IsNullOrEmpty(t.Genre) && t.Genre.Contains(qTrim, StringComparison.OrdinalIgnoreCase)).ToList() : new List<MusicTrack>());
-					Dispatch(delegate
-					{
-						SearchResults.ReplaceAll(results);
-						FilteredArtists.ReplaceAll(filteredArtists);
-						FilteredAlbums.ReplaceAll(filteredAlbums);
-						FilteredGenres.ReplaceAll(filteredGenres);
-						OnPropertyChanged("DisplayedTracks");
-						OnPropertyChanged("DisplayedArtists");
-						OnPropertyChanged("DisplayedAlbums");
-						OnPropertyChanged("DisplayedGenres");
-						OnPropertyChanged("HasNoSearchResults");
-						OnPropertyChanged("HasNoMusic");
-						OnPropertyChanged("IsSearchActive");
-					});
+					results = new List<MusicTrack>();
 				}
+				else
+				{
+					string q = value2.Trim();
+					results = source.Where((MusicTrack t) => (!string.IsNullOrEmpty(t.Title) && t.Title.Contains(q, StringComparison.OrdinalIgnoreCase)) || (!string.IsNullOrEmpty(t.Artist) && t.Artist.Contains(q, StringComparison.OrdinalIgnoreCase)) || (!string.IsNullOrEmpty(t.Album) && t.Album.Contains(q, StringComparison.OrdinalIgnoreCase))).ToList();
+				}
+				string qTrim = value2?.Trim() ?? "";
+				bool flag = !string.IsNullOrWhiteSpace(qTrim);
+				List<MusicTrack> filteredArtists = (flag ? Artists.Where((MusicTrack t) => !string.IsNullOrEmpty(t.Artist) && t.Artist.Contains(qTrim, StringComparison.OrdinalIgnoreCase)).ToList() : new List<MusicTrack>());
+				List<MusicTrack> filteredAlbums = (flag ? Albums.Where((MusicTrack t) => !string.IsNullOrEmpty(t.Album) && t.Album.Contains(qTrim, StringComparison.OrdinalIgnoreCase)).ToList() : new List<MusicTrack>());
+				List<MusicTrack> filteredGenres = (flag ? Genres.Where((MusicTrack t) => !string.IsNullOrEmpty(t.Genre) && t.Genre.Contains(qTrim, StringComparison.OrdinalIgnoreCase)).ToList() : new List<MusicTrack>());
+				await DispatchAsync(delegate
+				{
+					SearchResults.ReplaceAll(results);
+					FilteredArtists.ReplaceAll(filteredArtists);
+					FilteredAlbums.ReplaceAll(filteredAlbums);
+					FilteredGenres.ReplaceAll(filteredGenres);
+					OnPropertyChanged("DisplayedTracks");
+					OnPropertyChanged("DisplayedArtists");
+					OnPropertyChanged("DisplayedAlbums");
+					OnPropertyChanged("DisplayedGenres");
+					OnPropertyChanged("HasNoSearchResults");
+					OnPropertyChanged("HasNoMusic");
+					OnPropertyChanged("IsSearchActive");
+				});
 			}
 			catch (TaskCanceledException)
 			{
@@ -8214,7 +8397,11 @@ private async void LoadFolders()
 			{
 				_logger.LogError(exception, "Search failed for '{Query}'", value2);
 			}
-		}, token);
+			finally
+			{
+				operation?.Dispose();
+			}
+		});
 	}
 
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]

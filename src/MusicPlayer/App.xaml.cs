@@ -20,6 +20,7 @@ public partial class App : Application
 {
     public static IServiceProvider? ServiceProvider { get; private set; }
     private MusicPlayerServiceHost? _serviceHost;
+    private MainViewModel? _mainViewModel;
     private Mutex? _singleInstanceMutex;
 
     [DllImport("kernel32.dll")]
@@ -397,6 +398,7 @@ public partial class App : Application
 
             // Step 3: Create ViewModel and set DataContext
             var vm = ServiceProvider!.GetRequiredService<MainViewModel>();
+            _mainViewModel = vm;
             mainWindow.DataContext = vm;
 
             // Step 4: Show content grid behind loading overlay (so layout starts while overlay covers it)
@@ -497,6 +499,7 @@ public partial class App : Application
         // ServiceProvider is the sole owner of singleton services (including
         // AudioEngine and DatabaseService). ServiceHost only coordinates; it must
         // not dispose services owned by the container.
+        try { _mainViewModel?.ShutdownAsync().Wait(TimeSpan.FromSeconds(2)); } catch { }
         try { _serviceHost?.Stop(); } catch { }
         try { _singleInstanceMutex?.ReleaseMutex(); } catch { }
         try { _singleInstanceMutex?.Dispose(); } catch { }

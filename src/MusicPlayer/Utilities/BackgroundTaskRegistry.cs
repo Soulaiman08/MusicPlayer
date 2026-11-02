@@ -112,6 +112,27 @@ public sealed class BackgroundTaskRegistry
         }
     }
 
+    /// <summary>
+    /// Bounded stop used by application shutdown. Returns false when accepted
+    /// work did not finish before the deadline; the caller must treat that as a
+    /// shutdown failure rather than as proof that the work stopped.
+    /// </summary>
+    public async Task<bool> StopAsync(TimeSpan timeout)
+    {
+        Task stop = StopAsync();
+        if (stop.IsCompleted)
+        {
+            try { await stop.ConfigureAwait(false); }
+            catch { }
+            return true;
+        }
+
+        if (timeout <= TimeSpan.Zero) return false;
+
+        Task delay = Task.Delay(timeout);
+        return await Task.WhenAny(stop, delay).ConfigureAwait(false) == stop;
+    }
+
     private async Task StopCoreAsync(Task[] snapshot)
     {
         try

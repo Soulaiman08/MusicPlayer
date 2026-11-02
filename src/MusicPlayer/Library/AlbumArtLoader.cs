@@ -1025,14 +1025,20 @@ public class AlbumArtLoader
         });
     }
 
-    public Task PreloadTrackArtwork(IEnumerable<MusicTrack> tracks)
+    public Task PreloadTrackArtwork(
+        IEnumerable<MusicTrack> tracks,
+        CancellationToken cancellationToken = default)
     {
         // Lightweight: checks disk cache in parallel. Loads instantly into memory.
         return Task.Run(() =>
         {
             var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
             if (list.Count == 0) return;
-            Parallel.ForEach(list, new ParallelOptions { MaxDegreeOfParallelism = 4 }, track =>
+            Parallel.ForEach(list, new ParallelOptions
+            {
+                MaxDegreeOfParallelism = 4,
+                CancellationToken = cancellationToken
+            }, track =>
             {
                 if (_cache.ContainsKey(track.FilePath)) return;
                 try
@@ -1047,7 +1053,9 @@ public class AlbumArtLoader
     }
 
     // Background warm-up: loads disk cache in parallel, then extracts missing with TagLib.
-    public Task WarmUpArtCacheAsync(IEnumerable<MusicTrack> tracks)
+    public Task WarmUpArtCacheAsync(
+        IEnumerable<MusicTrack> tracks,
+        CancellationToken cancellationToken = default)
     {
         return Task.Run(async () =>
         {
@@ -1055,15 +1063,16 @@ public class AlbumArtLoader
             if (list.Count == 0) return;
 
             // Phase 1: fast parallel memory load of already-cached disk thumbnails
-            await PreloadTrackArtwork(list);
+            await PreloadTrackArtwork(list, cancellationToken);
 
             // Phase 2: any tracks without a disk thumbnail can be extracted via TagLib in the background
             foreach (var track in list)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (_cache.ContainsKey(track.FilePath)) continue;
                 try { WarmUpArtCore(track.FilePath); } catch { }
             }
-        });
+        }, cancellationToken);
     }
 
     private ImageSource? LoadAlbumArtCore(string filePath)

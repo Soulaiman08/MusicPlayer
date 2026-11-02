@@ -14,11 +14,42 @@ namespace MusicPlayer.Library;
 
 public enum ScanRootStatus { NotStarted, Completed, Partial, Failed, Cancelled, RootUnavailable, AccessDenied }
 
+/// <summary>
+/// Result of one recursive root traversal. Only <see cref="ScanRootStatus.Completed"/>
+/// authorizes deletion; every other state means the tree was not fully inspected.
+/// </summary>
+public sealed class RootEnumerationResult
+{
+    public RootEnumerationResult(
+        IEnumerable<string> files,
+        ScanRootStatus status,
+        IEnumerable<string>? excludedPrefixes = null)
+    {
+        Files = files.ToArray();
+        Status = status;
+        ExcludedPrefixes = (excludedPrefixes ?? Array.Empty<string>()).ToArray();
+    }
+
+    public IReadOnlyList<string> Files { get; }
+    public ScanRootStatus Status { get; }
+
+    /// <summary>Nested reparse-point subtrees that were intentionally not traversed.</summary>
+    public IReadOnlyList<string> ExcludedPrefixes { get; }
+
+    public bool IsComplete => Status == ScanRootStatus.Completed;
+}
+
 public class MusicScanner
 {
     private readonly object _scanGate = new();
     private readonly DatabaseService _db;
     private readonly ILogger<MusicScanner> _logger;
+
+    // Deterministic test seams for filesystem inspection. Production leaves
+    // these null and uses the real Directory/File APIs.
+    internal Func<string, IEnumerable<string>>? DirectoryFileProvider { get; set; }
+    internal Func<string, IEnumerable<string>>? DirectoryChildProvider { get; set; }
+    internal Func<string, FileAttributes>? DirectoryAttributesProvider { get; set; }
     
     private static readonly string[] SupportedExtensions = 
     {
@@ -71,143 +102,147 @@ public class MusicScanner
             
             foreach (var folder in folders)
             {
-                if (cancellationToken.IsCancellationRequested) break;
-                
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    RecordRootStatus(folder, ScanRootStatus.Cancelled);
+                    continue;
+                }
+
+                ScanRootStatus enumerationStatus;
+                IReadOnlyList<string> enumerated = Array.Empty<string>();
                 try
                 {
-                    if (!Directory.Exists(folder))
+                    var availability = CheckRootAvailability(folder);
+                    if (availability != ScanRootStatus.Completed)
                     {
-                        _logger.LogWarning("Folder does not exist: {Folder}", folder);
-                        LastFailedRoots.Add(folder);
-                        LastRootStatus[folder] = ScanRootStatus.RootUnavailable;
-                        continue;
-                    }
-
-                    var enumComplete = false;
-                    IReadOnlyList<string> enumerated;
-                    try
-                    {
-                        enumerated = EnumerateRootFiles(folder, cancellationToken, out enumComplete);
-                    }
-                    catch (UnauthorizedAccessException ex)
-                    {
-                        _logger.LogWarning(ex, "Access denied while enumerating folder: {Folder}", folder);
-                        LastFailedRoots.Add(folder);
-                        LastRootStatus[folder] = ScanRootStatus.AccessDenied;
-                        continue;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        LastFailedRoots.Add(folder);
-                        LastRootStatus[folder] = ScanRootStatus.Cancelled;
-                        continue;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to enumerate folder: {Folder}", folder);
-                        LastFailedRoots.Add(folder);
-                        LastRootStatus[folder] = ScanRootStatus.Failed;
-                        continue;
-                    }
-
-                    var allFiles = enumerated.ToArray();
-                    _logger.LogInformation("Total files in {Folder}: {Count}", folder, allFiles.Length);
-
-                    var files = allFiles
-                        .Where(f => SupportedExtensions.Contains(Path.GetExtension(f).ToLower()))
-                        .ToList();
-
-                    _logger.LogInformation("Music files in {Folder}: {Count}", folder, files.Count);
-
-                    // Parse metadata OUTSIDE the SQLite transaction.
-                    var parsedTracks = new List<MusicTrack>();
-                    foreach (var file in files)
-                    {
-                        if (cancellationToken.IsCancellationRequested) break;
-                        try
-                        {
-                            var dir = Path.GetDirectoryName(file)?.ToLower() ?? "";
-                            if (hiddenFolders.Any(h => PathContainment.IsWithin(dir, h))) continue;
-
-                            var fileInfo = new FileInfo(file);
-                            if (excludeBySize && fileInfo.Length < minSize) continue;
-
-                            using var tagFile = TagLib.File.Create(file);
-
-                            if (excludeByDuration && tagFile.Properties.Duration.TotalMilliseconds < minDuration)
-                                continue;
-
-                            var track = new MusicTrack
-                            {
-                                FilePath = file,
-                                Title = tagFile.Tag.Title ?? Path.GetFileNameWithoutExtension(file),
-                                Artist = tagFile.Tag.FirstPerformer ?? "Unknown Artist",
-                                Album = tagFile.Tag.Album ?? "Unknown Album",
-                                AlbumArtist = tagFile.Tag.FirstAlbumArtist ?? "",
-                                Genre = tagFile.Tag.FirstGenre ?? "",
-                                Year = (int)tagFile.Tag.Year,
-                                TrackNumber = (int)tagFile.Tag.Track,
-                                DiscNumber = (int)tagFile.Tag.Disc,
-                                Duration = (long)tagFile.Properties.Duration.TotalMilliseconds,
-                                FileSize = fileInfo.Length,
-                                Bitrate = (int)tagFile.Properties.AudioBitrate,
-                                SampleRate = (int)tagFile.Properties.AudioSampleRate,
-                                Channels = tagFile.Properties.AudioChannels,
-                                DateAdded = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
-                                DateModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
-                                FolderPath = folder
-                            };
-
-                            parsedTracks.Add(track);
-                            count++;
-                            FileScanned?.Invoke(this, file);
-                            ProgressChanged?.Invoke(this, count);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to scan file: {File}", file);
-                        }
-                    }
-
-                    // Short batched writes.
-                    _db.BeginTransaction();
-                    try
-                    {
-                        foreach (var track in parsedTracks)
-                        {
-                            if (cancellationToken.IsCancellationRequested) break;
-                            _db.InsertOrIgnoreTrack(track);
-                        }
-                        _db.Commit();
-                    }
-                    catch
-                    {
-                        try { _db.Rollback(); } catch { }
-                    }
-
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        LastFailedRoots.Add(folder);
-                        LastRootStatus[folder] = ScanRootStatus.Cancelled;
-                    }
-                    else if (!enumComplete)
-                    {
-                        LastFailedRoots.Add(folder);
-                        LastRootStatus[folder] = ScanRootStatus.Partial;
+                        enumerationStatus = availability;
                     }
                     else
                     {
-                        LastScannedRoots.Add(folder);
-                        LastRootStatus[folder] = ScanRootStatus.Completed;
+                        var result = EnumerateRoot(folder, cancellationToken);
+                        enumerated = result.Files;
+                        enumerationStatus = cancellationToken.IsCancellationRequested
+                            ? ScanRootStatus.Cancelled
+                            : result.Status;
                     }
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    _logger.LogWarning(ex, "Access denied while enumerating folder: {Folder}", folder);
+                    enumerationStatus = ScanRootStatus.AccessDenied;
+                }
+                catch (OperationCanceledException)
+                {
+                    enumerationStatus = ScanRootStatus.Cancelled;
                 }
                 catch (Exception ex)
                 {
-                    try { _db.Rollback(); } catch { }
-                    LastFailedRoots.Add(folder);
-                    LastRootStatus[folder] = ScanRootStatus.Failed;
-                    _logger.LogWarning(ex, "Failed to scan folder: {Folder}", folder);
+                    _logger.LogWarning(ex, "Failed to enumerate folder: {Folder}", folder);
+                    enumerationStatus = ScanRootStatus.Failed;
                 }
+
+                if (enumerationStatus == ScanRootStatus.Cancelled)
+                {
+                    RecordRootStatus(folder, ScanRootStatus.Cancelled);
+                    continue;
+                }
+
+                var allFiles = enumerated.ToArray();
+                _logger.LogInformation("Total files in {Folder}: {Count}", folder, allFiles.Length);
+
+                var files = allFiles
+                    .Where(f => SupportedExtensions.Contains(Path.GetExtension(f).ToLower()))
+                    .ToList();
+
+                _logger.LogInformation("Music files in {Folder}: {Count}", folder, files.Count);
+
+                // Parse metadata OUTSIDE the SQLite transaction.
+                var parsedTracks = new List<MusicTrack>();
+                foreach (var file in files)
+                {
+                    if (cancellationToken.IsCancellationRequested) break;
+                    try
+                    {
+                        var dir = Path.GetDirectoryName(file)?.ToLower() ?? "";
+                        if (hiddenFolders.Any(h => PathContainment.IsWithin(dir, h))) continue;
+
+                        var fileInfo = new FileInfo(file);
+                        if (excludeBySize && fileInfo.Length < minSize) continue;
+
+                        using var tagFile = TagLib.File.Create(file);
+
+                        if (excludeByDuration && tagFile.Properties.Duration.TotalMilliseconds < minDuration)
+                            continue;
+
+                        var track = new MusicTrack
+                        {
+                            FilePath = file,
+                            Title = tagFile.Tag.Title ?? Path.GetFileNameWithoutExtension(file),
+                            Artist = tagFile.Tag.FirstPerformer ?? "Unknown Artist",
+                            Album = tagFile.Tag.Album ?? "Unknown Album",
+                            AlbumArtist = tagFile.Tag.FirstAlbumArtist ?? "",
+                            Genre = tagFile.Tag.FirstGenre ?? "",
+                            Year = (int)tagFile.Tag.Year,
+                            TrackNumber = (int)tagFile.Tag.Track,
+                            DiscNumber = (int)tagFile.Tag.Disc,
+                            Duration = (long)tagFile.Properties.Duration.TotalMilliseconds,
+                            FileSize = fileInfo.Length,
+                            Bitrate = (int)tagFile.Properties.AudioBitrate,
+                            SampleRate = (int)tagFile.Properties.AudioSampleRate,
+                            Channels = tagFile.Properties.AudioChannels,
+                            DateAdded = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
+                            DateModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeSeconds(),
+                            FolderPath = folder
+                        };
+
+                        parsedTracks.Add(track);
+                        count++;
+                        FileScanned?.Invoke(this, file);
+                        ProgressChanged?.Invoke(this, count);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to scan file: {File}", file);
+                    }
+                }
+
+                // Short batched writes. Cancellation rolls this batch back and
+                // the root is never reported as completed.
+                bool indexFailed = false;
+                _db.BeginTransaction();
+                try
+                {
+                    foreach (var track in parsedTracks)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        _db.InsertOrIgnoreTrack(track);
+                    }
+                    _db.Commit();
+                }
+                catch (OperationCanceledException)
+                {
+                    SafeRollback();
+                    RecordRootStatus(folder, ScanRootStatus.Cancelled);
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    SafeRollback();
+                    indexFailed = true;
+                    _logger.LogWarning(ex, "Failed to index folder: {Folder}", folder);
+                }
+
+                ScanRootStatus finalStatus = enumerationStatus;
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    finalStatus = ScanRootStatus.Cancelled;
+                }
+                else if (indexFailed && finalStatus == ScanRootStatus.Completed)
+                {
+                    finalStatus = ScanRootStatus.Failed;
+                }
+
+                RecordRootStatus(folder, finalStatus);
             }
             
             _logger.LogInformation("Scan complete. {Count} tracks indexed.", count);
@@ -290,13 +325,15 @@ public class MusicScanner
         {
             await Task.Run(() =>
             {
-                // 1. Gather all candidate folders to scan
+                // 1. Gather all candidate folders to scan. Unavailable managed
+                //    roots are intentionally kept in the list so they are
+                //    reported as RootUnavailable and can never authorize deletion.
                 var foldersToScan = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 var managedFolders = _db.GetManagedFolders();
                 foreach (var mf in managedFolders)
                 {
-                    if (Directory.Exists(mf.Path))
+                    if (!string.IsNullOrWhiteSpace(mf.Path))
                         foldersToScan.Add(mf.Path);
                 }
 
@@ -316,11 +353,21 @@ public class MusicScanner
                     }
                 }
 
-                // Optimize root folders to prevent duplicate nested scans
+                // Optimize root folders to prevent duplicate nested scans.
                 var rootFolders = new List<string>();
                 foreach (var f in foldersToScan.OrderBy(p => p.Length))
                 {
-                    var normalized = Path.GetFullPath(f).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    string normalized;
+                    try
+                    {
+                        normalized = Path.GetFullPath(f.Trim())
+                            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    }
+                    catch
+                    {
+                        _logger.LogWarning("Skipping invalid scan root: {Folder}", f);
+                        continue;
+                    }
                     if (!rootFolders.Any(r => PathContainment.IsWithin(normalized, r)))
                     {
                         rootFolders.Add(normalized);
@@ -360,7 +407,7 @@ public class MusicScanner
 
                 // 2. Enumerate every candidate root fully BEFORE any deletion decision.
                 // A root is deletable only when this recursive pass completed without
-                // access errors or cancellation.
+                // access errors, skipped subtrees, or cancellation.
                 var folderFiles = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
                 var fullyEnumeratedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var rootEnumStatus = new Dictionary<string, ScanRootStatus>(StringComparer.OrdinalIgnoreCase);
@@ -374,28 +421,31 @@ public class MusicScanner
                     {
                         status = ScanRootStatus.Cancelled;
                     }
-                    else if (!Directory.Exists(folder))
-                    {
-                        status = ScanRootStatus.RootUnavailable;
-                    }
                     else
                     {
                         try
                         {
-                            var files = EnumerateRootFiles(folder, cancellationToken, out var complete);
-                            folderFiles[folder] = files.ToArray();
-                            if (cancellationToken.IsCancellationRequested)
+                            var availability = CheckRootAvailability(folder);
+                            if (availability != ScanRootStatus.Completed)
                             {
-                                status = ScanRootStatus.Cancelled;
-                            }
-                            else if (!complete)
-                            {
-                                status = ScanRootStatus.Partial;
+                                status = availability;
                             }
                             else
                             {
-                                status = ScanRootStatus.Completed;
-                                fullyEnumeratedRoots.Add(folder);
+                                RootEnumerationResult result = EnumerateRoot(folder, cancellationToken);
+                                folderFiles[folder] = result.Files.ToArray();
+                                if (cancellationToken.IsCancellationRequested)
+                                {
+                                    status = ScanRootStatus.Cancelled;
+                                }
+                                else
+                                {
+                                    status = result.Status;
+                                    if (status == ScanRootStatus.Completed)
+                                    {
+                                        fullyEnumeratedRoots.Add(folder);
+                                    }
+                                }
                             }
                         }
                         catch (UnauthorizedAccessException ex)
@@ -422,60 +472,43 @@ public class MusicScanner
                     }
                 }
 
-                // 3. Remove missing tracks. Deletion is restricted to files that
-                // belong to a root whose recursive enumeration completed above.
+                // 3. Build trusted deletion candidates and delete them in one
+                //    conservative transaction. Any cancellation, root invalidation,
+                //    or database fault rolls the entire transaction back.
                 var allDbTracks = _db.GetAllTracks();
                 var dbTracksByPath = new Dictionary<string, MusicTrack>(StringComparer.OrdinalIgnoreCase);
+                var deletionCandidates = new List<DeletionCandidate>();
 
-                _db.BeginTransaction();
-                try
+                foreach (var t in allDbTracks)
                 {
-                    int removedInTransaction = 0;
-                    foreach (var t in allDbTracks)
+                    if (string.IsNullOrEmpty(t.FilePath)) continue;
+                    if (System.IO.File.Exists(t.FilePath))
                     {
-                        if (string.IsNullOrEmpty(t.FilePath)) continue;
-                        if (System.IO.File.Exists(t.FilePath))
-                        {
-                            dbTracksByPath[t.FilePath] = t;
-                            continue;
-                        }
-
-                        // Cancellation or any ambiguous state means keep the record.
-                        if (cancellationToken.IsCancellationRequested) continue;
-
-                        var trackRoot = fullyEnumeratedRoots.FirstOrDefault(r =>
-                            PathContainment.IsWithin(t.FilePath, r));
-                        if (trackRoot == null) continue; // unknown/unavailable root -> keep
-
-                        if (!rootEnumStatus.TryGetValue(trackRoot, out var status) ||
-                            status != ScanRootStatus.Completed)
-                        {
-                            continue; // partial/failed/cancelled -> keep
-                        }
-
-                        if (!folderFiles.TryGetValue(trackRoot, out var enumeratedFiles))
-                        {
-                            continue; // no trusted enumeration result -> keep
-                        }
-
-                        if (enumeratedFiles.Contains(t.FilePath, StringComparer.OrdinalIgnoreCase))
-                        {
-                            continue; // defensive: listed as present -> keep
-                        }
-
-                        if (!Directory.Exists(trackRoot)) continue; // root vanished -> keep
-
-                        _db.DeleteTrack(t.Id);
-                        removedInTransaction++;
+                        dbTracksByPath[t.FilePath] = t;
+                        continue;
                     }
-                    _db.Commit();
-                    removed += removedInTransaction;
+
+                    var trackRoot = FindOwningRoot(t.FilePath, fullyEnumeratedRoots);
+                    if (trackRoot == null) continue; // unknown/unavailable root -> keep
+
+                    if (!folderFiles.TryGetValue(trackRoot, out var enumeratedFiles))
+                    {
+                        continue; // no trusted enumeration result -> keep
+                    }
+
+                    if (enumeratedFiles.Contains(t.FilePath, StringComparer.OrdinalIgnoreCase))
+                    {
+                        continue; // defensive: listed as present -> keep
+                    }
+
+                    deletionCandidates.Add(new DeletionCandidate(t, trackRoot));
                 }
-                catch (Exception ex)
-                {
-                    try { _db.Rollback(); } catch { }
-                    _logger.LogError(ex, "Error while removing missing tracks");
-                }
+
+                removed += DeleteMissingTracksTransactional(
+                    deletionCandidates,
+                    fullyEnumeratedRoots,
+                    rootEnumStatus,
+                    cancellationToken);
 
                 // 4. Index files using the same enumeration results (no second pass).
                 _db.BeginTransaction();
@@ -620,21 +653,18 @@ public class MusicScanner
                         // finished. A Partial root can never be promoted here.
                         if (status == ScanRootStatus.Completed)
                         {
-                            LastScannedRoots.Add(folder);
-                            LastRootStatus[folder] = ScanRootStatus.Completed;
+                            RecordRootStatus(folder, ScanRootStatus.Completed);
                         }
                         else
                         {
-                            LastScannedRoots.Remove(folder);
-                            LastFailedRoots.Add(folder);
-                            LastRootStatus[folder] = status;
+                            RecordRootStatus(folder, status);
                         }
                     }
                     _db.Commit();
                 }
                 catch (Exception ex)
                 {
-                    try { _db.Rollback(); } catch { }
+                    SafeRollback();
                     _logger.LogError(ex, "Error during refresh and sync");
                     // No root may be reported as completed if indexing failed.
                     foreach (var folder in rootFolders)
@@ -664,75 +694,482 @@ public class MusicScanner
         return (added, updated, removed);
     }
 
-    /// <summary>
-    /// Enumerates a managed root recursively and reports whether the whole tree
-    /// was readable. Test seams override this to simulate access failures
-    /// deterministically; production uses <see cref="EnumerateFilesSafe"/>.
-    /// </summary>
-    protected virtual IReadOnlyList<string> EnumerateRootFiles(string root, CancellationToken cancellationToken, out bool complete)
-        => EnumerateFilesSafe(root, out complete).ToArray();
+    private sealed record DeletionCandidate(MusicTrack Track, string Root);
 
-    private static IEnumerable<string> EnumerateFilesSafe(string root, out bool complete)
+    private sealed class DeletionSafetyException : Exception
     {
-        complete = true;
-        var result = new List<string>();
-        if (string.IsNullOrWhiteSpace(root)) { complete = false; return result; }
+        public DeletionSafetyException(string? root, ScanRootStatus status, string message)
+            : base(message)
+        {
+            Root = root;
+            Status = status;
+        }
+
+        public string? Root { get; }
+        public ScanRootStatus Status { get; }
+    }
+
+    private static string? FindOwningRoot(string filePath, IEnumerable<string> roots)
+        => roots
+            .Where(r => PathContainment.IsWithin(filePath, r))
+            .OrderByDescending(r => r.Length)
+            .FirstOrDefault();
+
+    /// <summary>
+    /// Deletes missing tracks in one all-or-nothing transaction. The transaction
+    /// commits only when every participating root is still available and no
+    /// cancellation was requested immediately before Commit.
+    /// </summary>
+    private int DeleteMissingTracksTransactional(
+        List<DeletionCandidate> candidates,
+        HashSet<string> fullyEnumeratedRoots,
+        Dictionary<string, ScanRootStatus> rootEnumStatus,
+        CancellationToken cancellationToken)
+    {
+        if (candidates.Count == 0) return 0;
+
+        var participatingRoots = candidates
+            .Select(c => c.Root)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            MarkRootsNonCompleted(participatingRoots, ScanRootStatus.Cancelled, rootEnumStatus);
+            return 0;
+        }
+
+        // Pre-transaction validation: every root authorizing deletion must still
+        // be available. One uncertain root aborts the whole deletion phase.
+        foreach (var root in participatingRoots)
+        {
+            if (!fullyEnumeratedRoots.Contains(root) ||
+                !rootEnumStatus.TryGetValue(root, out var status) ||
+                status != ScanRootStatus.Completed)
+            {
+                MarkRootNonCompleted(root, ScanRootStatus.Partial, rootEnumStatus);
+                return 0;
+            }
+
+            var availability = CheckRootAvailability(root);
+            if (availability != ScanRootStatus.Completed)
+            {
+                MarkRootNonCompleted(root, availability, rootEnumStatus);
+                _logger.LogWarning("Deletion aborted: root {Root} is no longer available ({Status})", root, availability);
+                return 0;
+            }
+        }
+
+        bool transactionStarted = false;
+        int removedInTransaction = 0;
+        try
+        {
+            _db.BeginTransaction();
+            transactionStarted = true;
+
+            foreach (var candidate in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!fullyEnumeratedRoots.Contains(candidate.Root) ||
+                    !rootEnumStatus.TryGetValue(candidate.Root, out var status) ||
+                    status != ScanRootStatus.Completed)
+                {
+                    throw new DeletionSafetyException(
+                        candidate.Root,
+                        ScanRootStatus.Partial,
+                        "Deletion candidate root is no longer trusted.");
+                }
+
+                var availability = CheckRootAvailability(candidate.Root);
+                if (availability != ScanRootStatus.Completed)
+                {
+                    throw new DeletionSafetyException(
+                        candidate.Root,
+                        availability,
+                        "Deletion candidate root became unavailable.");
+                }
+
+                BeforeDeletionFileCheck(candidate.Track);
+                if (System.IO.File.Exists(candidate.Track.FilePath))
+                {
+                    // The file reappeared after enumeration: preserve the record.
+                    continue;
+                }
+
+                DeleteTrackInTransaction(candidate.Track.Id);
+                removedInTransaction++;
+                OnDeletionCandidateProcessed(removedInTransaction);
+            }
+
+            // Final pre-commit validation. A timeout or access failure here
+            // rolls back every deletion, including the ones above.
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var root in participatingRoots)
+            {
+                var availability = CheckRootAvailability(root);
+                if (availability != ScanRootStatus.Completed)
+                {
+                    throw new DeletionSafetyException(
+                        root,
+                        availability,
+                        "Deletion root became unavailable before commit.");
+                }
+            }
+
+            if (!ValidateRootsBeforeCommit(participatingRoots))
+            {
+                throw new DeletionSafetyException(
+                    null,
+                    ScanRootStatus.Partial,
+                    "Final deletion validation failed.");
+            }
+
+            CommitDeletionTransaction();
+            transactionStarted = false;
+            return removedInTransaction;
+        }
+        catch (OperationCanceledException)
+        {
+            if (transactionStarted) SafeRollback();
+            MarkRootsNonCompleted(participatingRoots, ScanRootStatus.Cancelled, rootEnumStatus);
+            return 0;
+        }
+        catch (DeletionSafetyException ex)
+        {
+            if (transactionStarted) SafeRollback();
+            if (ex.Root != null)
+            {
+                MarkRootNonCompleted(ex.Root, ex.Status, rootEnumStatus);
+            }
+            else
+            {
+                MarkRootsNonCompleted(participatingRoots, ex.Status, rootEnumStatus);
+            }
+            _logger.LogWarning(ex, "Deletion transaction rolled back");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            if (transactionStarted) SafeRollback();
+            MarkRootsNonCompleted(participatingRoots, ScanRootStatus.Failed, rootEnumStatus);
+            _logger.LogError(ex, "Error while removing missing tracks");
+            return 0;
+        }
+    }
+
+    private void MarkRootNonCompleted(
+        string root,
+        ScanRootStatus status,
+        Dictionary<string, ScanRootStatus> rootEnumStatus)
+    {
+        if (status == ScanRootStatus.Completed) status = ScanRootStatus.Partial;
+        rootEnumStatus[root] = status;
+        LastRootStatus[root] = status;
+        LastScannedRoots.Remove(root);
+        LastFailedRoots.Add(root);
+    }
+
+    private void MarkRootsNonCompleted(
+        IEnumerable<string> roots,
+        ScanRootStatus status,
+        Dictionary<string, ScanRootStatus> rootEnumStatus)
+    {
+        foreach (var root in roots)
+        {
+            MarkRootNonCompleted(root, status, rootEnumStatus);
+        }
+    }
+
+    private void SafeRollback()
+    {
+        try { _db.Rollback(); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Scanner rollback failed"); }
+    }
+
+    private void RecordRootStatus(string folder, ScanRootStatus status)
+    {
+        LastRootStatus[folder] = status;
+        if (status == ScanRootStatus.Completed)
+        {
+            LastScannedRoots.Add(folder);
+            LastFailedRoots.Remove(folder);
+        }
+        else
+        {
+            LastScannedRoots.Remove(folder);
+            LastFailedRoots.Add(folder);
+        }
+    }
+
+    /// <summary>
+    /// Checks that a deletion-authorizing root still exists and can be inspected.
+    /// Directory.Exists alone is not sufficient: an ACL or IO failure can make it
+    /// return false while the drive is still present.
+    /// </summary>
+    protected virtual ScanRootStatus CheckRootAvailability(string root)
+    {
+        try
+        {
+            var attributes = System.IO.File.GetAttributes(root);
+            if ((attributes & FileAttributes.Directory) == 0)
+                return ScanRootStatus.RootUnavailable;
+
+            // Prove the directory can actually be opened. Reading attributes can
+            // succeed even when listing is denied.
+            using var entries = Directory.EnumerateFileSystemEntries(root).GetEnumerator();
+            entries.MoveNext();
+            return ScanRootStatus.Completed;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return ScanRootStatus.RootUnavailable;
+        }
+        catch (FileNotFoundException)
+        {
+            return ScanRootStatus.RootUnavailable;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ScanRootStatus.AccessDenied;
+        }
+        catch (IOException)
+        {
+            return ScanRootStatus.RootUnavailable;
+        }
+        catch (Exception)
+        {
+            return ScanRootStatus.Failed;
+        }
+    }
+
+    protected virtual void BeforeDeletionFileCheck(MusicTrack track) { }
+
+    protected virtual void OnDeletionCandidateProcessed(int removedCount) { }
+
+    protected virtual void DeleteTrackInTransaction(int trackId) => _db.DeleteTrack(trackId);
+
+    protected virtual void CommitDeletionTransaction() => _db.Commit();
+
+    /// <summary>
+    /// Additional final validation hook. Production returns true after the
+    /// per-root checks above; tests can force a deterministic last-moment failure.
+    /// </summary>
+    protected virtual bool ValidateRootsBeforeCommit(IReadOnlyList<string> roots) => true;
+
+    /// <summary>
+    /// Enumerates one root recursively. Production uses
+    /// <see cref="EnumerateFilesSafe"/>; tests can override this seam.
+    /// </summary>
+    protected virtual RootEnumerationResult EnumerateRoot(string root, CancellationToken cancellationToken)
+        => EnumerateFilesSafe(root, cancellationToken);
+
+    private RootEnumerationResult EnumerateFilesSafe(string root, CancellationToken cancellationToken)
+    {
+        var files = new List<string>();
+        var excludedPrefixes = new List<string>();
+        var status = ScanRootStatus.Completed;
+
+        if (string.IsNullOrWhiteSpace(root))
+            return new RootEnumerationResult(files, ScanRootStatus.Failed, excludedPrefixes);
+
         string fullRoot;
         try { fullRoot = Path.GetFullPath(root.Trim()); }
-        catch { complete = false; return result; }
-        if (!Directory.Exists(fullRoot)) { complete = false; return result; }
+        catch { return new RootEnumerationResult(files, ScanRootStatus.Failed, excludedPrefixes); }
 
+        if (cancellationToken.IsCancellationRequested)
+            return new RootEnumerationResult(files, ScanRootStatus.Cancelled, excludedPrefixes);
+
+        // Root-level reparse points are allowed because the user explicitly
+        // selected that root. Nested reparse points are never followed and mark
+        // the root Partial so they can never authorize deletion.
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var stack = new Stack<string>();
         stack.Push(fullRoot);
+
         while (stack.Count > 0)
         {
+            if (cancellationToken.IsCancellationRequested)
+                return new RootEnumerationResult(files, ScanRootStatus.Cancelled, excludedPrefixes);
+
             var dir = stack.Pop();
             string fullDir;
             try { fullDir = Path.GetFullPath(dir); }
-            catch { continue; }
-            if (!visited.Add(fullDir)) continue; // avoid cycles
-            if (!Directory.Exists(fullDir)) continue;
-
-            // Do not follow reparse points (junctions/symlinks) by default.
-            try
+            catch
             {
-                var di = new DirectoryInfo(fullDir);
-                if ((di.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
-                {
-                    if (!string.Equals(fullDir, fullRoot, StringComparison.OrdinalIgnoreCase))
-                        continue; // skip nested reparse points
-                }
+                status = CombineStatus(status, ScanRootStatus.Failed);
+                continue;
             }
-            catch { }
 
-            // Containment: do not escape root.
-            if (!PathContainment.IsWithin(fullDir, fullRoot)) continue;
-
-            try
+            if (!visited.Add(fullDir)) continue;
+            if (!PathContainment.IsWithin(fullDir, fullRoot))
             {
-                foreach (var f in Directory.GetFiles(fullDir))
-                    result.Add(f);
+                status = CombineStatus(status, ScanRootStatus.Failed);
+                continue;
             }
-            catch { complete = false; }
+
+            bool isRoot = string.Equals(fullDir, fullRoot, StringComparison.OrdinalIgnoreCase);
+            FileAttributes attributes;
+            try
+            {
+                attributes = ReadDirectoryAttributes(fullDir);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                status = CombineStatus(status, ScanRootStatus.AccessDenied);
+                continue;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Partial);
+                continue;
+            }
+            catch (FileNotFoundException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Partial);
+                continue;
+            }
+            catch (IOException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Failed);
+                continue;
+            }
+            catch (Exception)
+            {
+                status = CombineStatus(status, ScanRootStatus.Failed);
+                continue;
+            }
+
+            if ((attributes & FileAttributes.Directory) == 0)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Partial);
+                continue;
+            }
+
+            if ((attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint && !isRoot)
+            {
+                // Intentionally excluded subtree: preserve everything below it
+                // by never letting this root reach Completed.
+                excludedPrefixes.Add(fullDir);
+                status = CombineStatus(status, ScanRootStatus.Partial);
+                continue;
+            }
 
             try
             {
-                foreach (var d in Directory.GetDirectories(fullDir))
+                foreach (var file in EnumerateDirectoryFiles(fullDir))
                 {
-                    try
+                    if (cancellationToken.IsCancellationRequested)
+                        return new RootEnumerationResult(files, ScanRootStatus.Cancelled, excludedPrefixes);
+
+                    if (!PathContainment.IsWithin(file, fullRoot))
                     {
-                        var sub = new DirectoryInfo(d);
-                        if ((sub.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
-                            continue; // skip junctions/symlinks
+                        status = CombineStatus(status, ScanRootStatus.Failed);
+                        continue;
                     }
-                    catch { continue; }
-                    stack.Push(d);
+                    files.Add(file);
                 }
             }
-            catch { complete = false; }
+            catch (UnauthorizedAccessException)
+            {
+                status = CombineStatus(status, ScanRootStatus.AccessDenied);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Partial);
+            }
+            catch (FileNotFoundException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Partial);
+            }
+            catch (IOException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.Failed : ScanRootStatus.Partial);
+            }
+            catch (Exception)
+            {
+                status = CombineStatus(status, ScanRootStatus.Failed);
+            }
+
+            try
+            {
+                foreach (var child in EnumerateDirectoryChildren(fullDir))
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        return new RootEnumerationResult(files, ScanRootStatus.Cancelled, excludedPrefixes);
+
+                    string fullChild;
+                    try { fullChild = Path.GetFullPath(child); }
+                    catch
+                    {
+                        status = CombineStatus(status, ScanRootStatus.Failed);
+                        continue;
+                    }
+
+                    if (!PathContainment.IsWithin(fullChild, fullRoot))
+                    {
+                        status = CombineStatus(status, ScanRootStatus.Failed);
+                        continue;
+                    }
+                    stack.Push(fullChild);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                status = CombineStatus(status, ScanRootStatus.AccessDenied);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Partial);
+            }
+            catch (FileNotFoundException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Partial);
+            }
+            catch (IOException)
+            {
+                status = CombineStatus(status, isRoot ? ScanRootStatus.RootUnavailable : ScanRootStatus.Failed);
+            }
+            catch (Exception)
+            {
+                status = CombineStatus(status, ScanRootStatus.Failed);
+            }
         }
-        return result;
+
+        if (cancellationToken.IsCancellationRequested)
+            return new RootEnumerationResult(files, ScanRootStatus.Cancelled, excludedPrefixes);
+
+        return new RootEnumerationResult(files, status, excludedPrefixes);
+    }
+
+    private FileAttributes ReadDirectoryAttributes(string path)
+        => DirectoryAttributesProvider != null
+            ? DirectoryAttributesProvider(path)
+            : System.IO.File.GetAttributes(path);
+
+    private IEnumerable<string> EnumerateDirectoryFiles(string path)
+        => DirectoryFileProvider != null
+            ? DirectoryFileProvider(path)
+            : Directory.GetFiles(path);
+
+    private IEnumerable<string> EnumerateDirectoryChildren(string path)
+        => DirectoryChildProvider != null
+            ? DirectoryChildProvider(path)
+            : Directory.GetDirectories(path);
+
+    private static ScanRootStatus CombineStatus(ScanRootStatus current, ScanRootStatus update)
+    {
+        if (current == ScanRootStatus.Cancelled || update == ScanRootStatus.Cancelled)
+            return ScanRootStatus.Cancelled;
+        if (current == ScanRootStatus.RootUnavailable || update == ScanRootStatus.RootUnavailable)
+            return ScanRootStatus.RootUnavailable;
+        if (current == ScanRootStatus.AccessDenied || update == ScanRootStatus.AccessDenied)
+            return ScanRootStatus.AccessDenied;
+        if (current == ScanRootStatus.Failed || update == ScanRootStatus.Failed)
+            return ScanRootStatus.Failed;
+        if (current == ScanRootStatus.Partial || update == ScanRootStatus.Partial)
+            return ScanRootStatus.Partial;
+        return ScanRootStatus.Completed;
     }
 
     public int BackfillDateAdded()

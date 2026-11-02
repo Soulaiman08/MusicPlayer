@@ -88,9 +88,9 @@ namespace MusicPlayer.Tests
                 {
                     // Only part of the tree was readable: a.wav was seen, b.wav
                     // and gone.wav were not. The root must not authorize deletion.
-                    return (new[] { a }, false);
+                    return new RootEnumerationResult(new[] { a }, ScanRootStatus.Partial);
                 }
-                return (Directory.GetFiles(folder, "*", SearchOption.AllDirectories), true);
+                return Complete(folder);
             });
 
             var result = await scanner.RefreshAndSyncLibraryAsync();
@@ -118,10 +118,7 @@ namespace MusicPlayer.Tests
             Assert.NotNull(_db.GetTrackByPath(missingInRoot));
             Assert.Contains(_anchorRoot, scanner.LastScannedRoots);
             Assert.DoesNotContain(_root, scanner.LastScannedRoots);
-            if (scanner.LastRootStatus.TryGetValue(_root, out var status))
-            {
-                Assert.NotEqual(ScanRootStatus.Completed, status);
-            }
+            Assert.Equal(ScanRootStatus.RootUnavailable, scanner.LastRootStatus[_root]);
         }
 
         [Fact]
@@ -133,12 +130,11 @@ namespace MusicPlayer.Tests
 
             var scanner = new SeamMusicScanner(_db, (folder, _) =>
             {
-                var files = Directory.GetFiles(folder, "*", SearchOption.AllDirectories);
                 if (string.Equals(folder, _root, StringComparison.OrdinalIgnoreCase))
                 {
                     cts.Cancel();
                 }
-                return (files, true);
+                return Complete(folder);
             });
 
             var result = await scanner.RefreshAndSyncLibraryAsync(cts.Token);
@@ -148,6 +144,79 @@ namespace MusicPlayer.Tests
             Assert.Equal(ScanRootStatus.Cancelled, scanner.LastRootStatus[_root]);
             Assert.DoesNotContain(_root, scanner.LastScannedRoots);
             Assert.Contains(_root, scanner.LastFailedRoots);
+        }
+
+        [Fact]
+        public async Task RefreshAndSync_CancelledDuringDeletion_RollsBackEveryDeletion()
+        {
+            string first = Path.Combine(_root, "gone1.wav");
+            string second = Path.Combine(_root, "gone2.wav");
+            InsertMissingTrack(first);
+            InsertMissingTrack(second);
+            using var cts = new CancellationTokenSource();
+
+            var scanner = new SeamMusicScanner(
+                _db,
+                (folder, _) => Complete(folder),
+                beforeDelete: _ => cts.Cancel());
+
+            var result = await scanner.RefreshAndSyncLibraryAsync(cts.Token);
+
+            Assert.Equal(0, result.Removed);
+            Assert.NotNull(_db.GetTrackByPath(first));
+            Assert.NotNull(_db.GetTrackByPath(second));
+            Assert.Equal(ScanRootStatus.Cancelled, scanner.LastRootStatus[_root]);
+            Assert.DoesNotContain(_root, scanner.LastScannedRoots);
+        }
+
+        [Fact]
+        public async Task RefreshAndSync_RootInvalidatedDuringDeletion_RollsBackEveryDeletion()
+        {
+            string first = Path.Combine(_root, "gone1.wav");
+            string second = Path.Combine(_root, "gone2.wav");
+            InsertMissingTrack(first);
+            InsertMissingTrack(second);
+            bool unavailable = false;
+
+            var scanner = new SeamMusicScanner(
+                _db,
+                (folder, _) => Complete(folder),
+                beforeDelete: _ => unavailable = true,
+                availability: _ => unavailable
+                    ? ScanRootStatus.RootUnavailable
+                    : ScanRootStatus.Completed);
+
+            var result = await scanner.RefreshAndSyncLibraryAsync();
+
+            // The first row may have been deleted inside the transaction, but
+            // the invalidated root must roll the whole transaction back.
+            Assert.Equal(0, result.Removed);
+            Assert.NotNull(_db.GetTrackByPath(first));
+            Assert.NotNull(_db.GetTrackByPath(second));
+            Assert.Equal(ScanRootStatus.RootUnavailable, scanner.LastRootStatus[_root]);
+            Assert.DoesNotContain(_root, scanner.LastScannedRoots);
+        }
+
+        [Fact]
+        public async Task RefreshAndSync_FinalValidationFailure_RollsBackAndReportsNoRemoved()
+        {
+            string first = Path.Combine(_root, "gone1.wav");
+            string second = Path.Combine(_root, "gone2.wav");
+            InsertMissingTrack(first);
+            InsertMissingTrack(second);
+
+            var scanner = new SeamMusicScanner(
+                _db,
+                (folder, _) => Complete(folder),
+                failFinalValidation: true);
+
+            var result = await scanner.RefreshAndSyncLibraryAsync();
+
+            Assert.Equal(0, result.Removed);
+            Assert.NotNull(_db.GetTrackByPath(first));
+            Assert.NotNull(_db.GetTrackByPath(second));
+            Assert.Equal(ScanRootStatus.Partial, scanner.LastRootStatus[_root]);
+            Assert.DoesNotContain(_root, scanner.LastScannedRoots);
         }
 
         [Fact]
@@ -166,7 +235,7 @@ namespace MusicPlayer.Tests
                         throw new UnauthorizedAccessException("simulated ACL failure");
                     }
                 }
-                return (Directory.GetFiles(folder, "*", SearchOption.AllDirectories), true);
+                return Complete(folder);
             });
 
             var first = await scanner.RefreshAndSyncLibraryAsync();
@@ -194,7 +263,7 @@ namespace MusicPlayer.Tests
                 {
                     throw new IOException("simulated IO failure");
                 }
-                return (Directory.GetFiles(folder, "*", SearchOption.AllDirectories), true);
+                return Complete(folder);
             });
 
             var result = await scanner.RefreshAndSyncLibraryAsync();
@@ -229,10 +298,9 @@ namespace MusicPlayer.Tests
             CreateWav(Path.Combine(other, "c.wav"));
 
             var scanner = new SeamMusicScanner(_db, (folder, _) =>
-            {
-                var files = Directory.GetFiles(folder, "*", SearchOption.AllDirectories);
-                return (files, !string.Equals(folder, other, StringComparison.OrdinalIgnoreCase));
-            });
+                string.Equals(folder, other, StringComparison.OrdinalIgnoreCase)
+                    ? new RootEnumerationResult(Directory.GetFiles(folder, "*", SearchOption.AllDirectories), ScanRootStatus.Partial)
+                    : Complete(folder));
 
             await scanner.ScanFoldersAsync(new[] { _root, other });
 
@@ -243,6 +311,115 @@ namespace MusicPlayer.Tests
             Assert.DoesNotContain(_root, scanner.LastScannedRoots);
             Assert.DoesNotContain(other, scanner.LastScannedRoots);
         }
+
+        [Fact]
+        public async Task RefreshAndSync_NestedReparsePoint_IsPartialAndPreservesTracksBelowIt()
+        {
+            string sub = Path.Combine(_root, "sub");
+            string missingInSkippedSubtree = Path.Combine(sub, "gone.wav");
+            string existingInSkippedSubtree = Path.Combine(sub, "b.wav");
+            InsertMissingTrack(missingInSkippedSubtree);
+            InsertMissingTrack(existingInSkippedSubtree);
+
+            var scanner = new MusicScanner(_db, NullLogger<MusicScanner>.Instance)
+            {
+                DirectoryAttributesProvider = path =>
+                    string.Equals(path, sub, StringComparison.OrdinalIgnoreCase)
+                        ? FileAttributes.Directory | FileAttributes.ReparsePoint
+                        : File.GetAttributes(path)
+            };
+
+            var result = await scanner.RefreshAndSyncLibraryAsync();
+
+            // The junction subtree was intentionally not traversed, so neither
+            // the vanished file nor the present file below it may be judged.
+            Assert.Equal(0, result.Removed);
+            Assert.NotNull(_db.GetTrackByPath(missingInSkippedSubtree));
+            Assert.NotNull(_db.GetTrackByPath(existingInSkippedSubtree));
+            Assert.Equal(ScanRootStatus.Partial, scanner.LastRootStatus[_root]);
+            Assert.DoesNotContain(_root, scanner.LastScannedRoots);
+        }
+
+        [Fact]
+        public async Task RefreshAndSync_AccessDeniedSubdirectory_IsAccessDeniedAndPreservesTrack()
+        {
+            string sub = Path.Combine(_root, "sub");
+            string missingInRoot = Path.Combine(_root, "gone.wav");
+            InsertMissingTrack(missingInRoot);
+
+            var scanner = new MusicScanner(_db, NullLogger<MusicScanner>.Instance)
+            {
+                DirectoryAttributesProvider = path =>
+                {
+                    if (string.Equals(path, sub, StringComparison.OrdinalIgnoreCase))
+                        throw new UnauthorizedAccessException("simulated subtree ACL failure");
+                    return File.GetAttributes(path);
+                }
+            };
+
+            var result = await scanner.RefreshAndSyncLibraryAsync();
+
+            Assert.Equal(0, result.Removed);
+            Assert.NotNull(_db.GetTrackByPath(missingInRoot));
+            Assert.Equal(ScanRootStatus.AccessDenied, scanner.LastRootStatus[_root]);
+            Assert.DoesNotContain(_root, scanner.LastScannedRoots);
+        }
+
+        [Fact]
+        public async Task RefreshAndSync_UninspectableSubdirectory_IsFailedAndPreservesTrack()
+        {
+            string sub = Path.Combine(_root, "sub");
+            string missingInRoot = Path.Combine(_root, "gone.wav");
+            InsertMissingTrack(missingInRoot);
+
+            var scanner = new MusicScanner(_db, NullLogger<MusicScanner>.Instance)
+            {
+                DirectoryAttributesProvider = path =>
+                {
+                    if (string.Equals(path, sub, StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("simulated uninspectable directory");
+                    return File.GetAttributes(path);
+                }
+            };
+
+            var result = await scanner.RefreshAndSyncLibraryAsync();
+
+            Assert.Equal(0, result.Removed);
+            Assert.NotNull(_db.GetTrackByPath(missingInRoot));
+            Assert.Equal(ScanRootStatus.Failed, scanner.LastRootStatus[_root]);
+            Assert.DoesNotContain(_root, scanner.LastScannedRoots);
+        }
+
+        [Fact]
+        public async Task RefreshAndSync_CancellationPropagatesThroughRecursiveTraversal()
+        {
+            string missingInRoot = Path.Combine(_root, "gone.wav");
+            string sub = Path.Combine(_root, "sub");
+            InsertMissingTrack(missingInRoot);
+            using var cts = new CancellationTokenSource();
+
+            var scanner = new MusicScanner(_db, NullLogger<MusicScanner>.Instance)
+            {
+                DirectoryFileProvider = path =>
+                {
+                    if (string.Equals(path, sub, StringComparison.OrdinalIgnoreCase))
+                        cts.Cancel();
+                    return Directory.GetFiles(path);
+                }
+            };
+
+            var result = await scanner.RefreshAndSyncLibraryAsync(cts.Token);
+
+            Assert.Equal(0, result.Removed);
+            Assert.NotNull(_db.GetTrackByPath(missingInRoot));
+            Assert.Equal(ScanRootStatus.Cancelled, scanner.LastRootStatus[_root]);
+            Assert.DoesNotContain(_root, scanner.LastScannedRoots);
+        }
+
+        private static RootEnumerationResult Complete(string folder)
+            => new(
+                Directory.GetFiles(folder, "*", SearchOption.AllDirectories),
+                ScanRootStatus.Completed);
 
         private void AddManagedRoot(string path, string name)
         {
@@ -281,25 +458,42 @@ namespace MusicPlayer.Tests
 
         private sealed class SeamMusicScanner : MusicScanner
         {
-            private readonly Func<string, CancellationToken, (IReadOnlyList<string> Files, bool Complete)> _enumerate;
+            private readonly Func<string, CancellationToken, RootEnumerationResult>? _enumerate;
+            private readonly Func<string, ScanRootStatus>? _availability;
+            private readonly Action<MusicTrack>? _beforeDelete;
+            private readonly bool _failFinalValidation;
 
             public SeamMusicScanner(
                 DatabaseService db,
-                Func<string, CancellationToken, (IReadOnlyList<string> Files, bool Complete)> enumerate)
+                Func<string, CancellationToken, RootEnumerationResult>? enumerate = null,
+                Func<string, ScanRootStatus>? availability = null,
+                Action<MusicTrack>? beforeDelete = null,
+                bool failFinalValidation = false)
                 : base(db, NullLogger<MusicScanner>.Instance)
             {
                 _enumerate = enumerate;
+                _availability = availability;
+                _beforeDelete = beforeDelete;
+                _failFinalValidation = failFinalValidation;
             }
 
-            protected override IReadOnlyList<string> EnumerateRootFiles(
+            protected override RootEnumerationResult EnumerateRoot(
                 string root,
-                CancellationToken cancellationToken,
-                out bool complete)
-            {
-                var result = _enumerate(root, cancellationToken);
-                complete = result.Complete;
-                return result.Files;
-            }
+                CancellationToken cancellationToken)
+                => _enumerate != null
+                    ? _enumerate(root, cancellationToken)
+                    : base.EnumerateRoot(root, cancellationToken);
+
+            protected override ScanRootStatus CheckRootAvailability(string root)
+                => _availability != null
+                    ? _availability(root)
+                    : base.CheckRootAvailability(root);
+
+            protected override void BeforeDeletionFileCheck(MusicTrack track)
+                => _beforeDelete?.Invoke(track);
+
+            protected override bool ValidateRootsBeforeCommit(IReadOnlyList<string> roots)
+                => !_failFinalValidation;
         }
     }
 }

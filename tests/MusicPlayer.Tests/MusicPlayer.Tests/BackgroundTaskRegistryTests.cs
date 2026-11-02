@@ -155,6 +155,31 @@ namespace MusicPlayer.Tests
         }
 
         [Fact]
+        public async Task StopAsync_Timeout_ReturnsFalseForHungTask()
+        {
+            var registry = new BackgroundTaskRegistry();
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Assert.True(registry.TryStart("hung", async _ => await gate.Task));
+
+            Task<bool> stop = registry.StopAsync(TimeSpan.FromMilliseconds(100));
+            Assert.False(await stop.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(registry.IsStopping);
+
+            gate.TrySetResult();
+            await registry.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(0, registry.TrackedCount);
+        }
+
+        [Fact]
+        public async Task StopAsync_Timeout_ReturnsTrueWhenTaskCompletesInTime()
+        {
+            var registry = new BackgroundTaskRegistry();
+            registry.TryStart("fast", _ => Task.CompletedTask);
+            bool result = await registry.StopAsync(TimeSpan.FromSeconds(5));
+            Assert.True(result);
+        }
+
+        [Fact]
         public async Task LifetimeCancellation_ReachesWorkAndWatchdog()
         {
             using var lifetime = new CancellationTokenSource();
