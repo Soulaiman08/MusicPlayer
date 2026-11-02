@@ -17,10 +17,37 @@ public sealed class BackgroundTaskRegistry
     private readonly object _gate = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly List<Task> _tasks = new();
+    private readonly Dictionary<Task, string> _taskNames = new();
     private readonly ILogger? _logger;
 
     private bool _stopping;
     private Task? _stopTask;
+
+    public void BeginShutdown()
+    {
+        lock (_gate)
+        {
+            if (_stopping) return;
+            _stopping = true;
+            try { _cts.Cancel(); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    public IReadOnlyList<string> GetPendingTaskNames()
+    {
+        lock (_gate)
+        {
+            var result = new List<string>();
+            foreach (var pair in _taskNames)
+            {
+                if (!pair.Key.IsCompleted)
+                {
+                    result.Add(pair.Value);
+                }
+            }
+            return result.Distinct(StringComparer.Ordinal).ToList();
+        }
+    }
 
     public BackgroundTaskRegistry(ILogger? logger = null)
     {
@@ -77,7 +104,12 @@ public sealed class BackgroundTaskRegistry
             }, CancellationToken.None);
 
             _tasks.RemoveAll(x => x.IsCompleted);
+            foreach (var completed in _tasks.Where(t => t.IsCompleted).ToList())
+            {
+                _taskNames.Remove(completed);
+            }
             _tasks.Add(task);
+            _taskNames[task] = name;
             startGate.SetResult();
             return true;
         }
@@ -151,7 +183,7 @@ public sealed class BackgroundTaskRegistry
         }
         finally
         {
-            lock (_gate) { _tasks.Clear(); }
+            lock (_gate) { _tasks.Clear(); _taskNames.Clear(); }
             try { _cts.Dispose(); } catch (ObjectDisposedException) { }
         }
     }

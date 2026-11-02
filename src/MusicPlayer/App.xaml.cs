@@ -499,11 +499,43 @@ public partial class App : Application
         // ServiceProvider is the sole owner of singleton services (including
         // AudioEngine and DatabaseService). ServiceHost only coordinates; it must
         // not dispose services owned by the container.
-        try { _mainViewModel?.ShutdownAsync().Wait(TimeSpan.FromSeconds(2)); } catch { }
+        MusicPlayer.ViewModels.ApplicationShutdownResult? shutdownResult = null;
+        try
+        {
+            var shutdownTask = _mainViewModel?.ShutdownAsync();
+            if (shutdownTask != null)
+            {
+                if (!shutdownTask.Wait(TimeSpan.FromSeconds(30)))
+                {
+                    LogHelper.LogError("App.OnExit: shutdown did not finish within the fallback deadline", new TimeoutException());
+                }
+                else
+                {
+                    shutdownResult = shutdownTask.Result;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("App.OnExit: shutdown failed", ex);
+        }
         try { _serviceHost?.Stop(); } catch { }
         try { _singleInstanceMutex?.ReleaseMutex(); } catch { }
         try { _singleInstanceMutex?.Dispose(); } catch { }
-        try { (ServiceProvider as IDisposable)?.Dispose(); } catch { }
+        // ServiceProvider is the sole owner of singleton services. Dispose it only
+        // when shutdown proved that no active operation still depends on it.
+        if (shutdownResult?.CanDisposeServiceProvider == true)
+        {
+            try { (ServiceProvider as IDisposable)?.Dispose(); } catch { }
+        }
+        else
+        {
+            LogHelper.LogError(
+                "App.OnExit: ServiceProvider retained because shutdown was not proven safe.",
+                new InvalidOperationException(shutdownResult == null
+                    ? "shutdown result unavailable"
+                    : $"Outcome={shutdownResult.Outcome}; Pending={string.Join(",", shutdownResult.PendingOperations)}; Retained={string.Join(",", shutdownResult.RetainedResources)}"));
+        }
         base.OnExit(e);
     }
 }

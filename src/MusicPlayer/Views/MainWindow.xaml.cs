@@ -2551,7 +2551,7 @@ InitializeComponent();
             {
                 if (ViewModel != null)
                 {
-                    Task shutdown = ViewModel.ShutdownAsync();
+                    Task<MusicPlayer.ViewModels.ApplicationShutdownResult> shutdown = ViewModel.ShutdownAsync();
                     Task finished = await Task.WhenAny(shutdown, Task.Delay(TimeSpan.FromSeconds(25)));
                     if (finished != shutdown)
                     {
@@ -2559,7 +2559,13 @@ InitializeComponent();
                     }
                     else
                     {
-                        await shutdown;
+                        MusicPlayer.ViewModels.ApplicationShutdownResult result = await shutdown;
+                        if (!result.CanDisposeServiceProvider)
+                        {
+                            LogHelper.LogError(
+                                "MainWindow: shutdown incomplete; ServiceProvider retained.",
+                                new InvalidOperationException($"Pending={string.Join(",", result.PendingOperations)}; Retained={string.Join(",", result.RetainedResources)}"));
+                        }
                     }
                 }
             }

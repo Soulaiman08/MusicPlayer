@@ -24,6 +24,24 @@ public sealed class UiOperationTracker
     private bool _stopping;
     private TaskCompletionSource? _idle;
 
+    public void BeginShutdown()
+    {
+        lock (_gate)
+        {
+            if (_stopping) return;
+            _stopping = true;
+            try { _cts.Cancel(); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    public IReadOnlyList<string> GetPendingOperationNames()
+    {
+        lock (_gate)
+        {
+            return _active.Values.Distinct(StringComparer.Ordinal).ToList();
+        }
+    }
+
     public UiOperationTracker(ILogger? logger = null)
     {
         _logger = logger;

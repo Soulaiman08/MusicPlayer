@@ -56,7 +56,7 @@ public partial class MainViewModel : ViewModelBase
 	private readonly BackgroundTaskRegistry _backgroundTaskRegistry;
 	private readonly UiOperationTracker _uiOps;
 	private readonly object _shutdownGate = new();
-	private Task? _shutdownTask;
+	private Task<ApplicationShutdownResult>? _shutdownTask;
 	private readonly object _transientTimerGate = new();
 	private readonly List<DispatcherTimer> _transientTimers = new();
 
@@ -4341,7 +4341,7 @@ public partial class MainViewModel : ViewModelBase
 	/// disposed. Each stage is bounded; a timeout is logged as a failure and
 	/// never treated as proof that the work stopped.
 	/// </summary>
-	public Task ShutdownAsync()
+	public Task<ApplicationShutdownResult> ShutdownAsync()
 	{
 		lock (_shutdownGate)
 		{
@@ -4349,8 +4349,11 @@ public partial class MainViewModel : ViewModelBase
 		}
 	}
 
-	private async Task ShutdownCoreAsync()
+	private async Task<ApplicationShutdownResult> ShutdownCoreAsync()
 	{
+		// Reject new work as early as possible, before awaiting anything.
+		_uiOps.BeginShutdown();
+		_backgroundTaskRegistry.BeginShutdown();
 		// Stop dispatcher-based delayed work on the calling (UI) thread before
 		// any awaited stage. Cancellation is requested first; disposal happens
 		// only after scoped tasks have finished.
@@ -4361,24 +4364,40 @@ public partial class MainViewModel : ViewModelBase
 		TryCancel(_sleepTimerCts);
 		TryCancel(_searchCts);
 
+		var pendingOperations = new List<string>();
+		var retainedResources = new List<string>();
+		bool uiStopped = true;
+		bool backgroundStopped = true;
+		bool audioTimedOut = false;
+		AudioShutdownResult? audioResult = null;
+		string? failureReason = null;
+		ShutdownOutcome outcome = ShutdownOutcome.Completed;
+		bool canDispose = true;
+
 		try
 		{
-			bool uiStopped = await _uiOps.StopAsync(UiOperationShutdownTimeout).ConfigureAwait(false);
+			uiStopped = await _uiOps.StopAsync(UiOperationShutdownTimeout).ConfigureAwait(false);
 			if (!uiStopped)
 			{
+				canDispose = false;
+				outcome = ShutdownOutcome.Pending;
 				_logger.LogError(
 					"UI operations did not finish within {Timeout}; continuing shutdown without assuming they stopped.",
 					UiOperationShutdownTimeout);
+				pendingOperations.AddRange(_uiOps.GetPendingOperationNames());
 			}
 
-			bool backgroundStopped = await _backgroundTaskRegistry
+			backgroundStopped = await _backgroundTaskRegistry
 				.StopAsync(BackgroundShutdownTimeout)
 				.ConfigureAwait(false);
 			if (!backgroundStopped)
 			{
+				canDispose = false;
+				outcome = ShutdownOutcome.Pending;
 				_logger.LogError(
 					"Background tasks did not finish within {Timeout}; continuing shutdown without assuming they stopped.",
 					BackgroundShutdownTimeout);
+				pendingOperations.AddRange(_backgroundTaskRegistry.GetPendingTaskNames());
 			}
 
 			Task<AudioShutdownResult> audioShutdown = _playback.Engine.ShutdownAsync();
@@ -4386,22 +4405,45 @@ public partial class MainViewModel : ViewModelBase
 				.ConfigureAwait(false);
 			if (completed != audioShutdown)
 			{
+				audioTimedOut = true;
+				canDispose = false;
+				outcome = ShutdownOutcome.Pending;
 				_logger.LogError(
 					"Audio engine shutdown did not finish within {Timeout}; resources were not assumed released.",
 					AudioShutdownWaitTimeout);
-				return;
+				pendingOperations.Add("AudioEngine.Shutdown");
+				retainedResources.Add("AudioEngine: shutdown pending");
 			}
-
-			AudioShutdownResult result = await audioShutdown.ConfigureAwait(false);
-			if (result.Outcome != AudioShutdownOutcome.Completed)
+			else
 			{
-				_logger.LogError(
-					"Audio engine shutdown outcome={Outcome} readers={Readers} devices={Devices}: {Reason}",
-					result.Outcome, result.QuarantinedReaders, result.QuarantinedDevices, result.QuarantineReason);
+				audioResult = await audioShutdown.ConfigureAwait(false);
+				if (audioResult.Outcome != AudioShutdownOutcome.Completed)
+				{
+					canDispose = false;
+					outcome = ShutdownOutcome.Quarantined;
+					_logger.LogError(
+						"Audio engine shutdown outcome={Outcome} readers={Readers} devices={Devices}: {Reason}",
+						audioResult.Outcome, audioResult.QuarantinedReaders, audioResult.QuarantinedDevices, audioResult.QuarantineReason);
+					if (audioResult.QuarantinedReaders > 0)
+					{
+						retainedResources.Add($"AudioEngine: {audioResult.QuarantinedReaders} quarantined readers");
+					}
+					if (audioResult.QuarantinedDevices > 0)
+					{
+						retainedResources.Add($"AudioEngine: {audioResult.QuarantinedDevices} quarantined devices");
+					}
+					if (!string.IsNullOrWhiteSpace(audioResult.QuarantineReason))
+					{
+						retainedResources.Add("AudioEngine: " + audioResult.QuarantineReason);
+					}
+				}
 			}
 		}
 		catch (Exception ex)
 		{
+			canDispose = false;
+			outcome = ShutdownOutcome.Failed;
+			failureReason = ex.Message;
 			_logger.LogError(ex, "Audio engine shutdown failed");
 		}
 		finally
@@ -4409,6 +4451,33 @@ public partial class MainViewModel : ViewModelBase
 			DisposeCancellationSource(ref _sleepTimerCts);
 			DisposeCancellationSource(ref _searchCts);
 		}
+
+		if (failureReason != null)
+		{
+			outcome = ShutdownOutcome.Failed;
+		}
+		else if (!uiStopped || !backgroundStopped || audioTimedOut || pendingOperations.Count > 0)
+		{
+			outcome = ShutdownOutcome.Pending;
+		}
+		else if (audioResult != null && audioResult.Outcome != AudioShutdownOutcome.Completed)
+		{
+			outcome = ShutdownOutcome.Quarantined;
+		}
+		else if (retainedResources.Count > 0)
+		{
+			outcome = ShutdownOutcome.Quarantined;
+		}
+
+		canDispose = outcome == ShutdownOutcome.Completed
+			&& pendingOperations.Count == 0;
+
+		return new ApplicationShutdownResult(
+			outcome,
+			canDispose,
+			pendingOperations,
+			retainedResources,
+			failureReason);
 	}
 
 	private static void TryCancel(CancellationTokenSource? source)
