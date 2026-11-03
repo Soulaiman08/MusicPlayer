@@ -847,6 +847,12 @@
         <GradientStop Color="#220D1119" Offset="0.55"/>
         <GradientStop Color="#180D1119" Offset="1"/>
     </LinearGradientBrush>
+
+    <!-- TopBar-only tint: matches the legacy header slice without tinting the shared wallpaper sample -->
+    <LinearGradientBrush x:Key="DS_TopBarGlassTint" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#4D15181F" Offset="0"/>
+        <GradientStop Color="#48161920" Offset="1"/>
+    </LinearGradientBrush>
     <LinearGradientBrush x:Key="DS_IdentityBrandPlate" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#10FFFFFF" Offset="0"/>
         <GradientStop Color="#1E0D1119" Offset="0.42"/>
@@ -861,13 +867,6 @@
         <GradientStop Color="#1AFFFFFF" Offset="0.12"/>
         <GradientStop Color="#16FFFFFF" Offset="0.82"/>
         <GradientStop Color="#00FFFFFF" Offset="1"/>
-    </LinearGradientBrush>
-
-    <!-- Light smoked frosted glass: retain wallpaper colors -->
-    <LinearGradientBrush x:Key="DS_SidebarSmokedGlassTint" StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="#4A1A202B" Offset="0"/>
-        <GradientStop Color="#381A202B" Offset="0.5"/>
-        <GradientStop Color="#281A202B" Offset="1"/>
     </LinearGradientBrush>
 
     <!-- Subtle frosted glass frame -->

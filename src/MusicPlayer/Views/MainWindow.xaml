@@ -58,9 +58,11 @@
             </Style>
           </Border.Style>
           <Grid>
-            <!-- Live Backdrop Glass Blur Sampling Surface -->
+            <!-- Live Backdrop Glass Blur Sampling Surface: shared clean wallpaper sample -->
             <Border x:Name="HeaderGlassSurface" Background="Transparent" IsHitTestVisible="False" />
-            <!-- Shared identity tint: identical material recipe to the Sidebar -->
+            <!-- TopBar-only dark tint, kept separate from the shared wallpaper sample -->
+            <Border Background="{StaticResource DS_TopBarGlassTint}" IsHitTestVisible="False" />
+            <!-- TopBar identity tint -->
             <Border Background="{StaticResource DS_IdentityGlassTint}" IsHitTestVisible="False" />
             <!-- Soft glass sheen that lifts the header without adding a panel edge -->
             <Border Background="{StaticResource DS_IdentityTopSheen}" IsHitTestVisible="False" />
@@ -515,22 +517,41 @@
           </Grid>
         </Grid>
 
-          <!-- Soft glass head: the app icon reads as the top segment of the Sidebar identity column -->
+          <!-- Decorative glass head intentionally not rendered: the brand mark must float
+               directly on the wallpaper/Sidebar material without a separate plate or frame.
+               The element is kept (named) because the existing glass brush pipeline assigns
+               its runtime background; zero opacity removes that plate from the visual result
+               without touching the protected code-behind. -->
           <Border x:Name="SidebarBrandGlass" Grid.Column="0" Grid.Row="0"
                   Width="{Binding ActualWidth, ElementName=SidebarBrandButton}"
                   Height="44" Margin="8,6,6,0"
                   HorizontalAlignment="Left" VerticalAlignment="Top"
                   CornerRadius="18"
-                  Background="{StaticResource DS_IdentityBrandPlate}"
+                  Background="Transparent" Opacity="0"
                   IsHitTestVisible="False" SnapsToDevicePixels="True" />
 
           <!-- App identity: Independent brand identity directly integrated with Sidebar -->
-          <Button x:Name="SidebarBrandButton" Grid.Column="0" Grid.Row="0" Width="50" Height="40" Margin="8,8,6,0" Padding="0" Background="Transparent" BorderThickness="0" Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalAlignment="Left" VerticalAlignment="Top" ToolTip="Toggle Navigation Menu" Command="{Binding ToggleDrawerCommand}" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="SidebarBrandButton" Grid.Column="0" Grid.Row="0" Width="50" Height="40" Margin="8,8,6,0" Padding="0" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalAlignment="Left" VerticalAlignment="Top" ToolTip="Toggle Navigation Menu" Command="{Binding ToggleDrawerCommand}" WindowChrome.IsHitTestVisibleInChrome="True">
             <Button.Template>
               <ControlTemplate TargetType="{x:Type Button}">
-                <Border Background="{TemplateBinding Background}">
+                <!-- Chrome-free host: the icon/label render alone; no plate, border or state fill. -->
+                <Border x:Name="BrandChrome" Background="Transparent" BorderBrush="Transparent" BorderThickness="0">
                   <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center" />
                 </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="BrandChrome" Property="Background" Value="Transparent" />
+                    <Setter TargetName="BrandChrome" Property="BorderBrush" Value="Transparent" />
+                  </Trigger>
+                  <Trigger Property="IsPressed" Value="True">
+                    <Setter TargetName="BrandChrome" Property="Background" Value="Transparent" />
+                    <Setter TargetName="BrandChrome" Property="BorderBrush" Value="Transparent" />
+                  </Trigger>
+                  <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter TargetName="BrandChrome" Property="Background" Value="Transparent" />
+                    <Setter TargetName="BrandChrome" Property="BorderBrush" Value="Transparent" />
+                  </Trigger>
+                </ControlTemplate.Triggers>
               </ControlTemplate>
             </Button.Template>
             <Grid>
@@ -538,7 +559,7 @@
                 <ColumnDefinition Width="50" />
                 <ColumnDefinition Width="*" />
               </Grid.ColumnDefinitions>
-              <Image Grid.Column="0" Source="/Assets/app_logo.png" Width="28" Height="28" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" />
+              <Path Grid.Column="0" Data="{StaticResource Icon.Songs}" Fill="#FFFFFFFF" Stretch="Uniform" Width="40" Height="40" HorizontalAlignment="Center" VerticalAlignment="Center" SnapsToDevicePixels="True" />
               <TextBlock x:Name="SidebarBrandName" Grid.Column="1" Text="Music Player" Margin="8,0,8,0" FontSize="13.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" VerticalAlignment="Center" Opacity="0" TextTrimming="CharacterEllipsis" />
             </Grid>
           </Button>
@@ -570,7 +591,7 @@
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
               </Grid.RowDefinitions>
-              <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarSmokedGlassTint}" IsHitTestVisible="False" />
+            <!-- Wallpaper-driven frosted glass surface: no fixed dark tint layer -->
             <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarTopSheen}" IsHitTestVisible="False" VerticalAlignment="Top" Height="44" />
 
             <!-- Aero surface sheen over the glass -->

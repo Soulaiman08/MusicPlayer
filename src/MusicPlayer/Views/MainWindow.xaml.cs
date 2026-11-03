@@ -1463,6 +1463,7 @@ InitializeComponent();
     private BitmapSource? _glassBackdropCache;
     private ImageBrush? _headerGlassBrush;
     private ImageBrush? _sidebarGlassBrush;
+    private ImageBrush? _brandGlassBrush;
     private double _glassCacheWidth;
     private double _glassCacheHeight;
     private double _glassCacheDpiX;
@@ -1563,7 +1564,6 @@ InitializeComponent();
         }
 
         const double renderScale = 1.0 / 3.0;
-        const double glassBlurRadius = 5.0;
         int pixelWidth = Math.Max(1, (int)Math.Ceiling(width * dpi.DpiScaleX * renderScale));
         int pixelHeight = Math.Max(1, (int)Math.Ceiling(height * dpi.DpiScaleY * renderScale));
         double renderDpiX = 96 * dpi.DpiScaleX;
@@ -1573,45 +1573,12 @@ InitializeComponent();
 
         try
         {
-            var target = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
-            var visual = new DrawingVisual();
-            using (var context = visual.RenderOpen())
-            {
-                var wallpaper = new ImageBrush(_glassWallpaperSource) { Stretch = Stretch.UniformToFill };
-                context.DrawRectangle(wallpaper, null, new Rect(0, 0, renderWidth, renderHeight));
-                context.DrawRectangle(new SolidColorBrush(Colors.Black) { Opacity = alpha }, null, new Rect(0, 0, renderWidth, renderHeight));
-
-                var tint = new LinearGradientBrush
-                {
-                    StartPoint = new Point(0, 0),
-                    EndPoint = new Point(0, 1)
-                };
-                tint.GradientStops.Add(new GradientStop(Color.FromArgb(0x4D, 0x15, 0x18, 0x1F), 0));
-                tint.GradientStops.Add(new GradientStop(Color.FromArgb(0x33, 0x18, 0x1B, 0x24), 0.5));
-                tint.GradientStops.Add(new GradientStop(Color.FromArgb(0x59, 0x11, 0x13, 0x18), 1));
-                context.DrawRectangle(tint, null, new Rect(0, 0, renderWidth, renderHeight));
-            }
-            target.Render(visual);
-            target.Freeze();
-
-            var blurVisual = new Image
-            {
-                Source = target,
-                Stretch = Stretch.Fill,
-                Effect = new BlurEffect
-                {
-                    Radius = glassBlurRadius,
-                    RenderingBias = RenderingBias.Performance
-                }
-            };
-            blurVisual.Measure(new Size(renderWidth, renderHeight));
-            blurVisual.Arrange(new Rect(0, 0, renderWidth, renderHeight));
-
-            var blurred = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
-            blurred.Render(blurVisual);
-            blurred.Freeze();
-
-            _glassBackdropCache = blurred;
+            // One wallpaper sample + blur, shared by every glass surface. The
+            // TopBar's dark tint lives as a dedicated XAML layer, so the shared
+            // sample stays clean and wallpaper-driven for the Sidebar/BrandGlass.
+            _glassBackdropCache = RenderBlurredWallpaper(
+                pixelWidth, pixelHeight, renderDpiX, renderDpiY,
+                renderWidth, renderHeight, alpha);
             _glassCacheSource = _glassWallpaperSource;
             _glassCacheWidth = width;
             _glassCacheHeight = height;
@@ -1626,6 +1593,48 @@ InitializeComponent();
         }
     }
 
+    /// <summary>
+    /// Renders and blurs the wallpaper (plus the global alpha scrim) into a
+    /// frozen bitmap that stays wallpaper-driven. Must run on the UI thread
+    /// (RenderTargetBitmap affinity).
+    /// </summary>
+    private BitmapSource RenderBlurredWallpaper(
+        int pixelWidth, int pixelHeight,
+        double renderDpiX, double renderDpiY,
+        double renderWidth, double renderHeight,
+        double alpha)
+    {
+        var target = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
+        var visual = new DrawingVisual();
+        using (var context = visual.RenderOpen())
+        {
+            var wallpaper = new ImageBrush(_glassWallpaperSource) { Stretch = Stretch.UniformToFill };
+            context.DrawRectangle(wallpaper, null, new Rect(0, 0, renderWidth, renderHeight));
+            context.DrawRectangle(new SolidColorBrush(Colors.Black) { Opacity = alpha }, null, new Rect(0, 0, renderWidth, renderHeight));
+        }
+        target.Render(visual);
+        target.Freeze();
+
+        const double glassBlurRadius = 5.0;
+        var blurVisual = new Image
+        {
+            Source = target,
+            Stretch = Stretch.Fill,
+            Effect = new BlurEffect
+            {
+                Radius = glassBlurRadius,
+                RenderingBias = RenderingBias.Performance
+            }
+        };
+        blurVisual.Measure(new Size(renderWidth, renderHeight));
+        blurVisual.Arrange(new Rect(0, 0, renderWidth, renderHeight));
+
+        var blurred = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
+        blurred.Render(blurVisual);
+        blurred.Freeze();
+        return blurred;
+    }
+
     private void UpdateGlassSurfaceBrushes()
     {
         if (_glassBackdropCache == null || RootBorder == null ||
@@ -1636,11 +1645,12 @@ InitializeComponent();
 
         UpdateGlassSurfaceBrush(HeaderGlassSurface, ref _headerGlassBrush);
         UpdateGlassSurfaceBrush(SidebarBorder, ref _sidebarGlassBrush);
+        UpdateGlassSurfaceBrush(SidebarBrandGlass, ref _brandGlassBrush);
     }
 
     private void UpdateGlassSurfaceBrush(Border? surface, ref ImageBrush? brush)
     {
-        if (surface == null || !surface.IsLoaded || RootBorder == null) return;
+        if (surface == null || !surface.IsLoaded || RootBorder == null || _glassBackdropCache == null) return;
 
         brush ??= new ImageBrush
         {
