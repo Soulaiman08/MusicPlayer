@@ -863,15 +863,34 @@
         <GradientStop Color="#00FFFFFF" Offset="1"/>
     </LinearGradientBrush>
 
-    <!-- Smoked / Frosted glass material for the Sidebar (classic glassmorphism) -->
+    <!-- Light smoked frosted glass: retain wallpaper colors -->
     <LinearGradientBrush x:Key="DS_SidebarSmokedGlassTint" StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="#B31A202B" Offset="0"/>
-        <GradientStop Color="#A61A202B" Offset="0.5"/>
-        <GradientStop Color="#991A202B" Offset="1"/>
+        <GradientStop Color="#551A202B" Offset="0"/>
+        <GradientStop Color="#441A202B" Offset="0.5"/>
+        <GradientStop Color="#331A202B" Offset="1"/>
     </LinearGradientBrush>
-    <SolidColorBrush x:Key="DS_SidebarFrostedBorder" Color="#22FFFFFF"/>
+
+    <!-- Subtle frosted glass frame -->
+    <SolidColorBrush x:Key="DS_SidebarFrostedBorder" Color="#30FFFFFF"/>
+
+    <!-- Soft upper glass sheen -->
     <LinearGradientBrush x:Key="DS_SidebarTopSheen" StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="#0AFFFFFF" Offset="0"/>
+        <GradientStop Color="#12FFFFFF" Offset="0"/>
+        <GradientStop Color="#06FFFFFF" Offset="0.45"/>
+        <GradientStop Color="#00FFFFFF" Offset="1"/>
+    </LinearGradientBrush>
+
+    <!-- Left vertical glass edge highlight -->
+    <LinearGradientBrush x:Key="DS_SidebarLeftEdgeShine" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#30FFFFFF" Offset="0"/>
+        <GradientStop Color="#16FFFFFF" Offset="0.45"/>
+        <GradientStop Color="#00FFFFFF" Offset="1"/>
+    </LinearGradientBrush>
+
+    <!-- Right vertical glass edge highlight -->
+    <LinearGradientBrush x:Key="DS_SidebarRightEdgeShine" StartPoint="1,0" EndPoint="0,0">
+        <GradientStop Color="#30FFFFFF" Offset="0"/>
+        <GradientStop Color="#16FFFFFF" Offset="0.45"/>
         <GradientStop Color="#00FFFFFF" Offset="1"/>
     </LinearGradientBrush>
     <RadialGradientBrush x:Key="DS_IdentityJunctionGlow" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">

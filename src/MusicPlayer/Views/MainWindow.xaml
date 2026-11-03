@@ -573,6 +573,12 @@
               <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarSmokedGlassTint}" IsHitTestVisible="False" />
             <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarTopSheen}" IsHitTestVisible="False" VerticalAlignment="Top" Height="44" />
 
+            <!-- Left glass edge highlight -->
+            <Border Grid.RowSpan="2" Width="2.5" Margin="1,12,0,12" HorizontalAlignment="Left" Background="{StaticResource DS_SidebarLeftEdgeShine}" IsHitTestVisible="False" />
+
+            <!-- Right glass edge highlight -->
+            <Border Grid.RowSpan="2" Width="2.5" Margin="0,12,1,12" HorizontalAlignment="Right" Background="{StaticResource DS_SidebarRightEdgeShine}" IsHitTestVisible="False" />
+
               <!-- Sidebar Navigation Items -->
               <ScrollViewer Grid.Row="0" Style="{StaticResource DS_SidebarScrollViewerStyle}">
                 <StackPanel Margin="0,4">
