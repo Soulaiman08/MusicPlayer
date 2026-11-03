@@ -544,7 +544,7 @@
           </Button>
 
           <!-- Persistent Sidebar (Column 0: Compact Rail / Expanded Drawer) -->
-          <Border x:Name="SidebarBorder" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Width="50" Margin="8,54,6,8" ClipToBounds="True" Background="Transparent" BorderBrush="{StaticResource DS_SidebarFrostedBorder}" BorderThickness="1" SnapsToDevicePixels="True" SizeChanged="SidebarGlassSurface_SizeChanged">
+          <Border x:Name="SidebarBorder" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Width="50" Margin="8,54,6,8" ClipToBounds="True" Background="Transparent" BorderBrush="{StaticResource DS_SidebarOuterGlassReflection}" BorderThickness="1" SnapsToDevicePixels="True" SizeChanged="SidebarGlassSurface_SizeChanged">
             <Border.Style>
               <Style TargetType="{x:Type Border}">
                 <Setter Property="CornerRadius" Value="20" />
@@ -573,11 +573,22 @@
               <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarSmokedGlassTint}" IsHitTestVisible="False" />
             <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarTopSheen}" IsHitTestVisible="False" VerticalAlignment="Top" Height="44" />
 
-            <!-- Left glass edge highlight -->
-            <Border Grid.RowSpan="2" Width="2.5" Margin="1,12,0,12" HorizontalAlignment="Left" Background="{StaticResource DS_SidebarLeftEdgeShine}" IsHitTestVisible="False" />
+            <!-- Aero surface sheen over the glass -->
+            <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarAeroSurfaceSheen}" IsHitTestVisible="False" />
 
-            <!-- Right glass edge highlight -->
-            <Border Grid.RowSpan="2" Width="2.5" Margin="0,12,1,12" HorizontalAlignment="Right" Background="{StaticResource DS_SidebarRightEdgeShine}" IsHitTestVisible="False" />
+            <!-- Inner edge reflection -->
+            <Border Grid.RowSpan="2" Margin="1" Background="Transparent" BorderBrush="{StaticResource DS_SidebarInnerEdgeReflection}" BorderThickness="1" IsHitTestVisible="False">
+                <Border.Style>
+                    <Style TargetType="{x:Type Border}">
+                        <Setter Property="CornerRadius" Value="19" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsDrawerOpen}" Value="False">
+                                <Setter Property="CornerRadius" Value="24" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+            </Border>
 
               <!-- Sidebar Navigation Items -->
               <ScrollViewer Grid.Row="0" Style="{StaticResource DS_SidebarScrollViewerStyle}">
