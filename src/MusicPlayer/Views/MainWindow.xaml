@@ -544,7 +544,7 @@
           </Button>
 
           <!-- Persistent Sidebar (Column 0: Compact Rail / Expanded Drawer) -->
-          <Border x:Name="SidebarBorder" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Width="50" Margin="8,54,6,8" ClipToBounds="True" Background="Transparent" BorderBrush="#30FFFFFF" BorderThickness="1" SnapsToDevicePixels="True" SizeChanged="SidebarGlassSurface_SizeChanged">
+          <Border x:Name="SidebarBorder" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Width="50" Margin="8,54,6,8" ClipToBounds="True" Background="Transparent" BorderBrush="{StaticResource DS_SidebarFrostedBorder}" BorderThickness="1" SnapsToDevicePixels="True" SizeChanged="SidebarGlassSurface_SizeChanged">
             <Border.Style>
               <Style TargetType="{x:Type Border}">
                 <Setter Property="CornerRadius" Value="20" />
@@ -570,7 +570,8 @@
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
               </Grid.RowDefinitions>
-              <Border Grid.RowSpan="2" Background="{StaticResource DS_IdentityGlassTint}" IsHitTestVisible="False" />
+              <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarSmokedGlassTint}" IsHitTestVisible="False" />
+            <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarTopSheen}" IsHitTestVisible="False" VerticalAlignment="Top" Height="44" />
 
               <!-- Sidebar Navigation Items -->
               <ScrollViewer Grid.Row="0" Style="{StaticResource DS_SidebarScrollViewerStyle}">
@@ -1233,8 +1234,8 @@
                   </ScrollViewer>
                 </Grid>
                 <Grid Name="TabContent_Genres" Visibility="Collapsed">
-                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False">
-                    <ItemsControl ItemsSource="{Binding DisplayedGenres}">
+                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">
+                    <ItemsControl ItemsSource="{Binding DisplayedGenres}" VerticalAlignment="Top">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <local:BalancedItemsPanel MinItemWidth="132" MaxItemWidth="176" Gap="10"/>
@@ -1261,8 +1262,8 @@
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
-                  <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False">
-                    <ItemsControl ItemsSource="{Binding Folders}">
+                  <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">
+                    <ItemsControl ItemsSource="{Binding Folders}" VerticalAlignment="Top">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <local:BalancedItemsPanel MinItemWidth="132" MaxItemWidth="176" Gap="10"/>
@@ -1892,7 +1893,7 @@
                       <ListBox ItemsSource="{Binding ArtistAlbums}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
                         <ListBox.ItemsPanel>
                           <ItemsPanelTemplate>
-                            <local:BalancedItemsPanel MinItemWidth="132" MaxItemWidth="176" Gap="10"/>
+                            <local:BalancedItemsPanel MinItemWidth="152" MaxItemWidth="176" Gap="10"/>
                           </ItemsPanelTemplate>
                         </ListBox.ItemsPanel>
                         <ListBox.ItemTemplate>
@@ -4739,7 +4740,7 @@
             <Border Grid.Column="3" Width="140" Background="Transparent" IsHitTestVisible="False" />
           </Grid>
 
-          <Border Name="MoreOptionsPanel" Visibility="Collapsed" Background="#AA000000" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" MouseLeftButtonDown="MoreOptionsBackdrop_Click">
+          <Border Name="MoreOptionsPanel" Visibility="Collapsed" Background="#AA000000" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Panel.ZIndex="100" MouseLeftButtonDown="MoreOptionsBackdrop_Click">
             <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Background="#FF2A2D35" CornerRadius="20,20,0,0" Padding="32,24,32,24" MinWidth="360" MaxWidth="480" Width="440" RenderTransformOrigin="0.5,1">
               <UIElement.RenderTransform>
                 <TranslateTransform x:Name="MoreOptionsTranslate" Y="300" />
@@ -4845,7 +4846,7 @@
               </Grid>
             </Border>
           </Border>
-          <Border Name="RelatedLyricsPopup" Visibility="Collapsed" Background="#AA000000" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" MouseLeftButtonDown="RelatedLyricsBackdrop_Click">
+          <Border Name="RelatedLyricsPopup" Visibility="Collapsed" Background="#AA000000" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Panel.ZIndex="100" MouseLeftButtonDown="RelatedLyricsBackdrop_Click">
             <Border HorizontalAlignment="Center" VerticalAlignment="Center" Width="380" Background="#FF1E222A" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="16" Padding="28,24" RenderTransformOrigin="0.5,0.5">
               <UIElement.RenderTransform>
                 <ScaleTransform x:Name="RelatedLyricsTransform" ScaleX="1" ScaleY="1" />
@@ -4876,7 +4877,7 @@
               </StackPanel>
             </Border>
           </Border>
-          <Grid Name="LyricsSettingsBackdrop" Visibility="Collapsed">
+          <Grid Name="LyricsSettingsBackdrop" Visibility="Collapsed" Panel.ZIndex="100">
             <Border Name="LyricsSettingsPanel" Visibility="Collapsed" Background="#FF2A2D35" HorizontalAlignment="Center" VerticalAlignment="Bottom" MinWidth="360" MaxWidth="480" Width="440" CornerRadius="20,20,0,0" Padding="32,24,32,24" Margin="0" RenderTransformOrigin="0.5,1" MouseLeftButtonDown="LyricsSettingsPanel_MouseDown">
               <UIElement.RenderTransform>
                 <TranslateTransform x:Name="LyricsSettingsTransform" Y="0" />
@@ -4950,7 +4951,7 @@
               </StackPanel>
             </Border>
           </Grid>
-          <Border Name="LyricsSpeedPanel" Visibility="Collapsed" Background="#FF1A1D24" HorizontalAlignment="Center" VerticalAlignment="Center" Width="360" CornerRadius="16" Padding="28,24" RenderTransformOrigin="0.5,0.5">
+          <Border Name="LyricsSpeedPanel" Visibility="Collapsed" Background="#FF1A1D24" HorizontalAlignment="Center" VerticalAlignment="Center" Width="360" CornerRadius="16" Padding="28,24" RenderTransformOrigin="0.5,0.5" Panel.ZIndex="100">
             <UIElement.RenderTransform>
               <ScaleTransform x:Name="LyricsSpeedTransform" ScaleX="1" ScaleY="1" />
             </UIElement.RenderTransform>

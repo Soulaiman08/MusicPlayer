@@ -314,7 +314,7 @@
       </ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate>
         <DataTemplate>
-          <Border Width="190" Height="74" BorderThickness="1" CornerRadius="16" Margin="0,0,12,12" Padding="12" Cursor="Hand" MouseLeftButtonUp="PlaylistItem_Click" SnapsToDevicePixels="True">
+          <Border Height="74" HorizontalAlignment="Stretch" MaxWidth="190" BorderThickness="1" CornerRadius="16" Margin="0,0,12,12" Padding="12" Cursor="Hand" MouseLeftButtonUp="PlaylistItem_Click" SnapsToDevicePixels="True">
 <Border.Style>
           <Style TargetType="Border">
             <Setter Property="Background" Value="#1CFFFFFF" />
@@ -355,7 +355,7 @@
               </Border>
               <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,0,0,0">
                 <TextBlock Style="{StaticResource APK_TextBodyStyle}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" Text="{Binding Name}" Foreground="#FFFFFFFF" />
-                <TextBlock Style="{StaticResource APK_TextLowStyle}" Margin="0,3,0,0" FontSize="11.5" Foreground="#8A92A2" Text="{Binding TrackCount, StringFormat={}{0} songs}" />
+                <TextBlock Style="{StaticResource APK_TextLowStyle}" Margin="0,3,0,0" FontSize="11.5" Foreground="#8A92A2" TextTrimming="CharacterEllipsis" Text="{Binding TrackCount, StringFormat={}{0} songs}" />
               </StackPanel>
             </Grid>
           </Border>

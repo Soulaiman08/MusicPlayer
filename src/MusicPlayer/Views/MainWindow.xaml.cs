@@ -1406,16 +1406,42 @@ InitializeComponent();
 
     private void OnBackgroundPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(MainViewModel.BackgroundImagePath) or nameof(MainViewModel.WallpaperBlur))
+        if (e.PropertyName == nameof(MainViewModel.BackgroundImagePath))
         {
-            // Coalesce rapid changes (theme switching, blur-slider drags) through
-            // the existing 200ms debounce — no new timers.
+            // Actual wallpaper selection must not wait for the 200ms debounce:
+            // kick the (async, generation-guarded) rebuild immediately. The
+            // preview path already painted the thumbnail synchronously.
+            _bgDirty = true;
+            RebuildBlurCache();
+        }
+        else if (e.PropertyName == nameof(MainViewModel.WallpaperBlur))
+        {
+            // Blur-slider drags are coalesced through the 200ms debounce.
             _bgDirty = true;
             EnsureBlurCache();
         }
         else if (e.PropertyName == nameof(MainViewModel.WallpaperAlpha))
         {
-            MarkGlassBackdropDirty();
+            // Alpha only affects the glass tint; rebuild the glass cache now
+            // (synchronously on the UI thread) so it tracks without debounce.
+            if (Dispatcher.CheckAccess())
+            {
+                RebuildGlassBackdropCache();
+                if (_glassBackdropCache == null || !ReferenceEquals(_glassCacheSource, _glassWallpaperSource))
+                {
+                    _glassDirty = true;
+                    EnsureBlurCache();
+                }
+                else
+                {
+                    _glassDirty = false;
+                }
+            }
+            else
+            {
+                _glassDirty = true;
+                EnsureBlurCache();
+            }
         }
     }
 
@@ -1487,7 +1513,28 @@ InitializeComponent();
         if (!ReferenceEquals(_glassWallpaperSource, glassSource))
         {
             _glassWallpaperSource = glassSource;
-            MarkGlassBackdropDirty();
+            // Synchronize the glass surfaces with the new wallpaper source right
+            // away instead of waiting for the 200ms debounce, so no stale glass
+            // remains over the new background. Heavy decode stays off-thread;
+            // only the (already necessary) RenderTargetBitmap pass runs here.
+            if (Dispatcher.CheckAccess())
+            {
+                RebuildGlassBackdropCache();
+                if (_glassBackdropCache == null || !ReferenceEquals(_glassCacheSource, _glassWallpaperSource))
+                {
+                    _glassDirty = true;
+                    EnsureBlurCache();
+                }
+                else
+                {
+                    _glassDirty = false;
+                }
+            }
+            else
+            {
+                _glassDirty = true;
+                EnsureBlurCache();
+            }
         }
     }
 
