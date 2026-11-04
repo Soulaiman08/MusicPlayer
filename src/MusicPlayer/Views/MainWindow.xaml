@@ -42,8 +42,11 @@
           <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
         <!-- Unified identity glass TopBar: the same material continues from the app identity head and Sidebar -->
-        <!-- 1. Visual Background Layer: Purely visual, never intercepts mouse hit tests -->
-        <Border x:Name="HeaderGlassLayer" Grid.Row="0" Grid.Column="1" Background="#200D1119" BorderThickness="0" SnapsToDevicePixels="True" IsHitTestVisible="False" OpacityMask="{StaticResource DS_IdentityHeaderFadeMask}">
+        <!-- 1. Visual Background Layer: Purely visual, never intercepts mouse hit tests.
+             Fills the exact TopBar row/column (auto Column 1 of Row 0); no fade mask on the
+             layer itself. TopBar darkening lives in DS_TopBarGlassTint / DS_IdentityGlassTint,
+             both edge-faded toward the Sidebar via DS_TopBarGlassEdgeFade. -->
+        <Border x:Name="HeaderGlassLayer" Grid.Row="0" Grid.Column="1" Background="Transparent" BorderThickness="0" SnapsToDevicePixels="True" IsHitTestVisible="False">
           <Border.Style>
             <Style TargetType="Border">
               <Setter Property="Visibility" Value="Visible" />
@@ -58,30 +61,21 @@
             </Style>
           </Border.Style>
           <Grid>
-            <!-- Live Backdrop Glass Blur Sampling Surface: shared clean wallpaper sample -->
-            <Border x:Name="HeaderGlassSurface" Background="Transparent" IsHitTestVisible="False" />
-            <!-- TopBar-only dark tint, kept separate from the shared wallpaper sample -->
-            <Border Background="{StaticResource DS_TopBarGlassTint}" IsHitTestVisible="False" />
-            <!-- TopBar identity tint -->
-            <Border Background="{StaticResource DS_IdentityGlassTint}" IsHitTestVisible="False" />
+            <!-- Live Backdrop Glass Blur Sampling Surface: shared clean wallpaper sample (edge-faded like the tints) -->
+            <Border x:Name="HeaderGlassSurface" Background="Transparent" IsHitTestVisible="False" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" />
+            <!-- TopBar-only dark tint: smokes down from full strength away from the Sidebar; edge-faded toward the junction -->
+            <Border Background="{StaticResource DS_TopBarGlassTint}" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" IsHitTestVisible="False" />
+            <!-- TopBar identity tint: same edge fade so the junction is one smooth ramp, not two films -->
+            <Border Background="{StaticResource DS_IdentityGlassTint}" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" IsHitTestVisible="False" />
             <!-- Soft glass sheen that lifts the header without adding a panel edge -->
-            <Border Background="{StaticResource DS_IdentityTopSheen}" IsHitTestVisible="False" />
+            <Border Background="{StaticResource DS_IdentityTopSheen}" IsHitTestVisible="False" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" />
             <!-- Hairline edge that dissolves at both ends instead of cutting the page -->
-            <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource DS_IdentityHeaderEdge}" IsHitTestVisible="False" />
+            <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource DS_IdentityHeaderEdge}" IsHitTestVisible="False" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" />
           </Grid>
         </Border>
 
-        <!-- Soft ambient light where the identity column and TopBar meet; hidden on Home and Full Player.
-             The zero-size Canvas keeps the glow out of the Auto-row measurement. -->
-        <Canvas Grid.Row="0" Grid.Column="1" Width="0" Height="0"
-                HorizontalAlignment="Left" VerticalAlignment="Top"
-                IsHitTestVisible="False">
-          <Border x:Name="IdentityJunctionGlow" Width="160" Height="120"
-                  Canvas.Left="-16" Canvas.Top="-8"
-                  Background="{StaticResource DS_IdentityJunctionGlow}"
-                  Visibility="{Binding Visibility, ElementName=HeaderGlassLayer}"
-                  IsHitTestVisible="False" SnapsToDevicePixels="True" />
-        </Canvas>
+        <!-- Seamless glass transition: no glow, no vertical seam, no decorative shadow at the junction.
+             The TopBar's dark tint simply dissolves toward the Sidebar (DS_TopBarGlassEdgeFade). -->
 
         <!-- 2. Interactive Header Controls Layer: Houses all controls with isolated, direct hit testing -->
         <Grid Grid.Row="0" Grid.Column="1" MinHeight="70">
@@ -559,6 +553,7 @@
                 <ColumnDefinition Width="50" />
                 <ColumnDefinition Width="*" />
               </Grid.ColumnDefinitions>
+              <!-- Brand Mark: plain white Icon.Songs; no plate, glow or shadow — it rides the same glass. -->
               <Path Grid.Column="0" Data="{StaticResource Icon.Songs}" Fill="#FFFFFFFF" Stretch="Uniform" Width="40" Height="40" HorizontalAlignment="Center" VerticalAlignment="Center" SnapsToDevicePixels="True" />
               <TextBlock x:Name="SidebarBrandName" Grid.Column="1" Text="Music Player" Margin="8,0,8,0" FontSize="13.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" VerticalAlignment="Center" Opacity="0" TextTrimming="CharacterEllipsis" />
             </Grid>
@@ -593,6 +588,12 @@
               </Grid.RowDefinitions>
             <!-- Wallpaper-driven frosted glass surface: no fixed dark tint layer -->
             <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarTopSheen}" IsHitTestVisible="False" VerticalAlignment="Top" Height="44" />
+
+            <!-- Sidebar junction fade: light tint recedes at the top-right junction only (24-32 DIP),
+                 revealing the neutral wallpaper sample to crossfade with the TopBar's dark tint.
+                 Never applied to the sidebar's full height or its full right edge. -->
+            <Border Grid.RowSpan="2" HorizontalAlignment="Right" VerticalAlignment="Top" Width="28" Height="44"
+                    Background="{StaticResource DS_SidebarJunctionFade}" IsHitTestVisible="False" />
 
             <!-- Aero surface sheen over the glass -->
             <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarAeroSurfaceSheen}" IsHitTestVisible="False" />

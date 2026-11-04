@@ -841,17 +841,36 @@
     <SolidColorBrush x:Key="DS_Glass_Panel_Brush" Color="#28111624"/>
     <SolidColorBrush x:Key="DS_Scrim_Modal_Brush" Color="#99000000"/>
 
-    <!-- Unified identity glass: shared by the app identity head, Sidebar and TopBar -->
+    <!-- Unified identity glass tint (kept subtle so DS_TopBarGlassTint drives TopBar darkness
+         without doubling into an opaque surface or washing the sample out) -->
     <LinearGradientBrush x:Key="DS_IdentityGlassTint" StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="#2E0D1119" Offset="0"/>
-        <GradientStop Color="#220D1119" Offset="0.55"/>
-        <GradientStop Color="#180D1119" Offset="1"/>
+        <GradientStop Color="#140D1119" Offset="0"/>
+        <GradientStop Color="#0F0D1119" Offset="0.55"/>
+        <GradientStop Color="#0B0D1119" Offset="1"/>
     </LinearGradientBrush>
 
-    <!-- TopBar-only tint: matches the legacy header slice without tinting the shared wallpaper sample -->
+    <!-- TopBar-only tint: dark smoked frosted surface, balanced for dark wallpapers.
+         Stays translucent (wallpaper remains felt), with a slight top>bottom drop. -->
     <LinearGradientBrush x:Key="DS_TopBarGlassTint" StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="#4D15181F" Offset="0"/>
-        <GradientStop Color="#48161920" Offset="1"/>
+        <GradientStop Color="#8011161E" Offset="0"/>
+        <GradientStop Color="#6B161B24" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- Seamless junction fade: the TopBar's glass sample + dark tints dissolve toward the Sidebar over ~130 DIP
+         (absolute units — never stretches with window width). Applied as OpacityMask to the glass surface and
+         tint layers; the underlying sharp wallpaper remains visible at the seam, eliminating the hard boundary. -->
+    <LinearGradientBrush x:Key="DS_TopBarGlassEdgeFade" StartPoint="0,0" EndPoint="130,0" MappingMode="Absolute">
+        <GradientStop Color="#00FFFFFF" Offset="0"/>
+        <GradientStop Color="#59FFFFFF" Offset="0.35"/>
+        <GradientStop Color="#A6FFFFFF" Offset="0.65"/>
+        <GradientStop Color="#D9FFFFFF" Offset="0.85"/>
+        <GradientStop Color="#FFFFFFFF" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- Sidebar junction fade: the light frosted tint recedes at the top-right junction over ~28 DIP,
+         revealing the neutral wallpaper sample so it crossfades with the TopBar's dark tint.
+         Top junction only — never weakens the sidebar's right edge along its full height. -->
+    <LinearGradientBrush x:Key="DS_SidebarJunctionFade" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#000D1119" Offset="0"/>
+        <GradientStop Color="#330D1119" Offset="1"/>
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="DS_IdentityBrandPlate" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#10FFFFFF" Offset="0"/>
@@ -901,14 +920,6 @@
         <GradientStop Color="#0CFFFFFF" Offset="0.28"/>
         <GradientStop Color="#04FFFFFF" Offset="0.62"/>
         <GradientStop Color="#00FFFFFF" Offset="1"/>
-    </LinearGradientBrush>
-    <RadialGradientBrush x:Key="DS_IdentityJunctionGlow" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
-        <GradientStop Color="#20FFFFFF" Offset="0"/>
-        <GradientStop Color="#00FFFFFF" Offset="1"/>
-    </RadialGradientBrush>
-    <LinearGradientBrush x:Key="DS_IdentityHeaderFadeMask" StartPoint="0,0" EndPoint="30,0" MappingMode="Absolute">
-        <GradientStop Color="#00000000" Offset="0"/>
-        <GradientStop Color="#FF000000" Offset="1"/>
     </LinearGradientBrush>
 
     <!-- App Header & Navigation Controls -->

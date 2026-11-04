@@ -1563,13 +1563,27 @@ InitializeComponent();
             return;
         }
 
-        const double renderScale = 1.0 / 3.0;
+        // Sample resolution vs. cost. 0.5 of the source keeps the frosted sample far
+        // sharper than the legacy 1/3 ratio (2.25x the pixels, far more gradient
+        // detail before blur). Very large windows cap the long sample side so the
+        // shared bake stays bounded in memory and on the UI thread.
+        const double baseRenderScale = 0.5;
+        const double maxSamplePixels = 1600.0; // long side of the sample, in physical pixels
+        double srcLong = Math.Max(width * dpi.DpiScaleX, height * dpi.DpiScaleY);
+        double renderScale = srcLong > 0
+            ? Math.Min(baseRenderScale, maxSamplePixels / srcLong)
+            : baseRenderScale;
         int pixelWidth = Math.Max(1, (int)Math.Ceiling(width * dpi.DpiScaleX * renderScale));
         int pixelHeight = Math.Max(1, (int)Math.Ceiling(height * dpi.DpiScaleY * renderScale));
         double renderDpiX = 96 * dpi.DpiScaleX;
         double renderDpiY = 96 * dpi.DpiScaleY;
         double renderWidth = pixelWidth * 96 / renderDpiX;
         double renderHeight = pixelHeight * 96 / renderDpiY;
+        // Effective on-screen blur in DIPs; converted into sample space so the look
+        // stays consistent across DPI scales and window sizes. ~10 DIP keeps the
+        // wallpaper readable-for-the-eye but free of sharp detail (vs legacy ~15).
+        const double glassBlurScreenDips = 10.0;
+        double glassBlurRadius = Math.Max(1.0, glassBlurScreenDips * renderScale);
 
         try
         {
@@ -1578,7 +1592,7 @@ InitializeComponent();
             // sample stays clean and wallpaper-driven for the Sidebar/BrandGlass.
             _glassBackdropCache = RenderBlurredWallpaper(
                 pixelWidth, pixelHeight, renderDpiX, renderDpiY,
-                renderWidth, renderHeight, alpha);
+                renderWidth, renderHeight, alpha, glassBlurRadius);
             _glassCacheSource = _glassWallpaperSource;
             _glassCacheWidth = width;
             _glassCacheHeight = height;
@@ -1602,7 +1616,7 @@ InitializeComponent();
         int pixelWidth, int pixelHeight,
         double renderDpiX, double renderDpiY,
         double renderWidth, double renderHeight,
-        double alpha)
+        double alpha, double blurRadius)
     {
         var target = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
         var visual = new DrawingVisual();
@@ -1615,15 +1629,15 @@ InitializeComponent();
         target.Render(visual);
         target.Freeze();
 
-        const double glassBlurRadius = 5.0;
         var blurVisual = new Image
         {
             Source = target,
             Stretch = Stretch.Fill,
             Effect = new BlurEffect
             {
-                Radius = glassBlurRadius,
-                RenderingBias = RenderingBias.Performance
+                // Baked once into a frozen bitmap, so spend the quality pass here.
+                Radius = blurRadius,
+                RenderingBias = RenderingBias.Quality
             }
         };
         blurVisual.Measure(new Size(renderWidth, renderHeight));
