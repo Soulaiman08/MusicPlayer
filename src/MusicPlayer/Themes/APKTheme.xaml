@@ -865,13 +865,6 @@
         <GradientStop Color="#D9FFFFFF" Offset="0.85"/>
         <GradientStop Color="#FFFFFFFF" Offset="1"/>
     </LinearGradientBrush>
-    <!-- Sidebar junction fade: the light frosted tint recedes at the top-right junction over ~28 DIP,
-         revealing the neutral wallpaper sample so it crossfades with the TopBar's dark tint.
-         Top junction only — never weakens the sidebar's right edge along its full height. -->
-    <LinearGradientBrush x:Key="DS_SidebarJunctionFade" StartPoint="0,0" EndPoint="1,0">
-        <GradientStop Color="#000D1119" Offset="0"/>
-        <GradientStop Color="#330D1119" Offset="1"/>
-    </LinearGradientBrush>
     <LinearGradientBrush x:Key="DS_IdentityBrandPlate" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#10FFFFFF" Offset="0"/>
         <GradientStop Color="#1E0D1119" Offset="0.42"/>

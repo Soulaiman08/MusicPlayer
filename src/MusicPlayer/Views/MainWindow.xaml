@@ -560,7 +560,7 @@
           </Button>
 
           <!-- Persistent Sidebar (Column 0: Compact Rail / Expanded Drawer) -->
-          <Border x:Name="SidebarBorder" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Width="50" Margin="8,54,6,8" ClipToBounds="True" Background="Transparent" BorderBrush="{StaticResource DS_SidebarOuterGlassReflection}" BorderThickness="1" SnapsToDevicePixels="True" SizeChanged="SidebarGlassSurface_SizeChanged">
+          <Border x:Name="SidebarBorder" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Width="50" Margin="8,64,6,8" ClipToBounds="True" Background="Transparent" BorderBrush="{StaticResource DS_SidebarOuterGlassReflection}" BorderThickness="1" SnapsToDevicePixels="True" SizeChanged="SidebarGlassSurface_SizeChanged">
             <Border.Style>
               <Style TargetType="{x:Type Border}">
                 <Setter Property="CornerRadius" Value="20" />
@@ -588,12 +588,6 @@
               </Grid.RowDefinitions>
             <!-- Wallpaper-driven frosted glass surface: no fixed dark tint layer -->
             <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarTopSheen}" IsHitTestVisible="False" VerticalAlignment="Top" Height="44" />
-
-            <!-- Sidebar junction fade: light tint recedes at the top-right junction only (24-32 DIP),
-                 revealing the neutral wallpaper sample to crossfade with the TopBar's dark tint.
-                 Never applied to the sidebar's full height or its full right edge. -->
-            <Border Grid.RowSpan="2" HorizontalAlignment="Right" VerticalAlignment="Top" Width="28" Height="44"
-                    Background="{StaticResource DS_SidebarJunctionFade}" IsHitTestVisible="False" />
 
             <!-- Aero surface sheen over the glass -->
             <Border Grid.RowSpan="2" Background="{StaticResource DS_SidebarAeroSurfaceSheen}" IsHitTestVisible="False" />

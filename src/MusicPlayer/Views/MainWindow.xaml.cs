@@ -2286,6 +2286,21 @@ InitializeComponent();
             }
         }
         catch { }
+
+        // Remove the DWM-drawn border color (Windows 11+) so no white halo
+        // appears around the transparent window, especially on dark wallpapers.
+        // DWMWA_COLOR_NONE (0xFFFFFFFE) makes the border fully transparent while
+        // preserving the system drop shadow.
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        {
+            try
+            {
+                int borderColor = DWMWA_COLOR_NONE;
+                DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref borderColor, sizeof(int));
+            }
+            catch { }
+        }
+
         HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
 
         // Services may not be ready yet (DI builds in background). Initialize them after DataContext is set.
@@ -2494,6 +2509,8 @@ InitializeComponent();
 
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
         private const int DWMWA_CAPTION_COLOR = 35;
+        private const int DWMWA_BORDER_COLOR = 34;
+        private const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
