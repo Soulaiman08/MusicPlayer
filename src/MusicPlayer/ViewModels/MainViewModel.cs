@@ -8104,7 +8104,7 @@ private async void LoadFolders()
 	private void OpenThemeEditor()
 	{
 		ThemeEditWallpaperPath = string.IsNullOrEmpty(BackgroundImagePath)
-			? "pack://application:,,,/Assets/Backgrounds/bg_001.png"
+			? WallpaperCatalog.FindById(WallpaperCatalog.DefaultId)?.ResourceUri ?? "pack://application:,,,/Wallpaper/Defaut/bg_005.png"
 			: BackgroundImagePath;
 		ThemeEditBlur = WallpaperBlur;
 		ThemeEditAlpha = WallpaperAlpha;
@@ -8204,13 +8204,24 @@ private async void LoadFolders()
 		try
 		{
 				string saved = _db.GetSetting("app_wallpaper", "");
-				// Resolve old-style paths (file paths, pack URIs, Assets paths) to catalog entries.
+				// Resolve: catalog entry, personal file path, or default.
 				var resolvedEntry = WallpaperCatalog.Resolve(saved);
 				string resolvedUri = resolvedEntry != null ? resolvedEntry.ResourceUri : string.Empty;
-				if (string.IsNullOrEmpty(resolvedUri))
+				bool isPersonalFile = false;
+				if (string.IsNullOrEmpty(resolvedUri) && !string.IsNullOrEmpty(saved))
 				{
-					resolvedEntry = WallpaperCatalog.FindById(WallpaperCatalog.DefaultId);
-					resolvedUri = resolvedEntry != null ? resolvedEntry.ResourceUri : string.Empty;
+					// Check if it's a valid personal file path.
+					if (System.IO.File.Exists(saved))
+					{
+						resolvedUri = saved;
+						isPersonalFile = true;
+					}
+					else
+					{
+						// Unresolvable: fall back to default.
+						resolvedEntry = WallpaperCatalog.FindById(WallpaperCatalog.DefaultId);
+						resolvedUri = resolvedEntry != null ? resolvedEntry.ResourceUri : string.Empty;
+					}
 				}
 
 				var result = await Task.Run(() =>
@@ -8262,7 +8273,7 @@ private async void LoadFolders()
 				if (!string.IsNullOrEmpty(resolvedUri))
 				{
 					BackgroundImagePath = resolvedUri;
-					if (resolvedEntry != null && !string.Equals(saved, resolvedEntry.Id, StringComparison.Ordinal))
+					if (!isPersonalFile && resolvedEntry != null && !string.Equals(saved, resolvedEntry.Id, StringComparison.Ordinal))
 					{
 						_db.SetSetting("app_wallpaper", resolvedEntry.Id);
 					}

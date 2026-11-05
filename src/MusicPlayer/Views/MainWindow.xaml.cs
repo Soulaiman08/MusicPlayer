@@ -1410,7 +1410,7 @@ InitializeComponent();
         {
             // Actual wallpaper selection must not wait for the 200ms debounce:
             // kick the (async, generation-guarded) rebuild immediately. The
-            // preview path already painted the thumbnail synchronously.
+            // ShowWallpaperPreview is now a no-op, so no temporary thumbnail is painted.
             _bgDirty = true;
             RebuildBlurCache();
         }
@@ -1806,36 +1806,60 @@ InitializeComponent();
                     }
                     try
                     {
-                        // Render at full display resolution (capped for memory), never 1/3.
-                        const int maxRenderPx = 2560;
-                        double scale = 1.0;
-                        if (dw > maxRenderPx || dh > maxRenderPx)
-                        {
-                            scale = Math.Min((double)maxRenderPx / dw, (double)maxRenderPx / dh);
-                        }
-                        int w = Math.Max((int)(dw * scale), 160);
-                        int h = Math.Max((int)(dh * scale), 160);
 
-                        var target = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+                        var dpi = VisualTreeHelper.GetDpi(this);
+                        double dpiScaleX = dpi.DpiScaleX;
+                        double dpiScaleY = dpi.DpiScaleY;
+                        if (dpiScaleX <= 0 || double.IsNaN(dpiScaleX)) dpiScaleX = 1.0;
+                        if (dpiScaleY <= 0 || double.IsNaN(dpiScaleY)) dpiScaleY = 1.0;
+
+                        // Render at full display resolution (physical pixels, capped for memory).
+                        const int maxRenderPx = 2560;
+                        int pxW = (int)(dw * dpiScaleX);
+                        int pxH = (int)(dh * dpiScaleY);
+                        double scale = 1.0;
+                        if (pxW > maxRenderPx || pxH > maxRenderPx)
+                        {
+                            scale = Math.Min((double)maxRenderPx / pxW, (double)maxRenderPx / pxH);
+                            pxW = Math.Max((int)(pxW * scale), 160);
+                            pxH = Math.Max((int)(pxH * scale), 160);
+                        }
+                        else
+                        {
+                            pxW = Math.Max(pxW, 160);
+                            pxH = Math.Max(pxH, 160);
+                        }
+
+                        double renderDpiX = 96.0 * dpiScaleX;
+                        double renderDpiY = 96.0 * dpiScaleY;
+
+                        var target = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
                         var visual = new DrawingVisual();
                         using (var ctx = visual.RenderOpen())
                         {
                             var ib = new ImageBrush(finalDecoded) { Stretch = Stretch.UniformToFill };
-                            ctx.DrawRectangle(ib, null, new Rect(0, 0, w, h));
+                            // Draw in DIP space; RenderTargetBitmap scales to physical pixels via DPI.
+                            ctx.DrawRectangle(ib, null, new Rect(0, 0, dw, dh));
                         }
                         target.Render(visual);
 
-                        var blurred = new BlurEffect { Radius = blurRadius * scale, RenderingBias = RenderingBias.Quality };
+                        // BlurEffect radius is in DIPs relative to the visual's coordinate space.
+                        // The visual is (dw, dh) DIPs, so the radius is in DIPs — no DPI scaling needed.
+                        // When capped, reduce the radius proportionally.
+                        double capScale = (dw * dpiScaleX > 0) ? (double)pxW / (dw * dpiScaleX) : 1.0;
+                        if (capScale > 1.0) capScale = 1.0;
+                        double blurRadiusEffective = blurRadius * capScale;
+                        var blurred = new BlurEffect { Radius = blurRadiusEffective, RenderingBias = RenderingBias.Quality };
                         var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
-                        wrapper.Measure(new Size(w, h));
-                        wrapper.Arrange(new Rect(0, 0, w, h));
+                        wrapper.Measure(new Size(dw, dh));
+                        wrapper.Arrange(new Rect(0, 0, dw, dh));
 
-                        var result = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+                        var result = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
                         result.Render(wrapper);
                         result.Freeze();
 
                         SetWallpaperSources(result, finalDecoded);
-                        LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {w}x{h} radius={blurRadius:0} appliedMs={ElapsedMs(t0):0}");
+                        LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={ElapsedMs(t0):0}");
                     }
                     catch (Exception blurEx)
                     {

@@ -695,13 +695,21 @@ public class WallpaperThumbnailConverter : IValueConverter
             bi.EndInit();
             bi.Freeze();
 
+            if (bi.PixelWidth <= 0 || bi.PixelHeight <= 0)
+            {
+                Utilities.LogHelper.LogInfo($"[WallpaperThumb] loaded but zero dimensions: {thumbPath} ({bi.PixelWidth}x{bi.PixelHeight})");
+                return null;
+            }
+
             if (_cache.Count < MaxCacheEntries)
                 _cache.TryAdd(cacheKey, bi);
 
+            Utilities.LogHelper.LogInfo($"[WallpaperThumb] OK: {thumbPath} -> {bi.PixelWidth}x{bi.PixelHeight}");
             return bi;
         }
-        catch
+        catch (Exception ex)
         {
+            Utilities.LogHelper.LogError($"[WallpaperThumb] FAILED: {thumbPath}", ex);
             return null;
         }
     }
