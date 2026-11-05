@@ -188,7 +188,7 @@ public partial class MainViewModel : ViewModelBase
 	private bool _lrcEditAutoCreated;
 	private string _selectedTheme = "Dark";
 	private string _selectedWallpaperCategory = "All";
-	private string _backgroundImagePath = "pack://application:,,,/Assets/Backgrounds/bg_001.png";
+	private string _backgroundImagePath = "pack://application:,,,/Wallpaper/Defaut/bg_005.png";
 	private double _wallpaperBlur = 0.0;
 	private double _wallpaperAlpha = 51.0;
 	private string _themeEditWallpaperPath = string.Empty;
@@ -5928,9 +5928,25 @@ public partial class MainViewModel : ViewModelBase
 			_playback.Engine.DeviceNumber = _settings.OutputDevice;
 		}
 		string savedWp = _db.GetSetting("app_wallpaper", "");
-		if (!string.IsNullOrEmpty(savedWp) && (savedWp.StartsWith("pack:") || System.IO.File.Exists(savedWp)))
+		// Resolve old-style paths (file paths, pack URIs, Assets paths) to current format.
+		var resolvedEntry = WallpaperCatalog.Resolve(savedWp);
+		if (resolvedEntry != null)
+		{
+			BackgroundImagePath = resolvedEntry.ResourceUri;
+		}
+		else if (!string.IsNullOrEmpty(savedWp) && (savedWp.StartsWith("pack:") || System.IO.File.Exists(savedWp)))
 		{
 			BackgroundImagePath = savedWp;
+		}
+		else if (!string.IsNullOrEmpty(savedWp))
+		{
+			// Unresolvable: fall back to default
+			var defaultEntry = WallpaperCatalog.FindById(WallpaperCatalog.DefaultId);
+			if (defaultEntry != null)
+			{
+				BackgroundImagePath = defaultEntry.ResourceUri;
+				_db.SetSetting("app_wallpaper", defaultEntry.Id);
+			}
 		}
 		string savedBlur = _db.GetSetting("app_wallpaper_blur", "0");
 		if (double.TryParse(savedBlur, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double bVal))
@@ -8187,66 +8203,52 @@ private async void LoadFolders()
 
 		try
 		{
-			string saved = _db.GetSetting("app_wallpaper", "");
-			string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-			var result = await Task.Run(() =>
-			{
-				var cats = new List<string>();
-				var items = new List<WallpaperItem>();
-				if (cancellationToken.IsCancellationRequested) return (cats, items, aborted: true);
-				var dir = new System.IO.DirectoryInfo(System.IO.Path.Combine(baseDir, "Wallpaper"));
-				LogHelper.LogInfo($"[Wallpaper] scan dir='{(dir.Exists ? dir.FullName : "(missing)")}' exists={dir.Exists}");
-				if (!dir.Exists) return (cats, items, aborted: false);
-				foreach (var sub in dir.GetDirectories())
+				string saved = _db.GetSetting("app_wallpaper", "");
+				// Resolve old-style paths (file paths, pack URIs, Assets paths) to catalog entries.
+				var resolvedEntry = WallpaperCatalog.Resolve(saved);
+				string resolvedUri = resolvedEntry != null ? resolvedEntry.ResourceUri : string.Empty;
+				if (string.IsNullOrEmpty(resolvedUri))
 				{
-					if (cancellationToken.IsCancellationRequested) return (cats, items, aborted: true);
-					if (sub.Name == "Thumbnails") continue;
-					cats.Add(sub.Name);
-					var thumbDir = new System.IO.DirectoryInfo(System.IO.Path.Combine(baseDir, "Wallpaper", "Thumbnails", sub.Name));
-					foreach (var file in sub.GetFiles())
-					{
-						// Thumb decode is the heavy part (full-res file → 240px).
-						// When running from the background gate, hand control back
-						// within one file if the user returns — the caller retries
-						// after the next quiet window (return-lag guard).
-						if (cancellationToken.IsCancellationRequested)
-						{
-							LogHelper.LogInfo($"[Wallpaper] abort (shutdown) after {items.Count} items");
-							return (cats, items, aborted: true);
-						}
-						if (abortIfUserActive && MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow())
-						{
-							LogHelper.LogInfo($"[Wallpaper] abort (user interacting) after {items.Count} items");
-							return (cats, items, aborted: true);
-						}
-						string ext = file.Extension.ToLowerInvariant();
-						if (ext is ".jpg" or ".jpeg" or ".png" or ".webp" or ".bmp")
-						{
-							string thumbFile = System.IO.Path.Combine(thumbDir.FullName, file.Name);
-							if (!System.IO.File.Exists(thumbFile))
-							{
-								string altExt = ext == ".png" ? ".jpg" : ".png";
-								thumbFile = System.IO.Path.Combine(thumbDir.FullName, System.IO.Path.GetFileNameWithoutExtension(file.Name) + altExt);
-							}
-							string finalThumb = System.IO.File.Exists(thumbFile) ? thumbFile : file.FullName;
-
-							var thumbSource = Converters.WallpaperThumbnailConverter.GetThumbnail(finalThumb, 240);
-
-							items.Add(new WallpaperItem
-							{
-								FilePath = file.FullName,
-								ThumbnailPath = finalThumb,
-								ThumbnailSource = thumbSource,
-								FileName = System.IO.Path.GetFileNameWithoutExtension(file.Name),
-								Category = sub.Name,
-								IsSelected = !string.IsNullOrEmpty(saved) && string.Equals(file.FullName, saved, StringComparison.OrdinalIgnoreCase)
-							});
-						}
-					}
+					resolvedEntry = WallpaperCatalog.FindById(WallpaperCatalog.DefaultId);
+					resolvedUri = resolvedEntry != null ? resolvedEntry.ResourceUri : string.Empty;
 				}
-				LogHelper.LogInfo($"[Wallpaper] found {items.Count} images in {cats.Count} categories: [{string.Join(", ", cats)}]");
-				return (cats, items, aborted: false);
-			});
+
+				var result = await Task.Run(() =>
+				{
+					var cats = new List<string>();
+					var items = new List<WallpaperItem>();
+					if (cancellationToken.IsCancellationRequested) return (cats, items, aborted: true);
+
+					foreach (var cat in WallpaperCatalog.All.Select(e => e.Category).Distinct())
+					{
+						cats.Add(cat);
+					}
+
+					foreach (var entry in WallpaperCatalog.All)
+					{
+						if (cancellationToken.IsCancellationRequested) return (cats, items, aborted: true);
+
+						var thumbSource = Converters.WallpaperThumbnailConverter.GetThumbnail(entry.ThumbnailUri, 240);
+
+						items.Add(new WallpaperItem
+						{
+							FilePath = entry.ResourceUri,
+							ThumbnailPath = entry.ThumbnailUri,
+							ThumbnailSource = thumbSource,
+							FileName = System.IO.Path.GetFileNameWithoutExtension(entry.FileName),
+							Category = entry.Category,
+							StableId = entry.Id,
+							ResourceUri = entry.ResourceUri,
+							IsSelected = !string.IsNullOrEmpty(saved) && (
+								string.Equals(entry.ResourceUri, saved, StringComparison.OrdinalIgnoreCase) ||
+								string.Equals(entry.Id, saved, StringComparison.OrdinalIgnoreCase) ||
+								(resolvedEntry != null && entry.Id == resolvedEntry.Id))
+						});
+					}
+
+					LogHelper.LogInfo("[Wallpaper] catalog loaded " + items.Count + " images in " + cats.Count + " categories");
+					return (cats, items, aborted: false);
+				});
 
 			if (result.aborted) return false;
 			if (cancellationToken.IsCancellationRequested) return false;
@@ -8255,10 +8257,16 @@ private async void LoadFolders()
 			{
 				WallpaperCategories.Clear();
 				WallpaperCategories.Add("All");
-				WallpaperCategories.AddRange(result.cats);
+				WallpaperCategories.AddRange(result.cats.Distinct());
 				Wallpapers.ReplaceAll(result.items);
-				if (!string.IsNullOrEmpty(saved) && System.IO.File.Exists(saved))
-					BackgroundImagePath = saved;
+				if (!string.IsNullOrEmpty(resolvedUri))
+				{
+					BackgroundImagePath = resolvedUri;
+					if (resolvedEntry != null && !string.Equals(saved, resolvedEntry.Id, StringComparison.Ordinal))
+					{
+						_db.SetSetting("app_wallpaper", resolvedEntry.Id);
+					}
+				}
 				FilterWallpapers();
 			});
 			return true;
@@ -8270,6 +8278,12 @@ private async void LoadFolders()
 		catch (Exception ex)
 		{
 			_logger.LogWarning(ex, "EnsureWallpapersLoadedAsync failed");
+			// Fallback to default
+			var defaultEntry = WallpaperCatalog.FindById(WallpaperCatalog.DefaultId);
+			if (defaultEntry != null)
+			{
+				BackgroundImagePath = defaultEntry.ResourceUri;
+			}
 			return true;
 		}
 		finally
@@ -8310,8 +8324,8 @@ private async void LoadFolders()
 			bool should = ReferenceEquals(wp, item);
 			if (wp.IsSelected != should) wp.IsSelected = should;
 		}
-		BackgroundImagePath = item.FilePath;
-		SaveWallpaperSettingOrdered(item.FilePath);
+		BackgroundImagePath = !string.IsNullOrEmpty(item.ResourceUri) ? item.ResourceUri : item.FilePath;
+		SaveWallpaperSettingOrdered(!string.IsNullOrEmpty(item.StableId) ? item.StableId : item.FilePath);
 	}
 
 	// Ordered, non-blocking settings persistence: chained FIFO on pool threads so

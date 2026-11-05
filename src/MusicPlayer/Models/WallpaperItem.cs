@@ -7,6 +7,8 @@ public class WallpaperItem : INotifyPropertyChanged
 {
     public string FilePath { get; set; } = string.Empty;
     public string ThumbnailPath { get; set; } = string.Empty;
+    public string StableId { get; set; } = string.Empty;
+    public string ResourceUri { get; set; } = string.Empty;
     private System.Windows.Media.ImageSource? _thumbnailSource;
     public System.Windows.Media.ImageSource? ThumbnailSource
     {

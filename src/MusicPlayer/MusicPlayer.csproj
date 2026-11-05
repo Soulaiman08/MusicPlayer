@@ -44,9 +44,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Wallpaper\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <Resource Include="Wallpaper\**\*" />
   </ItemGroup>
 
 </Project>

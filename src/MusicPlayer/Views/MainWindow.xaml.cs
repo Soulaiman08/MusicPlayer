@@ -1740,7 +1740,7 @@ InitializeComponent();
                     LogHelper.LogInfo($"[Wallpaper] resolve: file not found '{DescribeWallpaperPath(path)}' → trying default");
                 }
             }
-            const string fallbackPack = "pack://application:,,,/Assets/Backgrounds/bg_001.png";
+            const string fallbackPack = "pack://application:,,,/Wallpaper/Defaut/bg_005.png";
             LogHelper.LogInfo($"[Wallpaper] rebuild start: kind={kind} blur={(wantBlur ? blurRadius.ToString("0") : "off")} {DescribeWallpaperPath(path)}");
 
             // Heavy decode off the UI thread (4K JPEGs stall it for 100ms+).
@@ -1806,8 +1806,15 @@ InitializeComponent();
                     }
                     try
                     {
-                        int w = Math.Max(dw / 3, 160);
-                        int h = Math.Max(dh / 3, 160);
+                        // Render at full display resolution (capped for memory), never 1/3.
+                        const int maxRenderPx = 2560;
+                        double scale = 1.0;
+                        if (dw > maxRenderPx || dh > maxRenderPx)
+                        {
+                            scale = Math.Min((double)maxRenderPx / dw, (double)maxRenderPx / dh);
+                        }
+                        int w = Math.Max((int)(dw * scale), 160);
+                        int h = Math.Max((int)(dh * scale), 160);
 
                         var target = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
                         var visual = new DrawingVisual();
@@ -1818,7 +1825,7 @@ InitializeComponent();
                         }
                         target.Render(visual);
 
-                        var blurred = new BlurEffect { Radius = blurRadius / 3, RenderingBias = RenderingBias.Performance };
+                        var blurred = new BlurEffect { Radius = blurRadius * scale, RenderingBias = RenderingBias.Quality };
                         var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
                         wrapper.Measure(new Size(w, h));
                         wrapper.Arrange(new Rect(0, 0, w, h));
@@ -6631,45 +6638,15 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         }
     }
 
-    // Instant feedback: the gallery thumbnail (240px, already in memory) is shown
-    // synchronously (~ms), then the full async path replaces it. With blur on, a
-    // tiny blurred render keeps the look consistent. Best-effort only — the full
-    // path (with generation guard + fallbacks) remains authoritative.
+    // WallpaperItem_Click instant feedback: keep the current stable wallpaper
+    // visible until the full-quality path (RebuildBlurCache, generation-guarded)
+    // replaces it. Never paint a 240px thumbnail or a 320x180 blurred render as
+    // the application background — that is what caused the low-quality flash.
     private void ShowWallpaperPreview(MusicPlayer.Models.WallpaperItem item)
     {
-        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        try
-        {
-            var thumb = item.ThumbnailSource;
-            if (thumb == null) return;
-            double blur = ViewModel?.WallpaperBlur ?? 0;
-            if (blur < 0.5)
-            {
-                SetWallpaperSources(thumb, thumb);
-            }
-            else
-            {
-                const int w = 320, h = 180;
-                var target = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
-                var visual = new DrawingVisual();
-                using (var ctx = visual.RenderOpen())
-                {
-                    var ib = new ImageBrush(thumb) { Stretch = Stretch.UniformToFill };
-                    ctx.DrawRectangle(ib, null, new Rect(0, 0, w, h));
-                }
-                target.Render(visual);
-                var blurred = new BlurEffect { Radius = System.Math.Max(2, blur / 6), RenderingBias = RenderingBias.Performance };
-                var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
-                wrapper.Measure(new Size(w, h));
-                wrapper.Arrange(new Rect(0, 0, w, h));
-                var result = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
-                result.Render(wrapper);
-                result.Freeze();
-                SetWallpaperSources(result, thumb);
-            }
-            LogHelper.LogInfo($"[Wallpaper] preview applied: previewMs={ElapsedMs(t0):0}");
-        }
-        catch { }
+        // Intentionally no-op for the display surface: the selection triggers
+        // BackgroundImagePath change -> OnBackgroundPropertyChanged -> RebuildBlurCache
+        // (generation-guarded), which prepares and commits the full-quality image.
     }
 
     private void WallpaperCategory_Click(object sender, MouseButtonEventArgs e)
