@@ -119,10 +119,13 @@ public static class WallpaperBlurEngine
         LogHelper.LogInfo($"[WallpaperPerf] CopyPixels={(tCopy1 - tCopy0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0}ms");
 
         int n = w * h * 4;
-        // Q8 fixed-point buffers (ushort).
-        var cur = new ushort[n];
-        var tmp = new ushort[n];
-        for (int i = 0; i < n; i++) cur[i] = (ushort)(pixels[i] << 8);
+        // ArrayPool buffers.
+        var pool = System.Buffers.ArrayPool<ushort>.Shared;
+        var cur = pool.Rent(n);
+        var tmp = pool.Rent(n);
+        try
+        {
+            for (int i = 0; i < n; i++) cur[i] = (ushort)(pixels[i] << 8);
 
         int half = Math.Max(1, (int)Math.Round(radius / 3.0));
         if (half < 1) half = 1;
@@ -137,7 +140,10 @@ public static class WallpaperBlurEngine
 
             cancellationToken.ThrowIfCancellationRequested();
             long vs = System.Diagnostics.Stopwatch.GetTimestamp();
-            VerticalBoxQ8(tmp, cur, w, h, half, cancellationToken);
+            // Transpose-based vertical pass for better locality.
+            TransposeQ8(tmp, cur, w, h);
+            HorizontalBoxQ8(cur, tmp, h, w, half, cancellationToken);
+            TransposeQ8(tmp, cur, h, w);
             vAccum += System.Diagnostics.Stopwatch.GetTimestamp() - vs;
         }
         LogHelper.LogInfo($"[WallpaperPerf] HorizontalPasses={hAccum * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0}ms VerticalPasses={vAccum * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0}ms");
@@ -160,6 +166,12 @@ public static class WallpaperBlurEngine
         long tBc1 = System.Diagnostics.Stopwatch.GetTimestamp();
         LogHelper.LogInfo($"[WallpaperPerf] BitmapCreateFreeze={(tBc1 - tBc0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0}ms");
         return result;
+        }
+        finally
+        {
+            pool.Return(cur);
+            pool.Return(tmp);
+        }
     }
 
     private static void HorizontalBoxQ8(ushort[] src, ushort[] dst, int w, int h, int half, CancellationToken token)
@@ -191,6 +203,14 @@ public static class WallpaperBlurEngine
                 }
             }
         }
+    }
+
+    private static void TransposeQ8(ushort[] src, ushort[] dst, int w, int h)
+    {
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                for (int c = 0; c < 4; c++)
+                    dst[(x * h + y) * 4 + c] = src[(y * w + x) * 4 + c];
     }
 
     private static void VerticalBoxQ8(ushort[] src, ushort[] dst, int w, int h, int half, CancellationToken token)
