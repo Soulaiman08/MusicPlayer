@@ -1379,6 +1379,7 @@ InitializeComponent();
         {
             oldVm.PropertyChanged -= OnViewModelPropertyChanged;
             oldVm.PropertyChanged -= OnBackgroundPropertyChanged;
+            oldVm.WallpaperSettingsCommitted -= OnWallpaperSettingsCommitted;
             oldVm.Queue.CollectionChanged -= OnQueueCollectionChanged;
             oldVm.ScrollToCurrentTrackRequested -= OnScrollToCurrentTrackRequested;
         }
@@ -1390,6 +1391,7 @@ InitializeComponent();
             newVm.Queue.CollectionChanged += OnQueueCollectionChanged;
             newVm.ScrollToCurrentTrackRequested += OnScrollToCurrentTrackRequested;
             newVm.PropertyChanged += OnBackgroundPropertyChanged;
+            newVm.WallpaperSettingsCommitted += OnWallpaperSettingsCommitted;
             if (!newVm.IsInitializing && LoadingOverlay != null && _initialWallpaperReady)
             {
                 TryCompleteStartupPresentation();
@@ -1404,8 +1406,27 @@ InitializeComponent();
         }
     }
 
+    private void OnWallpaperSettingsCommitted(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => OnWallpaperSettingsCommitted(sender, e)));
+            return;
+        }
+        LogHelper.LogInfo("[WallpaperPerf] ConfirmRequested");
+        _bgDirty = true;
+        _glassDirty = true;
+        _blurApplyRequestTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        RebuildBlurCache();
+    }
+
     private void OnBackgroundPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (ViewModel?.IsThemeCommitting == true)
+        {
+            // Coalesce: single apply handled by WallpaperSettingsCommitted.
+            return;
+        }
         if (e.PropertyName == nameof(MainViewModel.BackgroundImagePath))
         {
             // Actual wallpaper selection must not wait for the 200ms debounce:

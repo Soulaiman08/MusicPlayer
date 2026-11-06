@@ -1596,6 +1596,8 @@ public partial class MainViewModel : ViewModelBase
 
 	private System.Windows.UIElement? _themePreviewImage;
 	private long _previewGen;
+	public bool IsThemeCommitting { get; private set; }
+	public event EventHandler? WallpaperSettingsCommitted;
 	private System.Threading.CancellationTokenSource? _previewCts;
 	private readonly object _previewLock = new();
 	private (string path, double blur, long gen, System.Threading.CancellationToken token)? _pendingPreview;
@@ -8208,18 +8210,32 @@ private async void LoadFolders()
 	private void SaveThemeEdit()
 	{
 		try { _previewCts?.Cancel(); } catch { }
+
+		IsThemeCommitting = true;
+		OnPropertyChanged(nameof(IsThemeCommitting));
+
 		if (!string.IsNullOrEmpty(ThemeEditWallpaperPath))
 		{
-			BackgroundImagePath = ThemeEditWallpaperPath;
-			_db.SetSetting("app_wallpaper", BackgroundImagePath);
+			_backgroundImagePath = ThemeEditWallpaperPath;
+			_db.SetSetting("app_wallpaper", _backgroundImagePath);
 		}
-		WallpaperBlur = ThemeEditBlur;
-		WallpaperAlpha = ThemeEditAlpha;
-		_db.SetSetting("app_wallpaper_blur", WallpaperBlur.ToString(System.Globalization.CultureInfo.InvariantCulture));
-		_db.SetSetting("app_wallpaper_alpha", WallpaperAlpha.ToString(System.Globalization.CultureInfo.InvariantCulture));
+		_wallpaperBlur = ThemeEditBlur;
+		_wallpaperAlpha = ThemeEditAlpha;
+		_db.SetSetting("app_wallpaper_blur", _wallpaperBlur.ToString(System.Globalization.CultureInfo.InvariantCulture));
+		_db.SetSetting("app_wallpaper_alpha", _wallpaperAlpha.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+		OnPropertyChanged(nameof(BackgroundImagePath));
+		OnPropertyChanged(nameof(WallpaperBlur));
+		OnPropertyChanged(nameof(WallpaperAlpha));
+		OnPropertyChanged(nameof(WallpaperAlphaOpacity));
+
+		WallpaperSettingsCommitted?.Invoke(this, EventArgs.Empty);
+
+		IsThemeCommitting = false;
+		OnPropertyChanged(nameof(IsThemeCommitting));
+
 		ExitThemeEditorToTheme();
 	}
-
 	private void CancelThemeEdit()
 	{
 		try { _previewCts?.Cancel(); } catch { }
