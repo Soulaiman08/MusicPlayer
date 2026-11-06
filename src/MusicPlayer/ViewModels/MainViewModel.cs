@@ -8297,9 +8297,19 @@ private async void LoadFolders()
 				_wallpaperPreloadCts?.Cancel();
 				var cts = new System.Threading.CancellationTokenSource();
 				_wallpaperPreloadCts = cts;
-				var uris = result.items.Select(i => !string.IsNullOrEmpty(i.ResourceUri) ? i.ResourceUri : i.FilePath)
-					.Where(s => !string.IsNullOrWhiteSpace(s));
-				_ = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(uris, 3840, cts.Token);
+				var allUris = result.items.Select(i => !string.IsNullOrEmpty(i.ResourceUri) ? i.ResourceUri : i.FilePath)
+					.Where(s => !string.IsNullOrWhiteSpace(s))
+					.Distinct(StringComparer.OrdinalIgnoreCase)
+					.ToList();
+
+				// Prioritize currently selected wallpaper if present
+				if (!string.IsNullOrEmpty(resolvedUri) && allUris.Contains(resolvedUri))
+				{
+					allUris.Remove(resolvedUri);
+					allUris.Insert(0, resolvedUri);
+				}
+
+				_ = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(allUris, 3840, cts.Token);
 			}
 			catch { }
 			return true;
@@ -8352,13 +8362,40 @@ private async void LoadFolders()
 	private void SelectWallpaper(WallpaperItem? item)
 	{
 		if (item == null) return;
+
+		string targetId = !string.IsNullOrEmpty(item.StableId) ? item.StableId : (!string.IsNullOrEmpty(item.ResourceUri) ? item.ResourceUri : item.FilePath);
+
+		var currentSelected = Wallpapers.FirstOrDefault(w => w.IsSelected);
+		string currentId = currentSelected != null
+			? (!string.IsNullOrEmpty(currentSelected.StableId) ? currentSelected.StableId : (!string.IsNullOrEmpty(currentSelected.ResourceUri) ? currentSelected.ResourceUri : currentSelected.FilePath))
+			: string.Empty;
+
+		bool isSame = !string.IsNullOrEmpty(targetId) && string.Equals(targetId, currentId, StringComparison.OrdinalIgnoreCase);
+
+		if (isSame)
+		{
+			if (item.IsLoading)
+			{
+				// Selected wallpaper is still loading -> do not start second loading, do not reset progress.
+				return;
+			}
+			else
+			{
+				// Selected wallpaper and already applied -> No-op.
+				return;
+			}
+		}
+
 		foreach (var wp in Wallpapers)
 		{
 			bool should = ReferenceEquals(wp, item);
 			if (wp.IsSelected != should) wp.IsSelected = should;
-			wp.IsLoading = false;
-			wp.HasLoadError = false;
-			wp.LoadProgress = 0;
+			if (!should)
+			{
+				wp.IsLoading = false;
+				wp.HasLoadError = false;
+				wp.LoadProgress = 0;
+			}
 		}
 		item.IsLoading = true;
 		item.LoadProgress = 0;

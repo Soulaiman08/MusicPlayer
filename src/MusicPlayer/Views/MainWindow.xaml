@@ -3757,19 +3757,25 @@
                           <Path Data="{StaticResource Icon.Check}" Fill="#FFFFFFFF" Stretch="Uniform" Width="12" Height="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <!-- Wallpaper Loading Progress Indicator -->
-                        <Border Name="progressOverlay" VerticalAlignment="Bottom" Margin="10,0,10,10" Height="6" CornerRadius="3" Background="#99000000" Opacity="0">
-                          <Grid>
-                            <!-- Animated progress bar -->
-                            <Border x:Name="progressTrack" Background="#40FFFFFF" CornerRadius="3" HorizontalAlignment="Left" Height="6">
-                              <Border.RenderTransform>
-                                <ScaleTransform x:Name="progressScale" ScaleX="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" CenterX="0" CenterY="3" />
-                              </Border.RenderTransform>
+                        <Border Name="progressOverlay" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Margin="12,0,12,12" Height="26" CornerRadius="6" Background="#B312151C" BorderBrush="#26FFFFFF" BorderThickness="1" Padding="10,0" Opacity="0">
+                          <Grid VerticalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <!-- Thin progress bar track -->
+                            <Border Grid.Column="0" Height="3" CornerRadius="1.5" Background="#26FFFFFF" VerticalAlignment="Center" ClipToBounds="True">
+                              <Border x:Name="progressTrack" Background="#FFFFFFFF" CornerRadius="1.5" HorizontalAlignment="Left" Height="3">
+                                <Border.RenderTransform>
+                                  <ScaleTransform x:Name="progressScale" ScaleX="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" CenterX="0" CenterY="1.5" />
+                                </Border.RenderTransform>
+                              </Border>
                             </Border>
                             <!-- Progress percentage text -->
-                            <TextBlock Text="{Binding LoadProgress, StringFormat='{}{0:0}%'}" FontSize="8" FontWeight="SemiBold" Foreground="#FFFFFFFF" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Opacity="0.9" />
+                            <TextBlock Grid.Column="1" Text="{Binding LoadProgress, StringFormat='{}{0:0}%'}" FontSize="9" FontWeight="Medium" Foreground="#FFFFFFFF" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0.95" />
                           </Grid>
                           <Border.RenderTransform>
-                            <TranslateTransform x:Name="progressSlide" Y="8" />
+                            <TranslateTransform x:Name="progressSlide" Y="6" />
                           </Border.RenderTransform>
                         </Border>
                         <!-- Error state -->

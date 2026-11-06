@@ -1552,6 +1552,12 @@ InitializeComponent();
 
     private void RebuildGlassBackdropCache()
     {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(RebuildGlassBackdropCache));
+            return;
+        }
+
         if (_glassWallpaperSource == null || RootBorder == null ||
             RootBorder.ActualWidth < 10 || RootBorder.ActualHeight < 10)
         {
@@ -1581,7 +1587,7 @@ InitializeComponent();
         }
         _glassRebuildInProgress = true;
 
-        // Capture immutable inputs on the UI thread; render on an STA worker.
+        // Capture immutable inputs and render safely on the UI thread (RenderTargetBitmap affinity).
         const double baseRenderScale = 0.5;
         const double maxSamplePixels = 1600.0;
         double srcLong = Math.Max(width * dpi.DpiScaleX, height * dpi.DpiScaleY);
@@ -1599,23 +1605,14 @@ InitializeComponent();
 
         var source = _glassWallpaperSource;
         long gen = _bgGen;
-        var worker = new System.Threading.Thread(() =>
+        try
         {
-            BitmapSource? rendered = null;
-            try
-            {
-                rendered = RenderBlurredWallpaper(
-                    source!, pixelWidth, pixelHeight, renderDpiX, renderDpiY,
-                    renderWidth, renderHeight, alpha, glassBlurRadius);
-            }
-            catch (Exception ex)
-            {
-                LogHelper.LogError("[Glass] background sampling failed", ex);
-            }
+            BitmapSource? rendered = RenderBlurredWallpaper(
+                source!, pixelWidth, pixelHeight, renderDpiX, renderDpiY,
+                renderWidth, renderHeight, alpha, glassBlurRadius);
 
-            Dispatcher.BeginInvoke(new Action(() =>
+            if (gen == _bgGen && rendered != null)
             {
-                if (gen != _bgGen || rendered == null) return;
                 _glassBackdropCache = rendered;
                 _glassCacheSource = _glassWallpaperSource;
                 _glassCacheWidth = width;
@@ -1624,20 +1621,21 @@ InitializeComponent();
                 _glassCacheDpiY = dpi.DpiScaleY;
                 _glassCacheAlpha = alpha;
                 UpdateGlassSurfaceBrushes();
-            }));
-
-            Dispatcher.BeginInvoke(new Action(() =>
+            }
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("[Glass] background sampling failed", ex);
+        }
+        finally
+        {
+            _glassRebuildInProgress = false;
+            if (_glassRebuildQueued)
             {
-                _glassRebuildInProgress = false;
-                if (_glassRebuildQueued)
-                {
-                    _glassRebuildQueued = false;
-                    RebuildGlassBackdropCache();
-                }
-            }));
-        });
-        worker.SetApartmentState(System.Threading.ApartmentState.STA);
-        worker.Start();
+                _glassRebuildQueued = false;
+                RebuildGlassBackdropCache();
+            }
+        }
     }
 
     /// <summary>
@@ -1728,16 +1726,17 @@ InitializeComponent();
 
     private System.Windows.Media.ImageSource? _solidWallpaperFallback;
     // Generation guard for async wallpaper loads: only the latest requested
-    // wallpaper may apply its result â€” a stale decode finishing late must never
+    // wallpaper may apply its result — a stale decode finishing late must never
     // overwrite a newer selection.
     private long _bgGen;
     private System.Threading.CancellationTokenSource? _wallpaperRebuildCts;
+    private string _lastRebuiltWallpaperPath = string.Empty;
 
     private void RebuildBlurCache()
     {
         // Dispatcher affinity: settings/theme paths raise this off the UI thread
         // (LoadSettings runs on ThreadPool). Touching live visuals from there throws
-        // and was swallowed â†’ black background until a resize rebuilt on UI thread.
+        // and was swallowed → black background until a resize rebuilt on UI thread.
         if (!Dispatcher.CheckAccess())
         {
             LogHelper.LogInfo("[Wallpaper] rebuild: marshaling to UI thread");
@@ -1757,7 +1756,7 @@ InitializeComponent();
             var vm = ViewModel;
             if (vm == null)
             {
-                // No ViewModel yet â€” apply solid fallback so the loading overlay
+                // No ViewModel yet — apply solid fallback so the loading overlay
                 // can eventually dismiss, and retry when DataContext is set.
                 ApplySolidWallpaperFallback();
                 return;
@@ -1767,17 +1766,24 @@ InitializeComponent();
             double blurRadius = vm.WallpaperBlur;
             bool wantBlur = blurRadius >= 0.5;
 
+            var resolvedCurrent = WallpaperCatalog.Resolve(path);
             targetItem = vm.Wallpapers.FirstOrDefault(w => w.IsSelected)
+                ?? (resolvedCurrent != null ? vm.Wallpapers.FirstOrDefault(w => string.Equals(w.StableId, resolvedCurrent.Id, StringComparison.OrdinalIgnoreCase)) : null)
                 ?? vm.Wallpapers.FirstOrDefault(w =>
                     string.Equals(w.ResourceUri, path, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(w.FilePath, path, StringComparison.OrdinalIgnoreCase));
+                    string.Equals(w.FilePath, path, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(w.StableId, path, StringComparison.OrdinalIgnoreCase));
 
-
-            if (targetItem != null)
+            bool isNewWallpaperLoad = !string.Equals(path, _lastRebuiltWallpaperPath, StringComparison.OrdinalIgnoreCase) || (targetItem != null && targetItem.IsLoading);
+            if (isNewWallpaperLoad)
             {
-                targetItem.IsLoading = true;
-                targetItem.LoadProgress = 5;
-                targetItem.HasLoadError = false;
+                _lastRebuiltWallpaperPath = path;
+                if (targetItem != null)
+                {
+                    targetItem.IsLoading = true;
+                    targetItem.LoadProgress = targetItem.LoadProgress > 0 ? targetItem.LoadProgress : 5;
+                    targetItem.HasLoadError = false;
+                }
             }
 
             // Resolve which URI to load (cheap stat only): user file â†’ bundled default.

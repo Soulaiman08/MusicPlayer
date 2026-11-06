@@ -130,7 +130,15 @@ public static class WallpaperDecodeCache
                 _decodeSemaphore.Release();
             }
 
-            // Yield to avoid saturating the pool during bulk preload.
+            // Yield and add gradual delay to avoid saturating CPU/memory during bulk preload.
+            try
+            {
+                await Task.Delay(120, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
             await Task.Yield();
         }
     }
