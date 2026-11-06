@@ -36,6 +36,11 @@ public static class PackResourceLoader
                 {
                     if (e.Value is Stream s)
                     {
+                        if (s.CanSeek)
+                        {
+                            s.Position = 0;
+                            return s;
+                        }
                         var ms = new MemoryStream();
                         s.CopyTo(ms);
                         ms.Position = 0;

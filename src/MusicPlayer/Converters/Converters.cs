@@ -689,7 +689,7 @@ public class WallpaperThumbnailConverter : IValueConverter
             var bi = new System.Windows.Media.Imaging.BitmapImage();
             bi.BeginInit();
             bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-            bi.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.None;
+            bi.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.IgnoreColorProfile;
             if (decodeWidth > 0)
                 bi.DecodePixelWidth = decodeWidth;
             if (thumbPath.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
@@ -1053,5 +1053,19 @@ public class ColumnHandleVisibilityConverter : IMultiValueConverter
     }
 
     public object[] ConvertBack(object value, Type[] targetTypes, object? parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+// Converts progress percentage (0-100) to scale factor (0-1) for ScaleTransform
+public class ProgressToScaleConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is double d) return d / 100.0;
+        if (value is int i) return i / 100.0;
+        return 0.0;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
         => throw new NotImplementedException();
 }

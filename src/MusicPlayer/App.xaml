@@ -8,6 +8,7 @@
       </ResourceDictionary.MergedDictionaries>
       <conv:DurationConverter x:Key="DurationConverter" />
       <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+      <conv:ProgressToScaleConverter x:Key="ProgressToScaleConverter" />
       <conv:AlbumArtConverter x:Key="AlbumArtConverter" />
       <conv:AlbumCoverArtConverter x:Key="AlbumCoverArtConverter" />
       <conv:StringNullOrEmptyToVisibilityConverter x:Key="StringNullOrEmptyToVisibilityConverter" />

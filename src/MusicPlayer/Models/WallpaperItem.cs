@@ -32,6 +32,48 @@ public class WallpaperItem : INotifyPropertyChanged
         }
     }
 
+    private bool _isLoading;
+    public bool IsLoading
+    {
+        get => _isLoading;
+        set
+        {
+            if (_isLoading != value)
+            {
+                _isLoading = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    private double _loadProgress;
+    public double LoadProgress
+    {
+        get => _loadProgress;
+        set
+        {
+            if (Math.Abs(_loadProgress - value) > 0.001)
+            {
+                _loadProgress = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    private bool _hasLoadError;
+    public bool HasLoadError
+    {
+        get => _hasLoadError;
+        set
+        {
+            if (_hasLoadError != value)
+            {
+                _hasLoadError = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     protected void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

@@ -8356,7 +8356,13 @@ private async void LoadFolders()
 		{
 			bool should = ReferenceEquals(wp, item);
 			if (wp.IsSelected != should) wp.IsSelected = should;
+			wp.IsLoading = false;
+			wp.HasLoadError = false;
+			wp.LoadProgress = 0;
 		}
+		item.IsLoading = true;
+		item.LoadProgress = 0;
+		item.HasLoadError = false;
 		BackgroundImagePath = !string.IsNullOrEmpty(item.ResourceUri) ? item.ResourceUri : item.FilePath;
 		SaveWallpaperSettingOrdered(!string.IsNullOrEmpty(item.StableId) ? item.StableId : item.FilePath);
 	}

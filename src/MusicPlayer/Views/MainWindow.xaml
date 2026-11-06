@@ -3756,11 +3756,53 @@
                         <Border Name="checkMark" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Width="24" Height="24" CornerRadius="12" Background="#80000000" Visibility="Collapsed">
                           <Path Data="{StaticResource Icon.Check}" Fill="#FFFFFFFF" Stretch="Uniform" Width="12" Height="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
+                        <!-- Wallpaper Loading Progress Indicator -->
+                        <Border Name="progressOverlay" VerticalAlignment="Bottom" Margin="10,0,10,10" Height="6" CornerRadius="3" Background="#99000000" Opacity="0">
+                          <Grid>
+                            <!-- Animated progress bar -->
+                            <Border x:Name="progressTrack" Background="#40FFFFFF" CornerRadius="3" HorizontalAlignment="Left" Height="6">
+                              <Border.RenderTransform>
+                                <ScaleTransform x:Name="progressScale" ScaleX="0" CenterX="0" CenterY="3" />
+                              </Border.RenderTransform>
+                            </Border>
+                            <!-- Progress percentage text -->
+                            <TextBlock Text="{Binding LoadProgress, StringFormat='{}{0:0}%'}" FontSize="8" FontWeight="SemiBold" Foreground="#FFFFFFFF" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Opacity="0.9" />
+                          </Grid>
+                          <Border.RenderTransform>
+                            <TranslateTransform x:Name="progressSlide" Y="8" />
+                          </Border.RenderTransform>
+                        </Border>
+                        <!-- Error state -->
+                        <TextBlock Text="Failed" Foreground="#FFFF6B6B" FontSize="10" FontWeight="Medium" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,10" Visibility="{Binding HasLoadError, Converter={StaticResource BoolToVisibilityConverter}}" />
                       </Grid>
                     </Border>
                     <DataTemplate.Triggers>
+                      <!-- Selected card: Checkmark -->
                       <DataTrigger Value="True" Binding="{Binding IsSelected}">
                         <Setter TargetName="checkMark" Property="UIElement.Visibility" Value="Visible" />
+                      </DataTrigger>
+
+                      <!-- Loading indicator entrance / exit -->
+                      <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                        <DataTrigger.EnterActions>
+                          <BeginStoryboard>
+                            <Storyboard>
+                              <DoubleAnimation Storyboard.TargetName="progressSlide" Storyboard.TargetProperty="Y" From="8" To="0" Duration="0:0:0.18" EasingFunction="{StaticResource DS_Ease_OutCubic}" />
+                              <DoubleAnimation Storyboard.TargetName="progressOverlay" Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.15" />
+                              <DoubleAnimation Storyboard.TargetName="progressScale" Storyboard.TargetProperty="ScaleX" From="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" To="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" Duration="0:0:0.2" EasingFunction="{StaticResource DS_Ease_OutCubic}" />
+                            </Storyboard>
+                          </BeginStoryboard>
+                        </DataTrigger.EnterActions>
+                        <DataTrigger.ExitActions>
+                          <BeginStoryboard>
+                            <Storyboard>
+                              <DoubleAnimation Storyboard.TargetName="progressSlide" Storyboard.TargetProperty="Y" From="0" To="8" Duration="0:0:0.15" EasingFunction="{StaticResource DS_Ease_InQuad}" />
+                              <DoubleAnimation Storyboard.TargetName="progressOverlay" Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.22" />
+                              <DoubleAnimation Storyboard.TargetName="progressScale" Storyboard.TargetProperty="ScaleX" From="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" To="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" Duration="0:0:0.22" EasingFunction="{StaticResource DS_Ease_InQuad}" />
+                            </Storyboard>
+                          </BeginStoryboard>
+                          <RemoveStoryboard BeginStoryboardName="progressFadeStoryboard" />
+                        </DataTrigger.ExitActions>
                       </DataTrigger>
                     </DataTemplate.Triggers>
                   </DataTemplate>

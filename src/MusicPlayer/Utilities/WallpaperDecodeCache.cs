@@ -144,6 +144,7 @@ public static class WallpaperDecodeCache
             var bi = new BitmapImage();
             bi.BeginInit();
             bi.CacheOption = BitmapCacheOption.OnLoad;
+            bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             bi.DecodePixelWidth = maxWidth;
             if (uri.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
             {

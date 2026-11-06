@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -1157,7 +1157,7 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
     private string _artistTransitionArtistName = string.Empty;
     private bool _isAlbumTransition;
     private MusicTrack? _albumTransitionTrack;
-    // Target album/artist of the in-flight forward hero — the reveal gate waits
+    // Target album/artist of the in-flight forward hero â€” the reveal gate waits
     // until the async album load for THESE values has landed (see IsAlbumDataReady).
     private string _albumTransitionAlbumName = string.Empty;
     private string _albumTransitionArtist = string.Empty;
@@ -1204,14 +1204,14 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
         _translateCache = new();
     // Cached VirtualizingStackPanel of the QueueListBox (realized containers live here).
     private VirtualizingStackPanel? _queueVsp;
-    // Shared easing — allocated once, never recreated per animation.
+    // Shared easing â€” allocated once, never recreated per animation.
     private static readonly System.Windows.Media.Animation.QuinticEase _gapEasing =
         new() { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
-    // O(1) track→index lookup for the duration of a drag.
+    // O(1) trackâ†’index lookup for the duration of a drag.
     // Built once at DragStart (O(n)), eliminates the per-recycled-container
     // Queue.IndexOf(track) O(n) scan that fired every frame during auto-scroll.
     private readonly Dictionary<MusicTrack, int> _queueIndexCache = new(256);
-    // Cached at DragStart — QueueListBox position in QueueDragCanvas space.
+    // Cached at DragStart â€” QueueListBox position in QueueDragCanvas space.
     // Re-reading TranslatePoint every frame via layout-sensitive ScaleTransform
     // produces jitter that makes posInListBox.Y unstable (oscillation root cause).
     private double _queueListTopCache = double.NaN;
@@ -1239,10 +1239,10 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
     // Physical-cursor arbitration. GetCursorPos comes straight from the OS and
     // is always correct, unlike WPF's routed coords: once the source row's
     // container is recycled mid-drag the detached container answers
-    // e.GetPosition with its OLD slot (the source row) — feeding the card a
+    // e.GetPosition with its OLD slot (the source row) â€” feeding the card a
     // stale position even though the cursor is at the bottom. That exact read
     // (cardListY=214 = source row) is what snapped the card back. So the CARD
-    // position is derived from the OS cursor via PointFromScreen — WPF event
+    // position is derived from the OS cursor via PointFromScreen â€” WPF event
     // coords are never consulted while dragging.
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool GetCursorPos(ref NativePOINT lpPoint);
@@ -1267,12 +1267,12 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
         catch { return false; }
     }
 
-    // ── Frame-pacing: single CompositionTarget.Rendering loop drives marquee,
+    // â”€â”€ Frame-pacing: single CompositionTarget.Rendering loop drives marquee,
     //     lyrics scroll glide, and queue auto-scroll. Elapsed-time based => speed
     //     stays identical on 60/120/144 Hz. Subscription lifecycle:
-    //       - First animation starts  → subscribe
-    //       - Every vsync while active → update animation using elapsed time
-    //       - Last animation finishes → unsubscribe immediately
+    //       - First animation starts  â†’ subscribe
+    //       - Every vsync while active â†’ update animation using elapsed time
+    //       - Last animation finishes â†’ unsubscribe immediately
     private EventHandler? _perfRenderHandler;
     private long _lastPerfTicks;
     private static readonly double _perfTicksPerMs = Stopwatch.Frequency / 1000.0;
@@ -1331,7 +1331,7 @@ InitializeComponent();
         // Any real activity marks the interaction clock: background jobs
         // (wallpaper thumbs, artist face-crop upgrade) gate and cancel on it,
         // so returning to the app after a pause must be visible to those gates
-        // — previously ONLY wheel/tab/navigation marked it, which let heavy
+        // â€” previously ONLY wheel/tab/navigation marked it, which let heavy
         // jobs keep running under the user's first clicks (return-lag).
         PreviewMouseMove += (_, _) => SmoothScrollHelper.MarkInteraction();
         PreviewMouseDown += (_, _) => SmoothScrollHelper.MarkInteraction();
@@ -1459,6 +1459,8 @@ InitializeComponent();
     private System.Windows.Threading.DispatcherTimer? _bgBlurTimer;
     private bool _glassDirty;
     private bool _initialWallpaperReady;
+    private bool _glassRebuildInProgress;
+    private bool _glassRebuildQueued;
     private bool _startupPresentationCompleted;
     private ImageSource? _glassWallpaperSource;
     private ImageSource? _glassCacheSource;
@@ -1572,12 +1574,16 @@ InitializeComponent();
             return;
         }
 
-        // Sample resolution vs. cost. 0.5 of the source keeps the frosted sample far
-        // sharper than the legacy 1/3 ratio (2.25x the pixels, far more gradient
-        // detail before blur). Very large windows cap the long sample side so the
-        // shared bake stays bounded in memory and on the UI thread.
+        if (_glassRebuildInProgress)
+        {
+            _glassRebuildQueued = true;
+            return;
+        }
+        _glassRebuildInProgress = true;
+
+        // Capture immutable inputs on the UI thread; render on an STA worker.
         const double baseRenderScale = 0.5;
-        const double maxSamplePixels = 1600.0; // long side of the sample, in physical pixels
+        const double maxSamplePixels = 1600.0;
         double srcLong = Math.Max(width * dpi.DpiScaleX, height * dpi.DpiScaleY);
         double renderScale = srcLong > 0
             ? Math.Min(baseRenderScale, maxSamplePixels / srcLong)
@@ -1588,32 +1594,50 @@ InitializeComponent();
         double renderDpiY = 96 * dpi.DpiScaleY;
         double renderWidth = pixelWidth * 96 / renderDpiX;
         double renderHeight = pixelHeight * 96 / renderDpiY;
-        // Effective on-screen blur in DIPs; converted into sample space so the look
-        // stays consistent across DPI scales and window sizes. ~10 DIP keeps the
-        // wallpaper readable-for-the-eye but free of sharp detail (vs legacy ~15).
         const double glassBlurScreenDips = 10.0;
         double glassBlurRadius = Math.Max(1.0, glassBlurScreenDips * renderScale);
 
-        try
+        var source = _glassWallpaperSource;
+        long gen = _bgGen;
+        var worker = new System.Threading.Thread(() =>
         {
-            // One wallpaper sample + blur, shared by every glass surface. The
-            // TopBar's dark tint lives as a dedicated XAML layer, so the shared
-            // sample stays clean and wallpaper-driven for the Sidebar/BrandGlass.
-            _glassBackdropCache = RenderBlurredWallpaper(
-                pixelWidth, pixelHeight, renderDpiX, renderDpiY,
-                renderWidth, renderHeight, alpha, glassBlurRadius);
-            _glassCacheSource = _glassWallpaperSource;
-            _glassCacheWidth = width;
-            _glassCacheHeight = height;
-            _glassCacheDpiX = dpi.DpiScaleX;
-            _glassCacheDpiY = dpi.DpiScaleY;
-            _glassCacheAlpha = alpha;
-            UpdateGlassSurfaceBrushes();
-        }
-        catch (Exception ex)
-        {
-            LogHelper.LogError("[Glass] background sampling failed", ex);
-        }
+            BitmapSource? rendered = null;
+            try
+            {
+                rendered = RenderBlurredWallpaper(
+                    source!, pixelWidth, pixelHeight, renderDpiX, renderDpiY,
+                    renderWidth, renderHeight, alpha, glassBlurRadius);
+            }
+            catch (Exception ex)
+            {
+                LogHelper.LogError("[Glass] background sampling failed", ex);
+            }
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (gen != _bgGen || rendered == null) return;
+                _glassBackdropCache = rendered;
+                _glassCacheSource = _glassWallpaperSource;
+                _glassCacheWidth = width;
+                _glassCacheHeight = height;
+                _glassCacheDpiX = dpi.DpiScaleX;
+                _glassCacheDpiY = dpi.DpiScaleY;
+                _glassCacheAlpha = alpha;
+                UpdateGlassSurfaceBrushes();
+            }));
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _glassRebuildInProgress = false;
+                if (_glassRebuildQueued)
+                {
+                    _glassRebuildQueued = false;
+                    RebuildGlassBackdropCache();
+                }
+            }));
+        });
+        worker.SetApartmentState(System.Threading.ApartmentState.STA);
+        worker.Start();
     }
 
     /// <summary>
@@ -1622,6 +1646,7 @@ InitializeComponent();
     /// (RenderTargetBitmap affinity).
     /// </summary>
     private BitmapSource RenderBlurredWallpaper(
+        ImageSource wallpaperSource,
         int pixelWidth, int pixelHeight,
         double renderDpiX, double renderDpiY,
         double renderWidth, double renderHeight,
@@ -1631,7 +1656,7 @@ InitializeComponent();
         var visual = new DrawingVisual();
         using (var context = visual.RenderOpen())
         {
-            var wallpaper = new ImageBrush(_glassWallpaperSource) { Stretch = Stretch.UniformToFill };
+            var wallpaper = new ImageBrush(wallpaperSource) { Stretch = Stretch.UniformToFill };
             context.DrawRectangle(wallpaper, null, new Rect(0, 0, renderWidth, renderHeight));
             context.DrawRectangle(new SolidColorBrush(Colors.Black) { Opacity = alpha }, null, new Rect(0, 0, renderWidth, renderHeight));
         }
@@ -1703,7 +1728,7 @@ InitializeComponent();
 
     private System.Windows.Media.ImageSource? _solidWallpaperFallback;
     // Generation guard for async wallpaper loads: only the latest requested
-    // wallpaper may apply its result — a stale decode finishing late must never
+    // wallpaper may apply its result â€” a stale decode finishing late must never
     // overwrite a newer selection.
     private long _bgGen;
     private System.Threading.CancellationTokenSource? _wallpaperRebuildCts;
@@ -1712,7 +1737,7 @@ InitializeComponent();
     {
         // Dispatcher affinity: settings/theme paths raise this off the UI thread
         // (LoadSettings runs on ThreadPool). Touching live visuals from there throws
-        // and was swallowed → black background until a resize rebuilt on UI thread.
+        // and was swallowed â†’ black background until a resize rebuilt on UI thread.
         if (!Dispatcher.CheckAccess())
         {
             LogHelper.LogInfo("[Wallpaper] rebuild: marshaling to UI thread");
@@ -1726,12 +1751,13 @@ InitializeComponent();
         _wallpaperRebuildCts = cts;
         try { oldCts?.Cancel(); } catch { }
         var token = cts.Token;
+        MusicPlayer.Models.WallpaperItem? targetItem = null;
         try
         {
             var vm = ViewModel;
             if (vm == null)
             {
-                // No ViewModel yet — apply solid fallback so the loading overlay
+                // No ViewModel yet â€” apply solid fallback so the loading overlay
                 // can eventually dismiss, and retry when DataContext is set.
                 ApplySolidWallpaperFallback();
                 return;
@@ -1741,7 +1767,20 @@ InitializeComponent();
             double blurRadius = vm.WallpaperBlur;
             bool wantBlur = blurRadius >= 0.5;
 
-            // Resolve which URI to load (cheap stat only): user file → bundled default.
+            targetItem = vm.Wallpapers.FirstOrDefault(w => w.IsSelected)
+                ?? vm.Wallpapers.FirstOrDefault(w =>
+                    string.Equals(w.ResourceUri, path, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(w.FilePath, path, StringComparison.OrdinalIgnoreCase));
+
+
+            if (targetItem != null)
+            {
+                targetItem.IsLoading = true;
+                targetItem.LoadProgress = 5;
+                targetItem.HasLoadError = false;
+            }
+
+            // Resolve which URI to load (cheap stat only): user file â†’ bundled default.
             string? primary = null;
             string kind = "none";
             if (!string.IsNullOrEmpty(path))
@@ -1758,7 +1797,7 @@ InitializeComponent();
                 }
                 else
                 {
-                    LogHelper.LogInfo($"[Wallpaper] resolve: file not found '{DescribeWallpaperPath(path)}' → trying default");
+                    LogHelper.LogInfo($"[Wallpaper] resolve: file not found '{DescribeWallpaperPath(path)}' â†’ trying default");
                 }
             }
             const string fallbackPack = "pack://application:,,,/wallpaper/defaut/bg_005.png";
@@ -1766,7 +1805,7 @@ InitializeComponent();
 
             // Heavy decode off the UI thread (4K JPEGs stall it for 100ms+).
             // The original is decoded at full quality (sane cap); the blur works
-            // on a small render of it — never a downscaled replacement.
+            // on a small render of it â€” never a downscaled replacement.
             int decodeW = ComputeWallpaperDecodeWidth();
             string? primaryCopy = primary;
             string kindCopy = kind;
@@ -1780,16 +1819,36 @@ InitializeComponent();
                 if (primaryCopy != null && TryGetCachedWallpaper(cacheKey, out decoded))
                 {
                     LogHelper.LogInfo($"[Wallpaper] cache hit: {kindCopy} {decoded!.PixelWidth}x{decoded!.PixelHeight}");
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (gen != _bgGen || targetItem == null) return;
+                        targetItem.LoadProgress = 55;
+                    }));
                 }
                 else
                 {
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (gen != _bgGen || targetItem == null) return;
+                        targetItem.LoadProgress = 20;
+                    }));
                     decoded = (primaryCopy != null)
                         ? TryDecodeWallpaper(primaryCopy, decodeW, kindCopy)
                         : null;
                     if (decoded != null) StoreCachedWallpaper(cacheKey, decoded);
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (gen != _bgGen || targetItem == null) return;
+                        targetItem.LoadProgress = 60;
+                    }));
                 }
                 if (decoded == null)
                 {
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (gen != _bgGen || targetItem == null) return;
+                        targetItem.LoadProgress = 50;
+                    }));
                     decoded = TryDecodeWallpaper(fallbackPack, decodeW, "pack-default");
                     if (decoded != null) kindCopy = "pack-default";
                 }
@@ -1802,26 +1861,49 @@ InitializeComponent();
                     if (gen != _bgGen)
                     {
                         LogHelper.LogInfo($"[Wallpaper] rebuild: stale result discarded ({finalKind})");
+                        if (targetItem != null)
+                        {
+                            targetItem.IsLoading = false;
+                            targetItem.HasLoadError = false;
+                            targetItem.LoadProgress = 0;
+                        }
                         return;
                     }
                     if (finalDecoded == null)
                     {
-                        LogHelper.LogInfo($"[Wallpaper] rebuild: no usable source ({DescribeWallpaperPath(path)}) → solid fallback");
+                        LogHelper.LogInfo($"[Wallpaper] rebuild: no usable source ({DescribeWallpaperPath(path)}) â†’ solid fallback");
                         ApplySolidWallpaperFallback();
+                        if (targetItem != null)
+                        {
+                            targetItem.HasLoadError = true;
+                            targetItem.IsLoading = false;
+                        }
                         return;
                     }
                     if (!wantBlur)
                     {
+                        if (targetItem != null) targetItem.LoadProgress = 90;
                         SetWallpaperSources(finalDecoded, finalDecoded);
+                        if (targetItem != null)
+                        {
+                            targetItem.LoadProgress = 100;
+                            targetItem.IsLoading = false;
+                        }
                         LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} sharp {finalDecoded.PixelWidth}x{finalDecoded.PixelHeight} appliedMs={ElapsedMs(t0):0}");
                         return;
                     }
                     int dw = (int)ActualWidth, dh = (int)ActualHeight;
                     if (dw < 10 || dh < 10)
                     {
-                        // Not laid out yet — show the sharp original now; the next
+                        // Not laid out yet â€” show the sharp original now; the next
                         // size change re-triggers the blur through the debounce.
+                        if (targetItem != null) targetItem.LoadProgress = 90;
                         SetWallpaperSources(finalDecoded, finalDecoded);
+                        if (targetItem != null)
+                        {
+                            targetItem.LoadProgress = 100;
+                            targetItem.IsLoading = false;
+                        }
                         LogHelper.LogInfo($"[Wallpaper] rebuild: not laid out yet, showing original ({finalKind})");
                         _bgDirty = true;
                         EnsureBlurCache();
@@ -1863,43 +1945,88 @@ InitializeComponent();
                         string preparedKey = (path ?? "") + "|" + blurRadius.ToString("0.###") + "|" + pxW + "x" + pxH + "|" + dpiScaleX.ToString("0.###") + "x" + dpiScaleY.ToString("0.###");
                         if (TryGetPreparedBlur(preparedKey, out var cachedBlur) && cachedBlur != null)
                         {
+                            if (targetItem != null) targetItem.LoadProgress = 85;
                             SetWallpaperSources(cachedBlur, finalDecoded);
+                            if (targetItem != null)
+                            {
+                                targetItem.LoadProgress = 100;
+                                targetItem.IsLoading = false;
+                            }
                             LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur cached {pxW}x{pxH} appliedMs={ElapsedMs(t0):0}");
                             return;
                         }
-
-                        var target = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
-                        var visual = new DrawingVisual();
-                        using (var ctx = visual.RenderOpen())
+                        if (targetItem != null) targetItem.LoadProgress = 70;
+                        var worker = new System.Threading.Thread(() =>
                         {
-                            var ib = new ImageBrush(finalDecoded) { Stretch = Stretch.UniformToFill };
-                            // Draw in DIP space; RenderTargetBitmap scales to physical pixels via DPI.
-                            ctx.DrawRectangle(ib, null, new Rect(0, 0, dw, dh));
-                        }
-                        target.Render(visual);
+                            RenderTargetBitmap? result = null;
+                            try
+                            {
+                                var target = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
+                                var visual = new DrawingVisual();
+                                using (var ctx = visual.RenderOpen())
+                                {
+                                    var ib = new ImageBrush(finalDecoded) { Stretch = Stretch.UniformToFill };
+                                    ctx.DrawRectangle(ib, null, new Rect(0, 0, dw, dh));
+                                }
+                                target.Render(visual);
 
-                        // BlurEffect radius is in DIPs relative to the visual's coordinate space.
-                        // The visual is (dw, dh) DIPs, so the radius is in DIPs — no DPI scaling needed.
-                        // When capped, reduce the radius proportionally.
-                        var blurred = new BlurEffect { Radius = blurRadiusEffective, RenderingBias = RenderingBias.Quality };
-                        var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
-                        wrapper.Measure(new Size(dw, dh));
-                        wrapper.Arrange(new Rect(0, 0, dw, dh));
+                                var blurred = new BlurEffect { Radius = blurRadiusEffective, RenderingBias = RenderingBias.Quality };
+                                var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
+                                wrapper.Measure(new Size(dw, dh));
+                                wrapper.Arrange(new Rect(0, 0, dw, dh));
 
-                        var result = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
-                        result.Render(wrapper);
-                        result.Freeze();
-                        StorePreparedBlur(preparedKey, result);
+                                result = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
+                                result.Render(wrapper);
+                                result.Freeze();
+                                StorePreparedBlur(preparedKey, result);
+                            }
+                            catch (Exception blurEx)
+                            {
+                                LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
+                            }
 
-                        SetWallpaperSources(result, finalDecoded);
-                        LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={ElapsedMs(t0):0}");
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                if (gen != _bgGen) return;
+                                if (result != null)
+                                {
+                                    if (targetItem != null) targetItem.LoadProgress = 90;
+                                    SetWallpaperSources(result, finalDecoded);
+                                    if (targetItem != null)
+                                    {
+                                        targetItem.LoadProgress = 100;
+                                        targetItem.IsLoading = false;
+                                    }
+                                    LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={ElapsedMs(t0):0}");
+                                }
+                                else
+                                {
+                                    if (targetItem != null) targetItem.LoadProgress = 90;
+                                    SetWallpaperSources(finalDecoded, finalDecoded);
+                                    if (targetItem != null)
+                                    {
+                                        targetItem.LoadProgress = 100;
+                                        targetItem.IsLoading = false;
+                                    }
+                                }
+                            }));
+                        });
+                        worker.SetApartmentState(System.Threading.ApartmentState.STA);
+                        worker.Start();
                     }
                     catch (Exception blurEx)
                     {
-                        // Blur failure alone must never blank the background: the
-                        // decoded original is already in hand — show it unblurred.
                         LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
-                        SetWallpaperSources(finalDecoded, finalDecoded);
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (gen != _bgGen) return;
+                            SetWallpaperSources(finalDecoded, finalDecoded);
+                            if (targetItem != null)
+                            {
+                                targetItem.HasLoadError = true;
+                                targetItem.IsLoading = false;
+                            }
+                        }));
                     }
                 }));
             });
@@ -1908,6 +2035,11 @@ InitializeComponent();
         {
             LogHelper.LogError("[Wallpaper] rebuild failed", ex);
             ApplySolidWallpaperFallback();
+            if (targetItem != null)
+            {
+                targetItem.HasLoadError = true;
+                targetItem.IsLoading = false;
+            }
         }
     }
 
@@ -1969,6 +2101,7 @@ InitializeComponent();
             var bi = new BitmapImage();
             bi.BeginInit();
             bi.CacheOption = BitmapCacheOption.OnLoad;
+            bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             bi.DecodePixelWidth = maxWidth;
             if (uri.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
             {
@@ -2007,7 +2140,7 @@ InitializeComponent();
         }
     }
 
-    // Display-sized decode target: actual background area × DPI × margin, capped
+    // Display-sized decode target: actual background area Ã— DPI Ã— margin, capped
     // so 8K sources stay bounded. Decoding beyond display size is invisible once
     // stretched (UniformToFill downscales on GPU anyway); the decoder clamps to
     // native size, so small files are unaffected.
@@ -2074,7 +2207,7 @@ InitializeComponent();
         });
     }
 
-    // ── Frame-pacing loop ────────────────────────────────────────────────────
+    // â”€â”€ Frame-pacing loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Drives the marquee (mini + full player), the lyrics scroll glide and the
     // queue auto-scroll from a single vsync-aligned CompositionTarget.Rendering
     // callback. All motion is a function of elapsed time, not timer ticks, so
@@ -2175,7 +2308,7 @@ InitializeComponent();
         double loopPoint = -(singleTextWidth + 60);
         if (offset <= loopPoint)
         {
-            // One full scroll complete — reset and stop.
+            // One full scroll complete â€” reset and stop.
             offset = 0;
             transform.X = 0;
             return false;
@@ -2413,7 +2546,7 @@ InitializeComponent();
         SmoothScrollHelper.AutoStartIfPerfTest();
 
         // Optional self-measured Full Player transition probe (frame pacing).
-        // Only runs when MUSICPLAYER_PERFTEST=1 — no effect on normal use.
+        // Only runs when MUSICPLAYER_PERFTEST=1 â€” no effect on normal use.
         try
         {
             if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
@@ -2866,7 +2999,7 @@ InitializeComponent();
         int trackCountBefore = newTab == "songs" ? vm.DisplayedTracks.Count : -1;
 
         // NOTE: LoadTabData is intentionally called AFTER the animation below,
-        // not here — building the WrapPanel items while the slide animation runs
+        // not here â€” building the WrapPanel items while the slide animation runs
         // causes the animation to stutter. Data is loaded once the tab is visible.
 
         int newIndex = newTab switch { "songs" => 0, "artists" => 1, "albums" => 2, "genres" => 3, "folders" => 4, _ => 0 };
@@ -3308,7 +3441,7 @@ InitializeComponent();
     // Shared forward hero into the album detail page, used by the albums-grid
     // cards (AlbumRow_Click) and the artist-page album cards (ArtistAlbum_Click).
     // Captures the card's art box + in-memory image, hides the detail page, and
-    // flies the shared-element overlay to the 280px art target — all
+    // flies the shared-element overlay to the 280px art target â€” all
     // synchronously inside the click so the first rendered frame already morphs.
     private void BeginAlbumHeroFromCard(Border border, MusicTrack dataContext)
     {
@@ -3324,7 +3457,7 @@ InitializeComponent();
         }
         square ??= border;
 
-        // Stash the artist hero state when detouring from the artist page — the
+        // Stash the artist hero state when detouring from the artist page â€” the
         // lines below overwrite the shared slot with album values. A null stash
         // (album entered from anywhere else) also discards an abandoned detour.
         if (string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal))
@@ -3724,7 +3857,7 @@ InitializeComponent();
 
         // Start the morph SYNCHRONOUSLY inside the click handler. DispatcherPriority.Loaded
         // sits BELOW Render priority, so a deferred start lets one frame render with the old
-        // list already Collapsed and the detail page still at Opacity=0 — the black void seen
+        // list already Collapsed and the detail page still at Opacity=0 â€” the black void seen
         // in recordings. UpdateLayout() measures the new page now, so the very first rendered
         // frame already contains the morphing overlay.
         try
@@ -3852,7 +3985,7 @@ InitializeComponent();
                     new System.Windows.Point(size / 2.0, size / 2.0),
                     size / 2.0, size / 2.0);
 
-                // Person icon (head + body) scaled from 48×48 viewBox to 256×256.
+                // Person icon (head + body) scaled from 48Ã—48 viewBox to 256Ã—256.
                 // Geometry.Parse returns frozen (read-only) geometries, so apply
                 // the scale via DrawingContext.PushTransform instead of setting
                 // .Transform (setting it throws "read-only state" -> crash).
@@ -3945,7 +4078,7 @@ InitializeComponent();
         if (ArtistDetailInfo.RenderTransform is TranslateTransform tm)
             tm.BeginAnimation(TranslateTransform.YProperty, null);
         // Staged reverse reveal (album -> artist) leaves a base offset/opacity on the
-        // content host — restore it here like EnsureDetailPageOpacity.ResetChild does.
+        // content host â€” restore it here like EnsureDetailPageOpacity.ResetChild does.
         ArtistDetailContentHost.BeginAnimation(OpacityProperty, null);
         ArtistDetailContentHost.Opacity = 1;
         if (ArtistDetailContentHost.RenderTransform is TranslateTransform rmh)
@@ -3972,7 +4105,7 @@ InitializeComponent();
             if (AlbumDetailInfo.RenderTransform is TranslateTransform rmi)
                 rmi.BeginAnimation(TranslateTransform.YProperty, null);
         }
-        // During album transitions, don't restore AlbumDetailView or art —
+        // During album transitions, don't restore AlbumDetailView or art â€”
         // the caller hides them explicitly to prevent double-image.
         if (!_isAlbumTransition)
         {
@@ -4106,7 +4239,7 @@ InitializeComponent();
                     }
                 }
                 // Reveal gate: hold the flown overlay over the art target until the
-                // async album load for THIS navigation has landed — otherwise the
+                // async album load for THIS navigation has landed â€” otherwise the
                 // provisional-art swap and the rows pop show mid-zoom. Capped at
                 // 500ms (genuinely empty albums, or a user who navigated away
                 // mid-morph, must never hold the overlay forever).
@@ -4157,7 +4290,7 @@ InitializeComponent();
 
     // True once the async album load for the in-flight forward hero has landed
     // (track list + final art published for the target album/artist). The track
-    // count is the real signal — names are published synchronously up front.
+    // count is the real signal â€” names are published synchronously up front.
     private bool IsAlbumDataReady() => ViewModel is { } vm
         && string.Equals(vm.CurrentAlbumName, _albumTransitionAlbumName, StringComparison.Ordinal)
         && string.Equals(vm.CurrentAlbumArtist, _albumTransitionArtist, StringComparison.Ordinal)
@@ -4205,7 +4338,7 @@ InitializeComponent();
     }
 
     // Reverse-flight image for album transitions: must be the SAME canonical
-    // cover the forward flight carried and the page is showing — flying the
+    // cover the forward flight carried and the page is showing â€” flying the
     // clicked track's own art instead visibly swaps covers at landing for
     // multi-art pseudo-albums ("Unknown Album").
     // 1) the on-screen detail art visual (pixel-exact, zero lag),
@@ -4240,7 +4373,7 @@ InitializeComponent();
         _navGen = NavGate.NewNavigation();
 
         // Without a genuine hero ENTRY the stored source state is stale (e.g. a
-        // list-entered album after an earlier hero transition) — fall back to a
+        // list-entered album after an earlier hero transition) â€” fall back to a
         // plain GoBack with the standard page zoom instead of flying to a wrong card.
         if (!_albumDetailEnteredViaHero || string.IsNullOrEmpty(_artistTransitionArtistName) || _artistTransitionSourceSize.Width <= 0)
         {
@@ -4427,7 +4560,7 @@ InitializeComponent();
         ArtistTransitionOverlay.BeginAnimation(OpacityProperty, overlayFade);
 
         // Reveal the hidden source card the moment the overlay starts fading, so the
-        // card is already back underneath the fading pixels — no gap, no double image.
+        // card is already back underneath the fading pixels â€” no gap, no double image.
         if (_hiddenReverseCard != null)
         {
             long revealGen = _navGen;
@@ -4458,7 +4591,7 @@ InitializeComponent();
                 TransitionInputBlocker.Visibility = Visibility.Collapsed;
             // Safety net: if the view never actually changed (silent no-op GoBack
             // on a duplicate history top), the detail page hidden for the flight
-            // would stay invisible forever — restore it so a ghost empty page is
+            // would stay invisible forever â€” restore it so a ghost empty page is
             // impossible. Harmless otherwise (already visible pages ignore it).
             if (string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal))
             {
@@ -4469,7 +4602,7 @@ InitializeComponent();
         ArtistTransitionTranslate.BeginAnimation(TranslateTransform.YProperty, morphAnim);
 
         // If this reverse returns from an album detour to the artist page, the album
-        // entry overwrote the shared hero slot — restore the stashed artist state now
+        // entry overwrote the shared hero slot â€” restore the stashed artist state now
         // that ReMeasureReverseSource (which needs the album state) has run, so the
         // NEXT back (artist -> grid) still has its own reverse animation.
         if (_isAlbumTransition && _stashedArtistHero != null &&
@@ -4517,7 +4650,7 @@ InitializeComponent();
         }
 
         if (card == null || circle == null || !circle.IsVisible || circle.ActualWidth <= 0)
-            return; // Card not realized (scrolled out) — keep the stored position.
+            return; // Card not realized (scrolled out) â€” keep the stored position.
 
         try
         {
@@ -4526,7 +4659,7 @@ InitializeComponent();
         }
         catch
         {
-            return; // Disconnected visual — keep the stored position.
+            return; // Disconnected visual â€” keep the stored position.
         }
 
         _hiddenReverseCard = card;
@@ -4553,7 +4686,7 @@ InitializeComponent();
 
                 // Artist cards clip their square with an ellipse; album cards do not.
                 // Album and genre cards are structurally identical (Grid 150 +
-                // ClipToBounds), but only album cards hold the artwork Image — the
+                // ClipToBounds), but only album cards hold the artwork Image â€” the
                 // discriminator that keeps a genre card from stealing the match.
                 if (album)
                 {
@@ -4580,7 +4713,7 @@ InitializeComponent();
                 artBox.Child is Image &&
                 string.Equals(t2.Album, name, StringComparison.OrdinalIgnoreCase))
             {
-                // Artist-page album card (140x140 art box holding the Image) — the
+                // Artist-page album card (140x140 art box holding the Image) â€” the
                 // reverse morph re-measures here so it lands back on the same card.
                 return (b2, artBox);
             }
@@ -4714,7 +4847,7 @@ InitializeComponent();
         // Cache the routed pointer position for the (rare) no-GetCursorPos
         // fallback and for swipe initiation. This is skipped once the drag is
         // live: a recycled container under capture answers e.GetPosition with
-        // its OLD slot — the source row — and would feed a stale position.
+        // its OLD slot â€” the source row â€” and would feed a stale position.
         if (QueueDragCanvas != null && !_queueIsDragging)
             _queueDragCanvasMouse = e.GetPosition(QueueDragCanvas);
 
@@ -4738,7 +4871,7 @@ InitializeComponent();
         if (!_queueIsDragging && !_queueIsSwiping)
         {
             // Initiation needs a live press: after any cleanup (commit/cancel)
-            // the physical button may still be held while the gesture is over —
+            // the physical button may still be held while the gesture is over â€”
             // without this guard those moves re-arm phantom drags/swipes from
             // the stale anchor (double cancels, ghost visuals, stray removes).
             if (!_queuePressActive) return;
@@ -4761,8 +4894,8 @@ InitializeComponent();
                 // and swipe to remove are object-based and stay enabled).
                 if (ViewModel != null && !string.IsNullOrWhiteSpace(ViewModel.QueueFilterText))
                     return;
-                // If the drawer open animation (scale 0.88→1) is still running,
-                // do NOT snap to 1.0 instantly — that pop reads as "the queue
+                // If the drawer open animation (scale 0.88â†’1) is still running,
+                // do NOT snap to 1.0 instantly â€” that pop reads as "the queue
                 // grew the moment I grabbed it". Spring the remaining distance
                 // smoothly instead; a panel that is already at 1.0 just stays.
                 if (QueueDrawerScale != null)
@@ -4810,14 +4943,14 @@ InitializeComponent();
                 _queueDragFromIndex = resolvedIndex;
                 _queueCurrentDropIndex = resolvedIndex;
                 _lastDisplacedTargetIndex = resolvedIndex;
-                // Build O(1) track→index cache once — used by RehydrateQueueContainerDisplacement
+                // Build O(1) trackâ†’index cache once â€” used by RehydrateQueueContainerDisplacement
                 // to avoid O(n) Queue.IndexOf on every recycled container during auto-scroll.
                 BuildQueueIndexCache();
 
                 // Cache QueueListBox position in canvas space once at DragStart.
                 // TranslatePoint goes through the ScaleTransform and is sensitive
                 // to every layout pass (ScrollToVerticalOffset triggers one per
-                // frame) — reading it each frame made posInListBox.Y jitter by
+                // frame) â€” reading it each frame made posInListBox.Y jitter by
                 // 1-3px even with a motionless cursor, flipping the gap index.
                 if (QueueListBox != null && QueueDragCanvas != null)
                 {
@@ -4834,7 +4967,7 @@ InitializeComponent();
                 fe.Cursor = Cursors.SizeAll;
                 // Transfer capture from the row-border to QueueListBox (a permanent
                 // non-virtualizing element). The Release fires QueueItem_LostMouseCapture
-                // synchronously — suppress its recapture logic during this transfer.
+                // synchronously â€” suppress its recapture logic during this transfer.
                 _isTransferringCapture = true;
                 if (fe.IsMouseCaptured) fe.ReleaseMouseCapture();
                 if (QueueListBox != null && !QueueListBox.IsMouseCaptured)
@@ -4845,7 +4978,7 @@ InitializeComponent();
                 _isTransferringCapture = false;
                 // Keep the drag cursor over the whole drawer surface (the row
                 // border's SizeAll only applies while the pointer is over the
-                // row itself — past the bottom edge it reverts to the default
+                // row itself â€” past the bottom edge it reverts to the default
                 // arrow right where the gap keeps scrolling).
                 if (QueueDrawerOverlay != null) QueueDrawerOverlay.Cursor = Cursors.SizeAll;
                 SetQueueItemVisibility(resolvedIndex, hidden: true);
@@ -4952,13 +5085,13 @@ InitializeComponent();
         if (_isCommittingDrop || _isCleaningUpDrag) return;
         // Suppress during deliberate capture transfer to QueueListBox at DragStart.
         if (_isTransferringCapture) return;
-        // While inactive the OS owns capture churn — verdict belongs to OnWindowActivated.
+        // While inactive the OS owns capture churn â€” verdict belongs to OnWindowActivated.
         if (!IsActive) return;
         if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
         {
             // If QueueListBox already holds capture, this LostCapture fired because
             // we deliberately released the row-border during the DragStart transfer.
-            // Do NOT recapture to the border — QueueListBox is the intended owner.
+            // Do NOT recapture to the border â€” QueueListBox is the intended owner.
             if (_queueIsDragging && QueueListBox != null && QueueListBox.IsMouseCaptured)
             {
                 _queueCapturedElement = QueueListBox;
@@ -4966,7 +5099,7 @@ InitializeComponent();
             }
 
             // Button still down: capture died because virtualization recycled
-            // the source row — re-capture to QueueListBox (stable, non-virtualizing).
+            // the source row â€” re-capture to QueueListBox (stable, non-virtualizing).
             if (_queueIsDragging && Mouse.LeftButton == MouseButtonState.Pressed &&
                 _queueDraggedTrack != null && QueueListBox != null)
             {
@@ -5006,12 +5139,12 @@ InitializeComponent();
     {
         if (_isCommittingDrop || _isCleaningUpDrag) return;
         // While inactive (Alt-Tabbed away) capture loss is expected OS behavior,
-        // not a user abort — leave the verdict to OnWindowActivated.
+        // not a user abort â€” leave the verdict to OnWindowActivated.
         if (!IsActive) return;
         if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
         {
             // A live drag whose button is still down is owned by the row-level
-            // handler (re-capture or cancel) — never double-cancel from here.
+            // handler (re-capture or cancel) â€” never double-cancel from here.
             if (_queueIsDragging && Mouse.LeftButton == MouseButtonState.Pressed) return;
             LogHelper.LogInfo("[QUEUE_DRAG] DragCancel.LostCapture (Window)");
             CancelQueueDrag("LostCapture");
@@ -5026,7 +5159,7 @@ InitializeComponent();
         // which cancels only if the button was released while away.
         if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
         {
-            LogHelper.LogInfo("[QUEUE_DRAG] Deactivated during drag — verdict deferred to Activated");
+            LogHelper.LogInfo("[QUEUE_DRAG] Deactivated during drag â€” verdict deferred to Activated");
         }
     }
 
@@ -5059,7 +5192,7 @@ InitializeComponent();
             // Same as deactivation: defer the verdict to OnWindowActivated.
             if (_queueIsDragging || _queueDragVisual != null || _queueCapturedElement != null)
             {
-                LogHelper.LogInfo("[QUEUE_DRAG] Minimized during drag — verdict deferred to Activated");
+                LogHelper.LogInfo("[QUEUE_DRAG] Minimized during drag â€” verdict deferred to Activated");
             }
         }
     }
@@ -5075,7 +5208,7 @@ InitializeComponent();
         {
             // A release always commits where the CARD points: recompute the gap
             // fresh from the clamped aim point (same ClampDropY the visual uses),
-            // so a drop past the edge lands at the edge — never snaps back.
+            // so a drop past the edge lands at the edge â€” never snaps back.
             // Genuine aborts stay explicit: Escape key, drawer close, or a
             // release while away ( arbitrated on re-activation).
             if (QueueListBox != null)
@@ -5115,7 +5248,7 @@ InitializeComponent();
     }
 
     // The card is clamped inside the list (see dragTop clamp) while the cursor
-    // may run past the panel edge on a fast flick. The gap — and the drop —
+    // may run past the panel edge on a fast flick. The gap â€” and the drop â€”
     // must follow the CARD (what the user sees), so clamp the aim point to the
     // card's travel range: [18, listH-30] mirrors cardTop in [listTop-10,
     // listBottom-58] plus the 28px cursor-to-card offset.
@@ -5170,7 +5303,7 @@ InitializeComponent();
         int rawTarget = newIndex > fromIndex ? newIndex - 1 : newIndex;
         rawTarget = Math.Clamp(rawTarget, 0, Math.Max(0, ViewModel.Queue.Count - 1));
 
-        // Rate-limiter: only commit rawTarget after it has been stable for ≥2 calls during auto-scroll
+        // Rate-limiter: only commit rawTarget after it has been stable for â‰¥2 calls during auto-scroll
         int targetIndex;
         if (rawTarget == _queuePendingTargetIndex)
         {
@@ -5289,7 +5422,7 @@ InitializeComponent();
             }
         }
 
-        // O(1) track→index lookup from pre-built drag cache.
+        // O(1) trackâ†’index lookup from pre-built drag cache.
         // Falls back to IndexFromContainer + Queue.IndexOf only on a cache miss
         // (first-frame edge case before BuildQueueIndexCache completes).
         int itemIndex;
@@ -5308,7 +5441,7 @@ InitializeComponent();
         int targetIndex = _lastDisplacedTargetIndex;
         double expectedY = CalculateExpectedDisplacement(itemIndex, fromIndex, targetIndex);
 
-        // Use cached TranslateTransform — avoids repeated VisualTree walks
+        // Use cached TranslateTransform â€” avoids repeated VisualTree walks
         var translate = GetOrCacheTranslateTransform(border);
         if (translate == null) return;
 
@@ -5327,7 +5460,7 @@ InitializeComponent();
 
         if (canAnimate && Math.Abs(translate.Y - expectedY) > 0.5)
         {
-            // Shared QuinticEaseOut — no GC allocation per animation
+            // Shared QuinticEaseOut â€” no GC allocation per animation
             var anim = new System.Windows.Media.Animation.DoubleAnimation(translate.Y, expectedY,
                 TimeSpan.FromMilliseconds(170))
             {
@@ -5343,7 +5476,7 @@ InitializeComponent();
         }
     }
 
-    // Build O(1) track→index lookup table. Called once at DragStart.
+    // Build O(1) trackâ†’index lookup table. Called once at DragStart.
     // During the drag, Queue order is frozen (commit only on drop), so
     // this snapshot stays valid for the entire drag session.
     private void BuildQueueIndexCache()
@@ -5356,7 +5489,7 @@ InitializeComponent();
     }
 
     // Returns only realized (visible) ListBoxItem containers from the VirtualizingStackPanel.
-    // This is ~16× faster than iterating all items via ContainerFromIndex(i).
+    // This is ~16Ã— faster than iterating all items via ContainerFromIndex(i).
     private IEnumerable<ListBoxItem> GetRealizedQueueContainers()
     {
         _queueVsp ??= FindDescendant<VirtualizingStackPanel>(QueueListBox);
@@ -5369,7 +5502,7 @@ InitializeComponent();
         }
     }
 
-    // Returns a cached TranslateTransform for a border — walks VisualTree only on first access.
+    // Returns a cached TranslateTransform for a border â€” walks VisualTree only on first access.
     private TranslateTransform? GetOrCacheTranslateTransform(Border border)
     {
         if (_translateCache.TryGetValue(border, out var cached)) return cached;
@@ -5381,7 +5514,7 @@ InitializeComponent();
     private void ApplyNeighborDisplacement(int fromIndex, int targetIndex, bool animate)
     {
         if (QueueListBox == null || ViewModel == null) return;
-        // Only iterate realized (visible) containers — skips all virtualized rows
+        // Only iterate realized (visible) containers â€” skips all virtualized rows
         foreach (var container in GetRealizedQueueContainers())
         {
             RehydrateQueueContainerDisplacement(container, animateIfTrackMatches: animate);
@@ -5477,7 +5610,7 @@ InitializeComponent();
             MusicTrack trackToMove = _queueDraggedTrack;
             var capturedFe = _queueCapturedElement;
 
-            // ── Release capture BEFORE starting any animation so that the flood of
+            // â”€â”€ Release capture BEFORE starting any animation so that the flood of
             //    MouseMove events generated by ReleaseMouseCapture is handled while
             //    _isCommittingDrop = true (suppressed) rather than after the flag
             //    is cleared by the Completed callback, which was causing an
@@ -5905,7 +6038,7 @@ InitializeComponent();
     // Geometric gap index: returns the insertion gap [0..Count] where the
     // dragged row should land. Rows are uniform (56px + 2px margins = 60px
     // pitch, no top padding), so the gap maps directly from the cursor Y plus
-    // the scroll offset — valid for realized AND unrealized regions. Probing
+    // the scroll offset â€” valid for realized AND unrealized regions. Probing
     // realized containers capped the gap at the realization edge, so fast
     // drops below the visible rows landed too shallow. Convention matches the
     // old midpoint rule: gap = first row whose midpoint is below the cursor.
@@ -5979,7 +6112,7 @@ InitializeComponent();
     {
         if (_queueAutoScrollActive) return;
         _queueAutoScrollActive = true;
-        _queueScrollVelocity = 0.0; // start fresh — velocity accelerates from zero
+        _queueScrollVelocity = 0.0; // start fresh â€” velocity accelerates from zero
         EnsurePerfRenderActive();
     }
 
@@ -6011,9 +6144,9 @@ InitializeComponent();
         bool horizInRange = mousePos.X >= -60 && mousePos.X <= listW + 60;
 
         // Velocity-based acceleration: starts slow, ramps up the longer the pointer
-        // stays at the edge — AND faster the deeper the mouse is into the edge zone.
+        // stays at the edge â€” AND faster the deeper the mouse is into the edge zone.
         // edgeFactor 0..1 = how far into the zone (0=boundary, 1=extreme edge/outside).
-        // AccelPerSec is multiplied by (0.4 + edgeFactor * 1.6) → 0.4×..2.0× base rate.
+        // AccelPerSec is multiplied by (0.4 + edgeFactor * 1.6) â†’ 0.4Ã—..2.0Ã— base rate.
         const double VelocityMin   = 0.8;   // initial speed (rows/25ms)
         const double VelocityMax   = 9.0;   // cap (~540 px/s at 60 Hz)
         const double AccelPerSec   = 4.5;   // base velocity gained per second at edge
@@ -6127,7 +6260,7 @@ InitializeComponent();
         }
         else if (_queueScrollVelocity <= 0.01)
         {
-            // Velocity fully drained and not at edge — stop auto-scroll
+            // Velocity fully drained and not at edge â€” stop auto-scroll
             StopAutoScroll();
         }
         // else: still decelerating with remaining velocity, continue next frame
@@ -6234,7 +6367,7 @@ InitializeComponent();
     // A recycled container keeps its visuals (Recycling reuses the whole subtree
     // including RenderTransforms). Without this, rows that scrolled out mid-drag
     // re-enter later with stale displacement offsets / hidden opacity / stale gap
-    // Tags — overlapping text, invisible rows, poisoned drop math. Clean EVERY
+    // Tags â€” overlapping text, invisible rows, poisoned drop math. Clean EVERY
     // container as it leaves realization so reuse always starts pristine. The
     // dragged row's own hide is re-applied independently on every pump by
     // ApplyNeighborDisplacement, so no container ever carries or loses it here.
@@ -6304,15 +6437,15 @@ InitializeComponent();
         {
             QueueDrawerOverlay.Visibility = Visibility.Visible;
 
-            // Scale: 0.88 → 1
+            // Scale: 0.88 â†’ 1
             var scaleAnim = new DoubleAnimation(0.88, 1.0, TimeSpan.FromMilliseconds(280)) { EasingFunction = ease };
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnim);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnim);
 
-            // Fade panel in: 0 → 1
+            // Fade panel in: 0 â†’ 1
             QueueDrawerPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(250)) { EasingFunction = ease });
 
-            // Backdrop fade: 0 → 1
+            // Backdrop fade: 0 â†’ 1
             QueueDrawerBackdrop.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
 
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
@@ -6330,12 +6463,12 @@ InitializeComponent();
             var closeEase = new CubicEase { EasingMode = EasingMode.EaseIn };
             var dur = TimeSpan.FromMilliseconds(200);
 
-            // Scale: 1 → 0.88
+            // Scale: 1 â†’ 0.88
             var scaleOut = new DoubleAnimation(1.0, 0.88, dur) { EasingFunction = closeEase };
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleOut);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleOut);
 
-            // Fade panel out: 1 → 0
+            // Fade panel out: 1 â†’ 0
             var fadeOut = new DoubleAnimation(QueueDrawerPanel.Opacity, 0, dur) { EasingFunction = closeEase };
             fadeOut.Completed += (_, _) =>
             {
@@ -6460,13 +6593,13 @@ InitializeComponent();
         if (ViewModel == null || ViewModel.Duration.TotalSeconds <= 0) return;
         var slider = (Slider)sender;
 
-        // Grabbing the thumb itself → normal drag (handled by DragStarted/DragCompleted)
+        // Grabbing the thumb itself â†’ normal drag (handled by DragStarted/DragCompleted)
         if (TryGetSeekThumb(slider, out var thumb) && IsPointInElement(thumb, e.GetPosition(thumb)))
             return;
 
-        // Click anywhere on the bar → jump there, and scrub (with pause) if the user drags.
+        // Click anywhere on the bar â†’ jump there, and scrub (with pause) if the user drags.
         var pct = Math.Clamp(e.GetPosition(slider).X / Math.Max(1, slider.ActualWidth) * 100.0, 0, 100);
-        slider.Value = pct; // TwoWay binding → PlaybackProgress setter → Seek()
+        slider.Value = pct; // TwoWay binding â†’ PlaybackProgress setter â†’ Seek()
         _seekScrubStart = e.GetPosition(slider);
         _seekScrubActive = true;
         _seekScrubPaused = false;
@@ -6495,7 +6628,7 @@ InitializeComponent();
         if (_seekScrubPaused)
         {
             var pct = Math.Clamp(pos.X / Math.Max(1, slider.ActualWidth) * 100.0, 0, 100);
-            slider.Value = pct; // IsSeeking setter → live Position preview only
+            slider.Value = pct; // IsSeeking setter â†’ live Position preview only
         }
     }
 
@@ -6733,7 +6866,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
     // WallpaperItem_Click instant feedback: keep the current stable wallpaper
     // visible until the full-quality path (RebuildBlurCache, generation-guarded)
     // replaces it. Never paint a 240px thumbnail or a 320x180 blurred render as
-    // the application background — that is what caused the low-quality flash.
+    // the application background â€” that is what caused the low-quality flash.
     private void ShowWallpaperPreview(MusicPlayer.Models.WallpaperItem item)
     {
         // Intentionally no-op for the display surface: the selection triggers
@@ -6752,7 +6885,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         MessageBox.Show("Audio Editor: Select a track and use Trim start/end to export a 10s clip (demo: uses NAudio WaveFileWriter).", "Audio Editor");
     }
 
-    // ─── More options popup (⋮ button) ────────────────────────────────
+    // â”€â”€â”€ More options popup (â‹® button) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private void MoreOptionsBtn_Click(object sender, RoutedEventArgs e)
     {
         MoreOptionsPanel.BeginAnimation(OpacityProperty, null);
@@ -7013,7 +7146,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not System.Windows.FrameworkElement grid || !(bool)e.NewValue) return;
 
-        // إعادة تعيين الحالة الأولية
+        // Ø¥Ø¹Ø§Ø¯Ø© ØªØ¹ÙŠÙŠÙ† Ø§Ù„Ø­Ø§Ù„Ø© Ø§Ù„Ø£ÙˆÙ„ÙŠØ©
         grid.Opacity = 0;
         var tf = grid.RenderTransform as System.Windows.Media.TranslateTransform;
         if (tf == null)
@@ -7023,7 +7156,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         }
         tf.Y = 14;
 
-        // إنشاء Storyboard بـ 60fps وتشغيله
+        // Ø¥Ù†Ø´Ø§Ø¡ Storyboard Ø¨Ù€ 60fps ÙˆØªØ´ØºÙŠÙ„Ù‡
         var sb = new System.Windows.Media.Animation.Storyboard();
         System.Windows.Media.Animation.Timeline.SetDesiredFrameRate(sb, 60);
 
@@ -7056,7 +7189,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
             ViewModel?.HideTrackCommand.Execute(track);
     }
 
-    // ─── Currently Playing swipe page gesture ─────────────────────────
+    // â”€â”€â”€ Currently Playing swipe page gesture â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private Point _swipeStart;
     private bool _swiping;
     private bool _swallowClick;
@@ -7126,7 +7259,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         if (ViewModel != null) ViewModel.CurrentlyPlayingPage = CurrentlyPlayingPage.Lyrics;
     }
 
-    // ─── Lyrics auto-scroll + slide animation ─────────────────────────
+    // â”€â”€â”€ Lyrics auto-scroll + slide animation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private CurrentlyPlayingPage _previousPlayingPage = CurrentlyPlayingPage.AlbumArt;
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -7411,7 +7544,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
     private void RunFullPlayerTransitionProbe()
     {
-        // Self-measured frame-pacing probe for Mini ⇄ Full Player. Records the real
+        // Self-measured frame-pacing probe for Mini â‡„ Full Player. Records the real
         // per-frame interval (with absolute timestamps), slices the capture into
         // BEFORE/DURING/AFTER windows of the actual transition and reports avg/p95/
         // worst frame + counts of missed (16.67ms) and janky (>33.33ms) frames, plus
@@ -7703,13 +7836,13 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
     // Page zoom-out for plain view changes (both directions: home -> ALL SONGS
     // and ALL SONGS -> home). The page starts slightly zoomed-in (1.05) and dim,
-    // and settles to 1.0 / full opacity — a clean "camera pulls out" feel.
+    // and settles to 1.0 / full opacity â€” a clean "camera pulls out" feel.
     //
     // Two rules make this look right (the old implementation violated both and
     // read as a "grows then shrinks" bounce):
     //  1. Callers must invoke this SYNCHRONOUSLY with the CurrentView change,
     //     so the FIRST presented frame is already at 1.05/dim. Deferring one
-    //     frame lets the swap render at full size first — that jump is the bounce.
+    //     frame lets the swap render at full size first â€” that jump is the bounce.
     //  2. ClipToBounds while scaled, so the oversized page never bleeds over
     //     the fixed header bar above ContentGrid.
     // Arrival-side navigation choreographies. Hero/reverse flights own their own
@@ -7718,7 +7851,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
     private void RunPageZoomChoreography() => AnimatePageEnterZoom();
 
-    // Full zoom + fade entrance — camera pulls out (1.05 -> 1.0) with smooth fade-in (0.55 -> 1.0).
+    // Full zoom + fade entrance â€” camera pulls out (1.05 -> 1.0) with smooth fade-in (0.55 -> 1.0).
     // Zero BitmapCache backing ensures GPU never stalls on Intel HD Graphics.
     private void AnimatePageEnterZoom()
     {
@@ -8136,7 +8269,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     {
         if (_lyricsScrollProgrammatic) return;
 
-        // Single reused timer (created in the constructor) — no per-event allocation.
+        // Single reused timer (created in the constructor) â€” no per-event allocation.
         _lyricsUserScrollPause?.Stop();
         _lyricsUserScrollPause?.Start();
     }

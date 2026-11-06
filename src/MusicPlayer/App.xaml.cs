@@ -371,6 +371,21 @@ public partial class App : Application
                 // pay the one-time image-decoder init on the UI thread at first play.
                 try { provider.GetRequiredService<AlbumArtLoader>().GetDefaultAlbumArt(); } catch { }
 
+                // Pre-decode the selected wallpaper so the first background paint can
+                // reuse the cache instead of paying the full JPEG decode on the UI path.
+                try
+                {
+                    var db = provider.GetRequiredService<DatabaseService>();
+                    string saved = db.GetSetting("app_wallpaper", "");
+                    var entry = MusicPlayer.Models.WallpaperCatalog.Resolve(saved);
+                    string? uri = entry != null ? entry.ResourceUri
+                        : (System.IO.File.Exists(saved) ? saved
+                        : MusicPlayer.Models.WallpaperCatalog.FindById(MusicPlayer.Models.WallpaperCatalog.DefaultId)?.ResourceUri);
+                    if (!string.IsNullOrEmpty(uri))
+                        _ = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(new[] { uri! }, 3840, System.Threading.CancellationToken.None);
+                }
+                catch { }
+
                 // Pre-warm TagLib's first native parse + the full-quality art decode on
                 // a background thread. Both are one-time per process and are otherwise
                 // paid synchronously ON the UI thread at the very first track click
