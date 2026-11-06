@@ -1677,10 +1677,15 @@ public partial class MainViewModel : ViewModelBase
 
 					if (req.blur < 0.5)
 					{
-						var sharp = new System.Windows.Controls.Image { Source = thumb, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = 672, Height = 378 };
+						var capturedThumb = thumb;
 						if (req.gen == _previewGen && !req.token.IsCancellationRequested)
 						{
-							Dispatch(delegate { if (req.gen == _previewGen) ThemePreviewImage = sharp; });
+							Dispatch(delegate
+							{
+								if (req.gen != _previewGen || req.token.IsCancellationRequested) return;
+								var sharp = new System.Windows.Controls.Image { Source = capturedThumb, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = 672, Height = 378 };
+								ThemePreviewImage = sharp;
+							});
 						}
 						continue;
 					}
@@ -1701,25 +1706,26 @@ public partial class MainViewModel : ViewModelBase
 								if (result != null) BlurResultCache.Store(cacheKey, result);
 							}
 						}
-						BlurResultCache.ReleaseLock(cacheKey);
 					}
 					catch (OperationCanceledException) { result = null; }
-					catch { }
+					catch (Exception ex) { Utilities.LogHelper.LogError("[PreviewWorker] blur failed", ex); result = null; }
+					finally { BlurResultCache.ReleaseLock(cacheKey); }
 
 					if (result == null) continue;
 					if (req.token.IsCancellationRequested) continue;
 					if (req.gen != _previewGen) continue;
 					if (!string.Equals(ThemeEditWallpaperPath, req.path, StringComparison.OrdinalIgnoreCase)) continue;
 
-					var previewImage = new System.Windows.Controls.Image { Source = result, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = 672, Height = 378 };
+					var capturedResult = result;
 					Dispatch(delegate
 					{
-						if (req.gen == _previewGen && !req.token.IsCancellationRequested)
-							ThemePreviewImage = previewImage;
+						if (req.gen != _previewGen || req.token.IsCancellationRequested) return;
+						var previewImage = new System.Windows.Controls.Image { Source = capturedResult, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = 672, Height = 378 };
+						ThemePreviewImage = previewImage;
 					});
 				}
 				catch (OperationCanceledException) { }
-				catch { }
+				catch (Exception ex) { Utilities.LogHelper.LogError("[PreviewWorker] loop iteration failed", ex); }
 			}
 		}
 	}

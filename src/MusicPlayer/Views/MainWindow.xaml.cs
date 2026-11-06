@@ -1980,19 +1980,24 @@ InitializeComponent();
                             BitmapSource? result = null;
                             try
                             {
-                                lock (BlurResultCache.GetLock(blurKey))
+                                try
                                 {
-                                    if (BlurResultCache.TryGet(blurKey, out var cached) && cached != null)
+                                    lock (BlurResultCache.GetLock(blurKey))
                                     {
-                                        result = cached;
-                                    }
-                                    else
-                                    {
-                                        result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective, token);
-                                        if (result != null) BlurResultCache.Store(blurKey, result);
+                                        if (BlurResultCache.TryGet(blurKey, out var cached) && cached != null)
+                                        {
+                                            result = cached;
+                                        }
+                                        else
+                                        {
+                                            result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective, token);
+                                            if (result != null) BlurResultCache.Store(blurKey, result);
+                                        }
                                     }
                                 }
-                                BlurResultCache.ReleaseLock(blurKey);
+                                catch (OperationCanceledException) { result = null; }
+                                catch (Exception ex) { LogHelper.LogError("[Wallpaper] blur failed", ex); result = null; }
+                                finally { BlurResultCache.ReleaseLock(blurKey); }
                                 if (result != null) StorePreparedBlur(preparedKey, result);
                             }
                             catch (Exception blurEx)
