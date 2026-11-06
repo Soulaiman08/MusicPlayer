@@ -1949,6 +1949,19 @@ InitializeComponent();
                         double blurRadiusEffective = blurRadius * capScale;
 
                         string preparedKey = (path ?? "") + "|" + blurRadius.ToString("0.###") + "|" + pxW + "x" + pxH + "|" + dpiScaleX.ToString("0.###") + "x" + dpiScaleY.ToString("0.###");
+                        string blurKey = preparedKey + "|v" + WallpaperBlurEngine.AlgorithmVersion;
+                        if (BlurResultCache.TryGet(blurKey, out var cachedBlur2) && cachedBlur2 != null)
+                        {
+                            if (targetItem != null) targetItem.LoadProgress = 85;
+                            SetWallpaperSources(cachedBlur2, finalDecoded);
+                            if (targetItem != null)
+                            {
+                                targetItem.LoadProgress = 100;
+                                targetItem.IsLoading = false;
+                            }
+                            LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur cached {pxW}x{pxH} appliedMs={ElapsedMs(t0):0}");
+                            return;
+                        }
                         if (TryGetPreparedBlur(preparedKey, out var cachedBlur) && cachedBlur != null)
                         {
                             if (targetItem != null) targetItem.LoadProgress = 85;
@@ -1964,27 +1977,22 @@ InitializeComponent();
                         if (targetItem != null) targetItem.LoadProgress = 70;
                         var worker = new System.Threading.Thread(() =>
                         {
-                            RenderTargetBitmap? result = null;
+                            BitmapSource? result = null;
                             try
                             {
-                                var target = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
-                                var visual = new DrawingVisual();
-                                using (var ctx = visual.RenderOpen())
+                                lock (BlurResultCache.GetLock(blurKey))
                                 {
-                                    var ib = new ImageBrush(finalDecoded) { Stretch = Stretch.UniformToFill };
-                                    ctx.DrawRectangle(ib, null, new Rect(0, 0, dw, dh));
+                                    if (BlurResultCache.TryGet(blurKey, out var cached) && cached != null)
+                                    {
+                                        result = cached;
+                                    }
+                                    else
+                                    {
+                                        result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective);
+                                        if (result != null) BlurResultCache.Store(blurKey, result);
+                                    }
                                 }
-                                target.Render(visual);
-
-                                var blurred = new BlurEffect { Radius = blurRadiusEffective, RenderingBias = RenderingBias.Quality };
-                                var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
-                                wrapper.Measure(new Size(dw, dh));
-                                wrapper.Arrange(new Rect(0, 0, dw, dh));
-
-                                result = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
-                                result.Render(wrapper);
-                                result.Freeze();
-                                StorePreparedBlur(preparedKey, result);
+                                if (result != null) StorePreparedBlur(preparedKey, result);
                             }
                             catch (Exception blurEx)
                             {

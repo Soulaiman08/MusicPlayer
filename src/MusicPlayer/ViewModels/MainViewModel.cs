@@ -1595,6 +1595,8 @@ public partial class MainViewModel : ViewModelBase
 	}
 
 	private System.Windows.UIElement? _themePreviewImage;
+	private long _previewGen;
+	private System.Threading.CancellationTokenSource? _previewCts;
 	public System.Windows.UIElement? ThemePreviewImage
 	{
 		get => _themePreviewImage;
@@ -1619,56 +1621,107 @@ public partial class MainViewModel : ViewModelBase
 		{
 			string? path = ThemeEditWallpaperPath;
 			if (string.IsNullOrWhiteSpace(path)) { ThemePreviewImage = null; return; }
-			if (Converters.WallpaperThumbnailConverter.IsCached(path, 700))
+
+			long gen = ++_previewGen;
+			var oldCts = _previewCts;
+			var cts = new System.Threading.CancellationTokenSource();
+			_previewCts = cts;
+			try { oldCts?.Cancel(); } catch { }
+
+			var token = cts.Token;
+			double wantBlur = _themeEditBlur;
+
+			if (!Converters.WallpaperThumbnailConverter.IsCached(path, 700))
 			{
-				FinishRebake(path);
+				string wantPath = path;
+				Task.Run(() =>
+				{
+					try
+					{
+						var thumb = Converters.WallpaperThumbnailConverter.GetThumbnail(wantPath, 700);
+						if (thumb == null) return;
+						Dispatch(delegate
+						{
+							if (token.IsCancellationRequested) return;
+							if (gen != _previewGen) return;
+							if (!string.Equals(ThemeEditWallpaperPath, wantPath, StringComparison.OrdinalIgnoreCase)) return;
+							if (Math.Abs(_themeEditBlur - wantBlur) > 0.01 && wantBlur >= 0.5)
+							{
+								RebakeThemePreview();
+								return;
+							}
+							FinishRebake(wantPath, gen, token);
+						});
+					}
+					catch { }
+				}, token);
 				return;
 			}
-			// Cold first view: decode off the UI thread so entry never stalls on a
-			// synchronous JPEG decode; the baked frame lands (path-guarded) inside
-			// the entry zoom instead. Previous frame (if any) stays meanwhile.
-			string wantPath = path;
-			double wantBlur = _themeEditBlur;
-			Task.Run(() =>
-			{
-				try
-				{
-					var thumb = Converters.WallpaperThumbnailConverter.GetThumbnail(wantPath, 700);
-					if (thumb == null) return;
-					Dispatch(delegate
-					{
-						if (!string.Equals(ThemeEditWallpaperPath, wantPath, StringComparison.OrdinalIgnoreCase)) return;
-						if (Math.Abs(_themeEditBlur - wantBlur) > 0.01 && wantBlur >= 0.5)
-						{
-							RebakeThemePreview();
-							return;
-						}
-						FinishRebake(wantPath);
-					});
-				}
-				catch { }
-			});
+
+			FinishRebake(path, gen, token);
 		}
 		catch { }
 	}
 
-	private void FinishRebake(string path)
+	private void FinishRebake(string path, long gen, System.Threading.CancellationToken token)
 	{
 		try
 		{
 			var thumb = Converters.WallpaperThumbnailConverter.GetThumbnail(path, 700);
 			if (thumb == null) return;
+			if (token.IsCancellationRequested) return;
+			if (gen != _previewGen) return;
+			if (!string.Equals(ThemeEditWallpaperPath, path, StringComparison.OrdinalIgnoreCase)) return;
+
 			double blur = _themeEditBlur;
-		if (blur < 0.5)
-		{
-			var sharpImage = new System.Windows.Controls.Image { Source = thumb, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = 672, Height = 378 };
-			ThemePreviewImage = sharpImage;
-			return;
-		}
-		const int w = 672, h = 378;
-		var blurred = new System.Windows.Media.Effects.BlurEffect { Radius = System.Math.Max(2, blur / 2), RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance };
-		var previewImage = new System.Windows.Controls.Image { Source = thumb, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = w, Height = h, Effect = blurred };
-		ThemePreviewImage = previewImage;
+			if (blur < 0.5)
+			{
+				var sharpImage = new System.Windows.Controls.Image { Source = thumb, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = 672, Height = 378 };
+				if (gen == _previewGen) ThemePreviewImage = sharpImage;
+				return;
+			}
+
+			const int w = 672, h = 378;
+			string cacheKey = path + "|700|" + blur.ToString("0.###") + "|" + w + "x" + h + "|v" + WallpaperBlurEngine.AlgorithmVersion;
+			if (BlurResultCache.TryGet(cacheKey, out var cached) && cached != null)
+			{
+				var cachedImage = new System.Windows.Controls.Image { Source = cached, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = w, Height = h };
+				if (gen == _previewGen) ThemePreviewImage = cachedImage;
+				return;
+			}
+
+			var worker = new System.Threading.Thread(() =>
+			{
+				System.Windows.Media.Imaging.BitmapSource? result = null;
+				try
+				{
+					lock (BlurResultCache.GetLock(cacheKey))
+					{
+						if (BlurResultCache.TryGet(cacheKey, out var c) && c != null)
+							result = c;
+						else
+						{
+							result = WallpaperBlurEngine.RenderAndBlur((System.Windows.Media.Imaging.BitmapSource)thumb, w, h, 96, 96, blur);
+							if (result != null) BlurResultCache.Store(cacheKey, result);
+						}
+					}
+				}
+				catch { }
+
+				Dispatch(delegate
+				{
+					if (token.IsCancellationRequested) return;
+					if (gen != _previewGen) return;
+					if (!string.Equals(ThemeEditWallpaperPath, path, StringComparison.OrdinalIgnoreCase)) return;
+					if (result != null)
+					{
+						var previewImage = new System.Windows.Controls.Image { Source = result, Stretch = System.Windows.Media.Stretch.UniformToFill, Width = w, Height = h };
+						ThemePreviewImage = previewImage;
+					}
+				});
+			});
+			worker.SetApartmentState(System.Threading.ApartmentState.STA);
+			worker.Start();
 		}
 		catch { }
 	}
