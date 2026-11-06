@@ -2,7 +2,11 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MusicPlayer.Database;
@@ -389,7 +393,7 @@ public partial class App : Application
                 // Pre-warm TagLib's first native parse + the full-quality art decode on
                 // a background thread. Both are one-time per process and are otherwise
                 // paid synchronously ON the UI thread at the very first track click
-                // (the "first click" freeze): TagLib.File.Create lazily boots its native
+                // (the "first click" freeze): TagLib.System.IO.File.Create lazily boots its native
                 // tag registry and the full cover decode is a heavy first decode.
                 try
                 {
@@ -507,7 +511,6 @@ public partial class App : Application
         
         services.AddSingleton<MainWindow>();
     }
-
     protected override void OnExit(ExitEventArgs e)
     {
         AllowSleep();

@@ -2013,13 +2013,15 @@ InitializeComponent();
                             BitmapSource? result = null;
                             try
                             {
+                                long t0w = System.Diagnostics.Stopwatch.GetTimestamp();
                                 int r = Math.Max(1, (int)Math.Ceiling(blurRadiusEffective));
                                 int padW = pxW + 2 * r;
                                 int padH = pxH + 2 * r;
                                 double padWidthDip = padW * 96.0 / renderDpiX;
                                 double padHeightDip = padH * 96.0 / renderDpiY;
+                                LogHelper.LogInfo($"[WallpaperPerf] radius={blurRadiusEffective:0.##} pad={padW}x{padH} r={r}");
 
-                                // Base render (oversized to allow edge clamping via content, not transparency).
+                                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                                 var baseRtb = new RenderTargetBitmap(padW, padH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
                                 var v = new DrawingVisual();
                                 using (var ctx = v.RenderOpen())
@@ -2029,8 +2031,10 @@ InitializeComponent();
                                 }
                                 baseRtb.Render(v);
                                 baseRtb.Freeze();
+                                long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                                LogHelper.LogInfo($"[WallpaperPerf] BaseRender={(t2-t1)*1000.0/System.Diagnostics.Stopwatch.Frequency:0.0}ms");
 
-                                // Blur on oversized surface.
+                                long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
                                 var blurredImg = new System.Windows.Controls.Image
                                 {
                                     Source = baseRtb,
@@ -2045,12 +2049,17 @@ InitializeComponent();
                                 var padBlurred = new RenderTargetBitmap(padW, padH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
                                 padBlurred.Render(blurredImg);
                                 padBlurred.Freeze();
+                                long t4 = System.Diagnostics.Stopwatch.GetTimestamp();
+                                LogHelper.LogInfo($"[WallpaperPerf] BlurEffect+Render={(t4-t3)*1000.0/System.Diagnostics.Stopwatch.Frequency:0.0}ms");
 
-                                // Crop center window region.
+                                long t5 = System.Diagnostics.Stopwatch.GetTimestamp();
                                 var crop = new CroppedBitmap(padBlurred, new Int32Rect(r, r, pxW, pxH));
                                 crop.Freeze();
                                 result = crop;
+                                long t6 = System.Diagnostics.Stopwatch.GetTimestamp();
+                                LogHelper.LogInfo($"[WallpaperPerf] Crop+Freeze={(t6-t5)*1000.0/System.Diagnostics.Stopwatch.Frequency:0.0}ms");
                                 StorePreparedBlur(preparedKey, result);
+                                LogHelper.LogInfo($"[WallpaperPerf] TotalWorker={(t6-t0w)*1000.0/System.Diagnostics.Stopwatch.Frequency:0.0}ms");
                             }
                             catch (Exception blurEx)
                             {
