@@ -115,7 +115,7 @@
       </Grid>
 
       <!-- Mini Player (Spans Full Width across Bottom) -->
-      <Border Grid.Row="2" Background="#F011141C" BorderBrush="#1CFFFFFF" BorderThickness="0,1,0,0">
+      <Border Grid.Row="2" Background="#8011141C" BorderBrush="#1CFFFFFF" BorderThickness="0,1,0,0">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="*" />

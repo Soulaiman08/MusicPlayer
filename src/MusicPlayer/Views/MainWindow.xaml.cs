@@ -2013,19 +2013,44 @@ InitializeComponent();
                             BitmapSource? result = null;
                             try
                             {
-                                lock (BlurResultCache.GetLock(blurKey))
+                                int r = Math.Max(1, (int)Math.Ceiling(blurRadiusEffective));
+                                int padW = pxW + 2 * r;
+                                int padH = pxH + 2 * r;
+                                double padWidthDip = padW * 96.0 / renderDpiX;
+                                double padHeightDip = padH * 96.0 / renderDpiY;
+
+                                // Base render (oversized to allow edge clamping via content, not transparency).
+                                var baseRtb = new RenderTargetBitmap(padW, padH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
+                                var v = new DrawingVisual();
+                                using (var ctx = v.RenderOpen())
                                 {
-                                    if (BlurResultCache.TryGet(blurKey, out var cached) && cached != null)
-                                    {
-                                        result = cached;
-                                    }
-                                    else
-                                    {
-                                        result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective, token);
-                                        if (result != null) BlurResultCache.Store(blurKey, result);
-                                    }
+                                    var ib = new ImageBrush(finalDecoded) { Stretch = Stretch.UniformToFill };
+                                    ctx.DrawRectangle(ib, null, new Rect(0, 0, padWidthDip, padHeightDip));
                                 }
-                                if (result != null) StorePreparedBlur(preparedKey, result);
+                                baseRtb.Render(v);
+                                baseRtb.Freeze();
+
+                                // Blur on oversized surface.
+                                var blurredImg = new System.Windows.Controls.Image
+                                {
+                                    Source = baseRtb,
+                                    Stretch = Stretch.Fill,
+                                    Width = padWidthDip,
+                                    Height = padHeightDip,
+                                    Effect = new BlurEffect { Radius = blurRadiusEffective, RenderingBias = RenderingBias.Quality }
+                                };
+                                blurredImg.Measure(new Size(padWidthDip, padHeightDip));
+                                blurredImg.Arrange(new Rect(0, 0, padWidthDip, padHeightDip));
+
+                                var padBlurred = new RenderTargetBitmap(padW, padH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
+                                padBlurred.Render(blurredImg);
+                                padBlurred.Freeze();
+
+                                // Crop center window region.
+                                var crop = new CroppedBitmap(padBlurred, new Int32Rect(r, r, pxW, pxH));
+                                crop.Freeze();
+                                result = crop;
+                                StorePreparedBlur(preparedKey, result);
                             }
                             catch (Exception blurEx)
                             {
