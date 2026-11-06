@@ -131,21 +131,19 @@ public static class WallpaperBlurEngine
         if (half < 1) half = 1;
 
         long hAccum = 0, vAccum = 0;
-        for (int pass = 0; pass < 3; pass++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            long hs = System.Diagnostics.Stopwatch.GetTimestamp();
-            HorizontalBoxQ8(cur, tmp, w, h, half, cancellationToken);
-            hAccum += System.Diagnostics.Stopwatch.GetTimestamp() - hs;
-
-            cancellationToken.ThrowIfCancellationRequested();
-            long vs = System.Diagnostics.Stopwatch.GetTimestamp();
-            // Transpose-based vertical pass for better locality.
-            TransposeQ8(tmp, cur, w, h);
-            HorizontalBoxQ8(cur, tmp, h, w, half, cancellationToken);
-            TransposeQ8(tmp, cur, h, w);
-            vAccum += System.Diagnostics.Stopwatch.GetTimestamp() - vs;
-        }
+        // Alternative B: 3 horizontal passes, transpose, 3 horizontal passes (vertical), transpose back.
+        // Pass 1
+        { long hs = System.Diagnostics.Stopwatch.GetTimestamp(); HorizontalBoxQ8(cur, tmp, w, h, half, cancellationToken); hAccum += System.Diagnostics.Stopwatch.GetTimestamp() - hs; }
+        { long hs = System.Diagnostics.Stopwatch.GetTimestamp(); HorizontalBoxQ8(tmp, cur, w, h, half, cancellationToken); hAccum += System.Diagnostics.Stopwatch.GetTimestamp() - hs; }
+        { long hs = System.Diagnostics.Stopwatch.GetTimestamp(); HorizontalBoxQ8(cur, tmp, w, h, half, cancellationToken); hAccum += System.Diagnostics.Stopwatch.GetTimestamp() - hs; }
+        // transpose tmp (w x h) -> cur (h x w)
+        TransposeQ8(tmp, cur, w, h);
+        // 3 vertical-as-horizontal passes
+        { long vs = System.Diagnostics.Stopwatch.GetTimestamp(); HorizontalBoxQ8(cur, tmp, h, w, half, cancellationToken); vAccum += System.Diagnostics.Stopwatch.GetTimestamp() - vs; }
+        { long vs = System.Diagnostics.Stopwatch.GetTimestamp(); HorizontalBoxQ8(tmp, cur, h, w, half, cancellationToken); vAccum += System.Diagnostics.Stopwatch.GetTimestamp() - vs; }
+        { long vs = System.Diagnostics.Stopwatch.GetTimestamp(); HorizontalBoxQ8(cur, tmp, h, w, half, cancellationToken); vAccum += System.Diagnostics.Stopwatch.GetTimestamp() - vs; }
+        // transpose back tmp (h x w) -> cur (w x h)
+        TransposeQ8(tmp, cur, h, w);
         LogHelper.LogInfo($"[WallpaperPerf] HorizontalPasses={hAccum * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0}ms VerticalPasses={vAccum * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0}ms");
 
         long tBc0 = System.Diagnostics.Stopwatch.GetTimestamp();

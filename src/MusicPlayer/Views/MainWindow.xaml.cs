@@ -2011,32 +2011,20 @@ InitializeComponent();
                         var worker = new System.Threading.Thread(() =>
                         {
                             BitmapSource? result = null;
-                            bool cacheHit = false;
-                            long blurStart = System.Diagnostics.Stopwatch.GetTimestamp();
                             try
                             {
-                                try
+                                lock (BlurResultCache.GetLock(blurKey))
                                 {
-                                    lock (BlurResultCache.GetLock(blurKey))
+                                    if (BlurResultCache.TryGet(blurKey, out var cached) && cached != null)
                                     {
-                                        if (BlurResultCache.TryGet(blurKey, out var cached) && cached != null)
-                                        {
-                                            result = cached;
-                                            cacheHit = true;
-                                        }
-                                        else
-                                        {
-                                            long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                                            result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective, token);
-                                            long renderMs = (long)((System.Diagnostics.Stopwatch.GetTimestamp() - renderStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
-                                            LogHelper.LogInfo($"[WallpaperPerf] render+blur={renderMs}ms size={pxW}x{pxH}");
-                                            if (result != null) BlurResultCache.Store(blurKey, result);
-                                        }
+                                        result = cached;
+                                    }
+                                    else
+                                    {
+                                        result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective, token);
+                                        if (result != null) BlurResultCache.Store(blurKey, result);
                                     }
                                 }
-                                catch (OperationCanceledException) { result = null; }
-                                catch (Exception ex) { LogHelper.LogError("[Wallpaper] blur failed", ex); result = null; }
-                                finally { BlurResultCache.ReleaseLock(blurKey); }
                                 if (result != null) StorePreparedBlur(preparedKey, result);
                             }
                             catch (Exception blurEx)
@@ -2044,40 +2032,19 @@ InitializeComponent();
                                 LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
                             }
 
-                            long dispatchScheduled = System.Diagnostics.Stopwatch.GetTimestamp();
                             Dispatcher.BeginInvoke(new Action(() =>
                             {
-                                long dispatchEntered = System.Diagnostics.Stopwatch.GetTimestamp();
-                                long dispatcherWaitMs = (long)((dispatchEntered - dispatchScheduled) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
-                                LogHelper.LogInfo($"[WallpaperPerf] DispatcherWait={dispatcherWaitMs}ms");
                                 if (gen != _bgGen) return;
                                 if (result != null)
                                 {
                                     if (targetItem != null) targetItem.LoadProgress = 90;
-                                    long uiApplyStart = System.Diagnostics.Stopwatch.GetTimestamp();
                                     SetWallpaperSources(result, finalDecoded);
-                                    long uiApplyMs = (long)((System.Diagnostics.Stopwatch.GetTimestamp() - uiApplyStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
-                                    LogHelper.LogInfo($"[WallpaperPerf] UIApply={uiApplyMs}ms");
                                     if (targetItem != null)
                                     {
                                         targetItem.LoadProgress = 100;
                                         targetItem.IsLoading = false;
                                     }
-                                    long totalMs = _blurApplyRequestTicks > 0
-                                        ? (long)((System.Diagnostics.Stopwatch.GetTimestamp() - _blurApplyRequestTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency)
-                                        : (long)ElapsedMs(t0);
-                                    LogHelper.LogInfo($"[WallpaperPerf] TotalApply={totalMs}ms");
-                                    // FirstFrame measurement
-                                    long ffStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                                    EventHandler? handler = null;
-                                    handler = (_, _) =>
-                                    {
-                                        System.Windows.Media.CompositionTarget.Rendering -= handler;
-                                        long ffMs = (long)((System.Diagnostics.Stopwatch.GetTimestamp() - ffStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
-                                        LogHelper.LogInfo($"[WallpaperPerf] FirstFrame={ffMs}ms");
-                                    };
-                                    System.Windows.Media.CompositionTarget.Rendering += handler;
-                                    LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={totalMs}");
+                                    LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={ElapsedMs(t0):0}");
                                 }
                                 else
                                 {
