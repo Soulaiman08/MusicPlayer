@@ -1416,9 +1416,11 @@ InitializeComponent();
         }
         else if (e.PropertyName == nameof(MainViewModel.WallpaperBlur))
         {
-            // Blur-slider drags are coalesced through the 200ms debounce.
+            // Explicit apply: rebuild immediately (no debounce).
             _bgDirty = true;
-            EnsureBlurCache();
+            _blurApplyRequestTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            LogHelper.LogInfo("[WallpaperPerf] ApplyRequested");
+            RebuildBlurCache();
         }
         else if (e.PropertyName == nameof(MainViewModel.WallpaperAlpha))
         {
@@ -1587,7 +1589,6 @@ InitializeComponent();
         }
         _glassRebuildInProgress = true;
 
-        // Capture immutable inputs and render safely on the UI thread (RenderTargetBitmap affinity).
         const double baseRenderScale = 0.5;
         const double maxSamplePixels = 1600.0;
         double srcLong = Math.Max(width * dpi.DpiScaleX, height * dpi.DpiScaleY);
@@ -1605,37 +1606,47 @@ InitializeComponent();
 
         var source = _glassWallpaperSource;
         long gen = _bgGen;
-        try
-        {
-            BitmapSource? rendered = RenderBlurredWallpaper(
-                source!, pixelWidth, pixelHeight, renderDpiX, renderDpiY,
-                renderWidth, renderHeight, alpha, glassBlurRadius);
+        double w = width, h = height;
+        double a = alpha;
+        double dsx = dpi.DpiScaleX, dsy = dpi.DpiScaleY;
 
-            if (gen == _bgGen && rendered != null)
-            {
-                _glassBackdropCache = rendered;
-                _glassCacheSource = _glassWallpaperSource;
-                _glassCacheWidth = width;
-                _glassCacheHeight = height;
-                _glassCacheDpiX = dpi.DpiScaleX;
-                _glassCacheDpiY = dpi.DpiScaleY;
-                _glassCacheAlpha = alpha;
-                UpdateGlassSurfaceBrushes();
-            }
-        }
-        catch (Exception ex)
+        var worker = new System.Threading.Thread(() =>
         {
-            LogHelper.LogError("[Glass] background sampling failed", ex);
-        }
-        finally
-        {
-            _glassRebuildInProgress = false;
-            if (_glassRebuildQueued)
+            BitmapSource? rendered = null;
+            try
             {
-                _glassRebuildQueued = false;
-                RebuildGlassBackdropCache();
+                rendered = RenderBlurredWallpaper(
+                    source!, pixelWidth, pixelHeight, renderDpiX, renderDpiY,
+                    renderWidth, renderHeight, a, glassBlurRadius);
             }
-        }
+            catch (Exception ex)
+            {
+                LogHelper.LogError("[Glass] background sampling failed", ex);
+            }
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (gen == _bgGen && rendered != null)
+                {
+                    _glassBackdropCache = rendered;
+                    _glassCacheSource = _glassWallpaperSource;
+                    _glassCacheWidth = w;
+                    _glassCacheHeight = h;
+                    _glassCacheDpiX = dsx;
+                    _glassCacheDpiY = dsy;
+                    _glassCacheAlpha = a;
+                    UpdateGlassSurfaceBrushes();
+                }
+                _glassRebuildInProgress = false;
+                if (_glassRebuildQueued)
+                {
+                    _glassRebuildQueued = false;
+                    RebuildGlassBackdropCache();
+                }
+            }));
+        });
+        worker.SetApartmentState(System.Threading.ApartmentState.STA);
+        worker.Start();
     }
 
     /// <summary>
@@ -1729,6 +1740,7 @@ InitializeComponent();
     // wallpaper may apply its result — a stale decode finishing late must never
     // overwrite a newer selection.
     private long _bgGen;
+    private long _blurApplyRequestTicks;
     private System.Threading.CancellationTokenSource? _wallpaperRebuildCts;
     private string _lastRebuiltWallpaperPath = string.Empty;
 
@@ -1978,6 +1990,8 @@ InitializeComponent();
                         var worker = new System.Threading.Thread(() =>
                         {
                             BitmapSource? result = null;
+                            bool cacheHit = false;
+                            long blurStart = System.Diagnostics.Stopwatch.GetTimestamp();
                             try
                             {
                                 try
@@ -1987,10 +2001,14 @@ InitializeComponent();
                                         if (BlurResultCache.TryGet(blurKey, out var cached) && cached != null)
                                         {
                                             result = cached;
+                                            cacheHit = true;
                                         }
                                         else
                                         {
+                                            long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
                                             result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective, token);
+                                            long renderMs = (long)((System.Diagnostics.Stopwatch.GetTimestamp() - renderStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+                                            LogHelper.LogInfo($"[WallpaperPerf] render+blur={renderMs}ms size={pxW}x{pxH}");
                                             if (result != null) BlurResultCache.Store(blurKey, result);
                                         }
                                     }
@@ -2005,19 +2023,40 @@ InitializeComponent();
                                 LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
                             }
 
+                            long dispatchScheduled = System.Diagnostics.Stopwatch.GetTimestamp();
                             Dispatcher.BeginInvoke(new Action(() =>
                             {
+                                long dispatchEntered = System.Diagnostics.Stopwatch.GetTimestamp();
+                                long dispatcherWaitMs = (long)((dispatchEntered - dispatchScheduled) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+                                LogHelper.LogInfo($"[WallpaperPerf] DispatcherWait={dispatcherWaitMs}ms");
                                 if (gen != _bgGen) return;
                                 if (result != null)
                                 {
                                     if (targetItem != null) targetItem.LoadProgress = 90;
+                                    long uiApplyStart = System.Diagnostics.Stopwatch.GetTimestamp();
                                     SetWallpaperSources(result, finalDecoded);
+                                    long uiApplyMs = (long)((System.Diagnostics.Stopwatch.GetTimestamp() - uiApplyStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+                                    LogHelper.LogInfo($"[WallpaperPerf] UIApply={uiApplyMs}ms");
                                     if (targetItem != null)
                                     {
                                         targetItem.LoadProgress = 100;
                                         targetItem.IsLoading = false;
                                     }
-                                    LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={ElapsedMs(t0):0}");
+                                    long totalMs = _blurApplyRequestTicks > 0
+                                        ? (long)((System.Diagnostics.Stopwatch.GetTimestamp() - _blurApplyRequestTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency)
+                                        : (long)ElapsedMs(t0);
+                                    LogHelper.LogInfo($"[WallpaperPerf] TotalApply={totalMs}ms");
+                                    // FirstFrame measurement
+                                    long ffStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                                    EventHandler? handler = null;
+                                    handler = (_, _) =>
+                                    {
+                                        System.Windows.Media.CompositionTarget.Rendering -= handler;
+                                        long ffMs = (long)((System.Diagnostics.Stopwatch.GetTimestamp() - ffStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+                                        LogHelper.LogInfo($"[WallpaperPerf] FirstFrame={ffMs}ms");
+                                    };
+                                    System.Windows.Media.CompositionTarget.Rendering += handler;
+                                    LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={totalMs}");
                                 }
                                 else
                                 {
