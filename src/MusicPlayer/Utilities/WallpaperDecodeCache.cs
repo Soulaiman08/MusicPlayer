@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO;
 using System.Windows.Media.Imaging;
 
 namespace MusicPlayer.Utilities;
@@ -137,13 +138,31 @@ public static class WallpaperDecodeCache
     private static BitmapImage? Decode(string uri, int maxWidth)
     {
         long d0 = Stopwatch.GetTimestamp();
+        Stream? stream = null;
         try
         {
             var bi = new BitmapImage();
             bi.BeginInit();
-            bi.UriSource = new Uri(uri, UriKind.Absolute);
             bi.CacheOption = BitmapCacheOption.OnLoad;
             bi.DecodePixelWidth = maxWidth;
+            if (uri.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
+            {
+                stream = PackResourceLoader.GetStream(uri);
+                if (stream != null)
+                {
+                    bi.StreamSource = stream;
+                    LogHelper.LogInfo($"[WallpaperCache] preload pack resource via PackResourceLoader: {uri}");
+                }
+                else
+                {
+                    bi.UriSource = new Uri(uri, UriKind.Absolute);
+                    LogHelper.LogInfo($"[WallpaperCache] preload pack fallback to UriSource: {uri}");
+                }
+            }
+            else
+            {
+                bi.UriSource = new Uri(uri, UriKind.Absolute);
+            }
             bi.EndInit();
             bi.Freeze();
             if (bi.PixelWidth <= 0 || bi.PixelHeight <= 0) return null;
@@ -154,6 +173,10 @@ public static class WallpaperDecodeCache
         {
             LogHelper.LogError($"[WallpaperCache] preload decode failed: {uri}", ex);
             return null;
+        }
+        finally
+        {
+            stream?.Dispose();
         }
     }
 

@@ -1963,6 +1963,7 @@ InitializeComponent();
     private BitmapImage? TryDecodeWallpaper(string uri, int maxWidth, string kindForLog)
     {
         long d0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        System.IO.Stream? stream = null;
         try
         {
             var bi = new BitmapImage();
@@ -1971,7 +1972,7 @@ InitializeComponent();
             bi.DecodePixelWidth = maxWidth;
             if (uri.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
             {
-                var stream = MusicPlayer.Utilities.PackResourceLoader.GetStream(uri);
+                stream = MusicPlayer.Utilities.PackResourceLoader.GetStream(uri);
                 if (stream != null)
                 {
                     bi.StreamSource = stream;
@@ -1999,6 +2000,10 @@ InitializeComponent();
         {
             LogHelper.LogError($"[Wallpaper] decode failed ({kindForLog}) afterMs={ElapsedMs(d0):0}", ex);
             return null;
+        }
+        finally
+        {
+            stream?.Dispose();
         }
     }
 

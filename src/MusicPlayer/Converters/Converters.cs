@@ -683,6 +683,7 @@ public class WallpaperThumbnailConverter : IValueConverter
         bool isPack = thumbPath.StartsWith("pack:", StringComparison.OrdinalIgnoreCase);
         if (!isPack && !System.IO.File.Exists(thumbPath)) return null;
 
+        System.IO.Stream? stream = null;
         try
         {
             var bi = new System.Windows.Media.Imaging.BitmapImage();
@@ -693,7 +694,7 @@ public class WallpaperThumbnailConverter : IValueConverter
                 bi.DecodePixelWidth = decodeWidth;
             if (thumbPath.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
             {
-                var stream = MusicPlayer.Utilities.PackResourceLoader.GetStream(thumbPath);
+                stream = MusicPlayer.Utilities.PackResourceLoader.GetStream(thumbPath);
                 if (stream != null) bi.StreamSource = stream;
                 else bi.UriSource = new Uri(thumbPath, UriKind.Absolute);
             }
@@ -720,6 +721,10 @@ public class WallpaperThumbnailConverter : IValueConverter
         {
             Utilities.LogHelper.LogError($"[WallpaperThumb] FAILED: {thumbPath}", ex);
             return null;
+        }
+        finally
+        {
+            stream?.Dispose();
         }
     }
 
