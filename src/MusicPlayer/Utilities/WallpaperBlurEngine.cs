@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -6,26 +7,20 @@ using System.Windows.Media.Imaging;
 namespace MusicPlayer.Utilities;
 
 /// <summary>
-/// Real image-processing blur engine used by both the main wallpaper path
-/// and the Theme Editor preview. Produces a frozen Pbgra32 BitmapSource.
-/// Uses separable Gaussian blur with edge clamping to avoid halos.
-/// Must be called on an STA thread (RenderTargetBitmap affinity).
+/// Fast image blur engine. Uses three-pass box blur (sliding-sum, O(w*h))
+/// which approximates a Gaussian. Honours CancellationToken for real
+/// cancellation. Must be called on an STA thread (RenderTargetBitmap affinity).
 /// </summary>
 public static class WallpaperBlurEngine
 {
-    public const int AlgorithmVersion = 1;
+    public const int AlgorithmVersion = 2;
 
-    /// <summary>
-    /// Render <paramref name="source"/> into a <paramref name="pixelWidth"/> x
-    /// <paramref name="pixelHeight"/> bitmap (UniformToFill) and apply a
-    /// separable Gaussian blur of <paramref name="radius"/> output pixels.
-    /// When radius &lt; 0.5 the bitmap is returned unblurred.
-    /// </summary>
     public static BitmapSource? RenderAndBlur(
         BitmapSource source,
         int pixelWidth, int pixelHeight,
         double dpiX, double dpiY,
-        double radius)
+        double radius,
+        CancellationToken cancellationToken = default)
     {
         if (source == null || pixelWidth < 1 || pixelHeight < 1) return null;
         if (dpiX <= 0 || double.IsNaN(dpiX)) dpiX = 96.0;
@@ -36,7 +31,6 @@ public static class WallpaperBlurEngine
         double renderWidth = w * 96.0 / dpiX;
         double renderHeight = h * 96.0 / dpiY;
 
-        // 1) Render source stretched/cropped into target (on this STA thread).
         var target = new RenderTargetBitmap(w, h, dpiX, dpiY, PixelFormats.Pbgra32);
         var visual = new DrawingVisual();
         using (var ctx = visual.RenderOpen())
@@ -47,104 +41,101 @@ public static class WallpaperBlurEngine
         target.Render(visual);
         target.Freeze();
 
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (radius < 0.5)
             return target;
 
-        // 2) Extract pixels.
         int stride = w * 4;
         var pixels = new byte[h * stride];
         target.CopyPixels(pixels, stride, 0);
 
-        // 3) Separable Gaussian blur with edge clamping.
-        var blurred = GaussianBlur(pixels, w, h, radius);
+        BoxBlur(pixels, w, h, radius, cancellationToken);
 
-        // 4) Build frozen result.
-        var result = BitmapSource.Create(w, h, dpiX, dpiY, PixelFormats.Pbgra32, null, blurred, stride);
+        var result = BitmapSource.Create(w, h, dpiX, dpiY, PixelFormats.Pbgra32, null, pixels, stride);
         result.Freeze();
         return result;
     }
 
-    private static byte[] GaussianBlur(byte[] src, int w, int h, double radius)
+    private static void BoxBlur(byte[] src, int w, int h, double radius, CancellationToken token)
     {
-        // sigma: treat radius as the effective spread. Kernel half = 3*sigma.
-        double sigma = Math.Max(0.1, radius);
-        int half = (int)Math.Ceiling(3.0 * sigma);
+        int half = Math.Max(1, (int)Math.Round(radius / 3.0));
         if (half < 1) half = 1;
-        if (half > 128) half = 128;
 
-        // Build normalized kernel.
-        int ksize = half * 2 + 1;
-        var kernel = new double[ksize];
-        double sum = 0;
-        for (int i = 0; i < ksize; i++)
-        {
-            int x = i - half;
-            kernel[i] = Math.Exp(-(x * x) / (2.0 * sigma * sigma));
-            sum += kernel[i];
-        }
-        for (int i = 0; i < ksize; i++) kernel[i] /= sum;
+        var a = src;
+        var b = new byte[src.Length];
 
-        // Horizontal pass.
-        var tmp = new byte[src.Length];
-        for (int y = 0; y < h; y++)
+        for (int pass = 0; pass < 3; pass++)
         {
-            int row = y * w * 4;
-            for (int x = 0; x < w; x++)
-            {
-                double b = 0, g = 0, r = 0, a = 0;
-                for (int k = -half; k <= half; k++)
-                {
-                    int sx = x + k;
-                    if (sx < 0) sx = 0;
-                    if (sx >= w) sx = w - 1;
-                    int idx = row + sx * 4;
-                    double weight = kernel[k + half];
-                    b += src[idx + 0] * weight;
-                    g += src[idx + 1] * weight;
-                    r += src[idx + 2] * weight;
-                    a += src[idx + 3] * weight;
-                }
-                int o = row + x * 4;
-                tmp[o + 0] = ClampByte(b);
-                tmp[o + 1] = ClampByte(g);
-                tmp[o + 2] = ClampByte(r);
-                tmp[o + 3] = ClampByte(a);
-            }
+            token.ThrowIfCancellationRequested();
+            HorizontalBox(a, b, w, h, half, token);
+            token.ThrowIfCancellationRequested();
+            VerticalBox(b, a, w, h, half, token);
         }
-
-        // Vertical pass.
-        var dst = new byte[src.Length];
-        for (int x = 0; x < w; x++)
+        if (!ReferenceEquals(a, src))
         {
-            for (int y = 0; y < h; y++)
-            {
-                double b = 0, g = 0, r = 0, a = 0;
-                for (int k = -half; k <= half; k++)
-                {
-                    int sy = y + k;
-                    if (sy < 0) sy = 0;
-                    if (sy >= h) sy = h - 1;
-                    int idx = (sy * w + x) * 4;
-                    double weight = kernel[k + half];
-                    b += tmp[idx + 0] * weight;
-                    g += tmp[idx + 1] * weight;
-                    r += tmp[idx + 2] * weight;
-                    a += tmp[idx + 3] * weight;
-                }
-                int o = (y * w + x) * 4;
-                dst[o + 0] = ClampByte(b);
-                dst[o + 1] = ClampByte(g);
-                dst[o + 2] = ClampByte(r);
-                dst[o + 3] = ClampByte(a);
-            }
+            Buffer.BlockCopy(a, 0, src, 0, src.Length);
         }
-        return dst;
     }
 
-    private static byte ClampByte(double v)
+    private static void HorizontalBox(byte[] src, byte[] dst, int w, int h, int half, CancellationToken token)
     {
-        if (v < 0) return 0;
-        if (v > 255) return 255;
-        return (byte)Math.Round(v);
+        int window = half * 2 + 1;
+        for (int y = 0; y < h; y++)
+        {
+            token.ThrowIfCancellationRequested();
+            int row = y * w * 4;
+            for (int c = 0; c < 4; c++)
+            {
+                int sum = 0;
+                for (int k = -half; k <= half; k++)
+                {
+                    int sx = k;
+                    if (sx < 0) sx = 0;
+                    if (sx >= w) sx = w - 1;
+                    sum += src[row + sx * 4 + c];
+                }
+                for (int x = 0; x < w; x++)
+                {
+                    dst[row + x * 4 + c] = (byte)(sum / window);
+                    int leftIdx = x - half;
+                    if (leftIdx < 0) leftIdx = 0;
+                    int rightIdx = x + half + 1;
+                    if (rightIdx >= w) rightIdx = w - 1;
+                    sum -= src[row + leftIdx * 4 + c];
+                    sum += src[row + rightIdx * 4 + c];
+                }
+            }
+        }
+    }
+
+    private static void VerticalBox(byte[] src, byte[] dst, int w, int h, int half, CancellationToken token)
+    {
+        int window = half * 2 + 1;
+        for (int x = 0; x < w; x++)
+        {
+            token.ThrowIfCancellationRequested();
+            for (int c = 0; c < 4; c++)
+            {
+                int sum = 0;
+                for (int k = -half; k <= half; k++)
+                {
+                    int sy = k;
+                    if (sy < 0) sy = 0;
+                    if (sy >= h) sy = h - 1;
+                    sum += src[(sy * w + x) * 4 + c];
+                }
+                for (int y = 0; y < h; y++)
+                {
+                    dst[(y * w + x) * 4 + c] = (byte)(sum / window);
+                    int topIdx = y - half;
+                    if (topIdx < 0) topIdx = 0;
+                    int botIdx = y + half + 1;
+                    if (botIdx >= h) botIdx = h - 1;
+                    sum -= src[(topIdx * w + x) * 4 + c];
+                    sum += src[(botIdx * w + x) * 4 + c];
+                }
+            }
+        }
     }
 }

@@ -1988,10 +1988,11 @@ InitializeComponent();
                                     }
                                     else
                                     {
-                                        result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective);
+                                        result = WallpaperBlurEngine.RenderAndBlur(finalDecoded, pxW, pxH, renderDpiX, renderDpiY, blurRadiusEffective, token);
                                         if (result != null) BlurResultCache.Store(blurKey, result);
                                     }
                                 }
+                                BlurResultCache.ReleaseLock(blurKey);
                                 if (result != null) StorePreparedBlur(preparedKey, result);
                             }
                             catch (Exception blurEx)

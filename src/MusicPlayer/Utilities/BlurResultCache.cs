@@ -76,6 +76,8 @@ public static class BlurResultCache
     /// <summary>Per-key lock object for single-flight blur computation.</summary>
     public static object GetLock(string key) => _locks.GetOrAdd(key, _ => new object());
 
+    public static void ReleaseLock(string key) => _locks.TryRemove(key, out _);
+
     public static (int Entries, long UsedBytes) Stats
     {
         get { lock (_gate) return (_cache.Count, _usedBytes); }
