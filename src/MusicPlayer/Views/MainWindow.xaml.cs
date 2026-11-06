@@ -1390,9 +1390,9 @@ InitializeComponent();
             newVm.Queue.CollectionChanged += OnQueueCollectionChanged;
             newVm.ScrollToCurrentTrackRequested += OnScrollToCurrentTrackRequested;
             newVm.PropertyChanged += OnBackgroundPropertyChanged;
-            if (!newVm.IsInitializing && LoadingOverlay != null)
+            if (!newVm.IsInitializing && LoadingOverlay != null && _initialWallpaperReady)
             {
-                LoadingOverlay.Visibility = Visibility.Collapsed;
+                TryCompleteStartupPresentation();
             }
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
             {
@@ -1458,6 +1458,8 @@ InitializeComponent();
     private bool _bgDirty;
     private System.Windows.Threading.DispatcherTimer? _bgBlurTimer;
     private bool _glassDirty;
+    private bool _initialWallpaperReady;
+    private bool _startupPresentationCompleted;
     private ImageSource? _glassWallpaperSource;
     private ImageSource? _glassCacheSource;
     private BitmapSource? _glassBackdropCache;
@@ -1536,6 +1538,13 @@ InitializeComponent();
                 _glassDirty = true;
                 EnsureBlurCache();
             }
+        }
+
+        // Signal startup wallpaper readiness on the first successful commit.
+        if (!_initialWallpaperReady)
+        {
+            _initialWallpaperReady = true;
+            Dispatcher.BeginInvoke(new Action(TryCompleteStartupPresentation));
         }
     }
 
@@ -1697,6 +1706,7 @@ InitializeComponent();
     // wallpaper may apply its result — a stale decode finishing late must never
     // overwrite a newer selection.
     private long _bgGen;
+    private System.Threading.CancellationTokenSource? _wallpaperRebuildCts;
 
     private void RebuildBlurCache()
     {
@@ -1711,10 +1721,21 @@ InitializeComponent();
         }
         long gen = ++_bgGen;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var oldCts = _wallpaperRebuildCts;
+        var cts = new System.Threading.CancellationTokenSource();
+        _wallpaperRebuildCts = cts;
+        try { oldCts?.Cancel(); } catch { }
+        var token = cts.Token;
         try
         {
             var vm = ViewModel;
-            if (vm == null) return;
+            if (vm == null)
+            {
+                // No ViewModel yet — apply solid fallback so the loading overlay
+                // can eventually dismiss, and retry when DataContext is set.
+                ApplySolidWallpaperFallback();
+                return;
+            }
 
             string path = vm.BackgroundImagePath;
             double blurRadius = vm.WallpaperBlur;
@@ -1752,6 +1773,7 @@ InitializeComponent();
             long queueTicks = System.Diagnostics.Stopwatch.GetTimestamp();
             System.Threading.Tasks.Task.Run(() =>
             {
+                if (token.IsCancellationRequested) return;
                 long queueMs = (long)ElapsedMs(queueTicks);
                 string cacheKey = (primaryCopy ?? "") + "|" + decodeW;
                 BitmapImage? decoded = null;
@@ -1774,6 +1796,7 @@ InitializeComponent();
                 LogHelper.LogInfo($"[Wallpaper] decode ready: queueMs={queueMs} {kindCopy} {(decoded != null ? $"{decoded.PixelWidth}x{decoded.PixelHeight}" : "null")}");
                 BitmapImage? finalDecoded = decoded;
                 string finalKind = kindCopy;
+                if (token.IsCancellationRequested) return;
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     if (gen != _bgGen)
@@ -1878,52 +1901,12 @@ InitializeComponent();
         }
     }
 
-    // Decode is thread-legal off-UI (frozen before crossing threads). Full quality
-    // up to a sane 3840px cap: crisp on 4K sources, bounded on larger monsters.
-    // Bounded decode cache: revisiting a recent wallpaper skips the ~0.9s JPEG
-    // redecode entirely (0ms). Frozen bitmaps are immutable and safe to share
-    // across assignments. Capped by count AND pixels; eviction is oldest-first.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (BitmapImage Image, long Ticks)> _wallpaperDecodeCache
-        = new(System.StringComparer.OrdinalIgnoreCase);
-    private const int WallpaperCacheMaxEntries = 4;
-    private const long WallpaperCacheMaxPixels = 1920L * 1200L;
-
+    // Decode cache is now shared & memory-budgeted (see WallpaperDecodeCache).
     private static bool TryGetCachedWallpaper(string key, out BitmapImage? image)
-    {
-        image = null;
-        try
-        {
-            if (_wallpaperDecodeCache.TryGetValue(key, out var entry) && entry.Image != null)
-            {
-                image = entry.Image;
-                _wallpaperDecodeCache[key] = (entry.Image, System.Diagnostics.Stopwatch.GetTimestamp());
-                return true;
-            }
-        }
-        catch { }
-        return false;
-    }
+        => MusicPlayer.Utilities.WallpaperDecodeCache.TryGet(key, out image);
 
     private static void StoreCachedWallpaper(string key, BitmapImage image)
-    {
-        try
-        {
-            if ((long)image.PixelWidth * image.PixelHeight > WallpaperCacheMaxPixels) return;
-            _wallpaperDecodeCache[key] = (image, System.Diagnostics.Stopwatch.GetTimestamp());
-            while (_wallpaperDecodeCache.Count > WallpaperCacheMaxEntries)
-            {
-                string? oldest = null;
-                long oldestTicks = long.MaxValue;
-                foreach (var kv in _wallpaperDecodeCache)
-                {
-                    if (kv.Value.Ticks < oldestTicks) { oldestTicks = kv.Value.Ticks; oldest = kv.Key; }
-                }
-                if (oldest == null) break;
-                _wallpaperDecodeCache.TryRemove(oldest, out _);
-            }
-        }
-        catch { }
-    }
+        => MusicPlayer.Utilities.WallpaperDecodeCache.Store(key, image);
 
     private BitmapImage? TryDecodeWallpaper(string uri, int maxWidth, string kindForLog)
     {
@@ -2200,6 +2183,31 @@ InitializeComponent();
         UpdateNativeCaptionButtonCutout();
         MarkGlassBackdropDirty();
         UpdateGlassSurfaceBrushes();
+    }
+
+    private void TryCompleteStartupPresentation()
+    {
+        if (_startupPresentationCompleted) return;
+        if (LoadingOverlay == null) return;
+
+        var vm = ViewModel;
+        bool servicesReady = vm != null && !vm.IsInitializing;
+        bool wallpaperReady = _initialWallpaperReady;
+
+        if (!servicesReady || !wallpaperReady) return;
+
+        _startupPresentationCompleted = true;
+
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(250)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        fade.Completed += (_, _) =>
+        {
+            LoadingOverlay.Visibility = Visibility.Collapsed;
+            // Stop the perpetual pulsing-dot storyboards.
+            LoadingDot1.BeginAnimation(OpacityProperty, null);
+            LoadingDot2.BeginAnimation(OpacityProperty, null);
+            LoadingDot3.BeginAnimation(OpacityProperty, null);
+        };
+        LoadingOverlay.BeginAnimation(OpacityProperty, fade);
     }
 
     private void RootBorder_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -7116,19 +7124,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         {
             if (ViewModel?.IsInitializing == false && LoadingOverlay != null)
             {
-                var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(250)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-                fade.Completed += (_, _) =>
-                {
-                    LoadingOverlay.Visibility = Visibility.Collapsed;
-                    // Stop the perpetual pulsing-dot storyboards. Without this the
-                    // RepeatBehavior=Forever clocks keep WPF's render thread awake at
-                    // vsync forever (~10% idle CPU at 1024x650 that scales with window
-                    // area) even when nothing on screen is animating.
-                    LoadingDot1.BeginAnimation(OpacityProperty, null);
-                    LoadingDot2.BeginAnimation(OpacityProperty, null);
-                    LoadingDot3.BeginAnimation(OpacityProperty, null);
-                };
-                LoadingOverlay.BeginAnimation(OpacityProperty, fade);
+                TryCompleteStartupPresentation();
             }
         }
         else if (e.PropertyName == nameof(MainViewModel.IsDrawerOpen))

@@ -4229,6 +4229,8 @@ public partial class MainViewModel : ViewModelBase
 	{
 		// Initialization is one UI-scoped operation: shutdown either waits for it
 		// to finish or cancels it, but never disposes DI services underneath it.
+		var _startupSw = System.Diagnostics.Stopwatch.StartNew();
+		LogHelper.LogInfo("[StartupPerf] InitializeAsync start");
 		using var operation = _uiOps.TryBegin(nameof(InitializeAsync));
 		if (operation == null) return;
 		using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _uiOps.Token);
@@ -4239,26 +4241,31 @@ public partial class MainViewModel : ViewModelBase
 		{
 			LoadSettings();
 		});
+		LogHelper.LogInfo($"[StartupPerf] LoadSettings done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		statusCallback?.Invoke("Loading library...");
 		await Task.Run(delegate
 		{
 			_db.CleanOrphanTracks();
 		});
+		LogHelper.LogInfo($"[StartupPerf] CleanOrphanTracks done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		statusCallback?.Invoke("Scanning folders...");
 		// One authoritative refresh/sync pass: a root that is unavailable,
 		// partially enumerated, denied, or cancelled can never authorize deletion.
 		var scanResult = await _scanner.RefreshAndSyncLibraryAsync(token);
+		LogHelper.LogInfo($"[StartupPerf] RefreshAndSyncLibraryAsync done totalMs={_startupSw.ElapsedMilliseconds}");
 		_logger.LogInformation(
 			"Library refresh completed: added={Added}, updated={Updated}, removed={Removed}",
 			scanResult.Added, scanResult.Updated, scanResult.Removed);
 		if (token.IsCancellationRequested) return;
 		await Task.Run(() => _scanner.BackfillDateAdded());
+		LogHelper.LogInfo($"[StartupPerf] BackfillDateAdded done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		Task<(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount)> countsTask = Task.Run(() => _db.GetAllCounts());
 		Task<List<MusicTrack>> tracksTask = Task.Run(() => _db.GetManagedFolderTracksSorted((LibrarySortOrder == "date_added") ? "date_added" : ((LibrarySortOrder == "duration") ? "duration" : ((LibrarySortOrder == "size") ? "size" : ((LibrarySortOrder == "year") ? "year" : "title"))), (LibrarySortOrder == "date_added") ? (!IsLibrarySortDescending) : IsLibrarySortDescending).Take(5000).ToList());
 		await Task.WhenAll(countsTask, tracksTask);
+		LogHelper.LogInfo($"[StartupPerf] Counts/Tracks loaded totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount) counts = countsTask.Result;
 		List<MusicTrack> sortedTracks = tracksTask.Result;
@@ -4290,11 +4297,13 @@ public partial class MainViewModel : ViewModelBase
 		catch
 		{
 		}
+		LogHelper.LogInfo($"[StartupPerf] BuildArtistItemsAsync done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		if (sortedTracks != null && sortedTracks.Count > 0)
 		{
 			await _albumArt.PreloadTrackArtwork(sortedTracks.Take(60), token);
 		}
+		LogHelper.LogInfo($"[StartupPerf] PreloadTrackArtwork done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		GC.Collect(0);
 		LoadPlaylists();
@@ -4302,6 +4311,7 @@ public partial class MainViewModel : ViewModelBase
 		Queue.CollectionChanged += (_, _) => UpdateQueueSummary();
 		UpdateQueueSummary();
 		IsInitializing = false;
+		LogHelper.LogInfo($"[StartupPerf] InitializeAsync complete totalMs={_startupSw.ElapsedMilliseconds}");
 		// Row-thumbnail warmup runs immediately in background so the entire library is cached in RAM.
 		StartTrackedBackgroundTask("WarmUpAndRefresh", ct => WarmUpAndRefreshAsync(sortedTracks, ct));
 		StartTrackedBackgroundTask("WallpaperWarmupLoop", async ct =>
@@ -8187,6 +8197,7 @@ private async void LoadFolders()
 		OnPropertyChanged("CanNavigateBack");
 	}
 	private bool _isLoadingWallpapers;
+	private System.Threading.CancellationTokenSource? _wallpaperPreloadCts;
 	/// <returns>true when wallpapers are loaded (or someone else is loading them);
 	/// false when aborted because the user interacted — the caller should retry later.</returns>
 	private async Task<bool> EnsureWallpapersLoadedAsync(bool forceReload = false, bool abortIfUserActive = false, CancellationToken cancellationToken = default)
@@ -8280,6 +8291,17 @@ private async void LoadFolders()
 				}
 				FilterWallpapers();
 			});
+			// Start bounded full-resolution preload for the catalog (off-UI, memory-budgeted).
+			try
+			{
+				_wallpaperPreloadCts?.Cancel();
+				var cts = new System.Threading.CancellationTokenSource();
+				_wallpaperPreloadCts = cts;
+				var uris = result.items.Select(i => !string.IsNullOrEmpty(i.ResourceUri) ? i.ResourceUri : i.FilePath)
+					.Where(s => !string.IsNullOrWhiteSpace(s));
+				_ = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(uris, 1920, cts.Token);
+			}
+			catch { }
 			return true;
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -8408,6 +8430,10 @@ private async void LoadFolders()
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]
 	private void OnCurrentViewChanged(string value)
 	{
+		if (!string.Equals(value, "theme", StringComparison.OrdinalIgnoreCase))
+		{
+			try { _wallpaperPreloadCts?.Cancel(); } catch { }
+		}
 		bool preserveSearch = value is "songs" or "artists" or "albums" or "genres" or "folders" or "artist_detail" or "album_detail";
 		if (!preserveSearch)
 		{
