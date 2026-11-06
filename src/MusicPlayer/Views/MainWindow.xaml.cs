@@ -1761,7 +1761,7 @@ InitializeComponent();
                     LogHelper.LogInfo($"[Wallpaper] resolve: file not found '{DescribeWallpaperPath(path)}' → trying default");
                 }
             }
-            const string fallbackPack = "pack://application:,,,/Wallpaper/Defaut/bg_005.png";
+            const string fallbackPack = "pack://application:,,,/wallpaper/defaut/bg_005.png";
             LogHelper.LogInfo($"[Wallpaper] rebuild start: kind={kind} blur={(wantBlur ? blurRadius.ToString("0") : "off")} {DescribeWallpaperPath(path)}");
 
             // Heavy decode off the UI thread (4K JPEGs stall it for 100ms+).
@@ -1856,6 +1856,18 @@ InitializeComponent();
                         double renderDpiX = 96.0 * dpiScaleX;
                         double renderDpiY = 96.0 * dpiScaleY;
 
+                        double capScale = (dw * dpiScaleX > 0) ? (double)pxW / (dw * dpiScaleX) : 1.0;
+                        if (capScale > 1.0) capScale = 1.0;
+                        double blurRadiusEffective = blurRadius * capScale;
+
+                        string preparedKey = (path ?? "") + "|" + blurRadius.ToString("0.###") + "|" + pxW + "x" + pxH + "|" + dpiScaleX.ToString("0.###") + "x" + dpiScaleY.ToString("0.###");
+                        if (TryGetPreparedBlur(preparedKey, out var cachedBlur) && cachedBlur != null)
+                        {
+                            SetWallpaperSources(cachedBlur, finalDecoded);
+                            LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur cached {pxW}x{pxH} appliedMs={ElapsedMs(t0):0}");
+                            return;
+                        }
+
                         var target = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
                         var visual = new DrawingVisual();
                         using (var ctx = visual.RenderOpen())
@@ -1869,9 +1881,6 @@ InitializeComponent();
                         // BlurEffect radius is in DIPs relative to the visual's coordinate space.
                         // The visual is (dw, dh) DIPs, so the radius is in DIPs — no DPI scaling needed.
                         // When capped, reduce the radius proportionally.
-                        double capScale = (dw * dpiScaleX > 0) ? (double)pxW / (dw * dpiScaleX) : 1.0;
-                        if (capScale > 1.0) capScale = 1.0;
-                        double blurRadiusEffective = blurRadius * capScale;
                         var blurred = new BlurEffect { Radius = blurRadiusEffective, RenderingBias = RenderingBias.Quality };
                         var wrapper = new System.Windows.Controls.Image { Source = target, Effect = blurred };
                         wrapper.Measure(new Size(dw, dh));
@@ -1880,6 +1889,7 @@ InitializeComponent();
                         var result = new RenderTargetBitmap(pxW, pxH, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
                         result.Render(wrapper);
                         result.Freeze();
+                        StorePreparedBlur(preparedKey, result);
 
                         SetWallpaperSources(result, finalDecoded);
                         LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={ElapsedMs(t0):0}");
@@ -1908,6 +1918,48 @@ InitializeComponent();
     private static void StoreCachedWallpaper(string key, BitmapImage image)
         => MusicPlayer.Utilities.WallpaperDecodeCache.Store(key, image);
 
+    // Prepared blur cache: avoids re-running the expensive RenderTargetBitmap blur
+    // pass for an identical source/size/DPI/blur combination.
+    private sealed class PreparedBlurEntry { public BitmapSource Image = null!; public long Ticks; }
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PreparedBlurEntry> _preparedBlurCache
+        = new(System.StringComparer.OrdinalIgnoreCase);
+    private static readonly object _preparedBlurGate = new();
+    private const int PreparedBlurMaxEntries = 6;
+
+    private static bool TryGetPreparedBlur(string key, out BitmapSource? image)
+    {
+        image = null;
+        lock (_preparedBlurGate)
+        {
+            if (_preparedBlurCache.TryGetValue(key, out var e) && e.Image != null)
+            {
+                e.Ticks = System.Diagnostics.Stopwatch.GetTimestamp();
+                image = e.Image;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void StorePreparedBlur(string key, BitmapSource image)
+    {
+        if (image == null) return;
+        lock (_preparedBlurGate)
+        {
+            _preparedBlurCache[key] = new PreparedBlurEntry { Image = image, Ticks = System.Diagnostics.Stopwatch.GetTimestamp() };
+            while (_preparedBlurCache.Count > PreparedBlurMaxEntries)
+            {
+                string? oldest = null; long oldestTicks = long.MaxValue;
+                foreach (var kv in _preparedBlurCache)
+                {
+                    if (kv.Value.Ticks < oldestTicks) { oldestTicks = kv.Value.Ticks; oldest = kv.Key; }
+                }
+                if (oldest == null) break;
+                _preparedBlurCache.TryRemove(oldest, out _);
+            }
+        }
+    }
+
     private BitmapImage? TryDecodeWallpaper(string uri, int maxWidth, string kindForLog)
     {
         long d0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1915,9 +1967,24 @@ InitializeComponent();
         {
             var bi = new BitmapImage();
             bi.BeginInit();
-            bi.UriSource = new Uri(uri, UriKind.Absolute);
             bi.CacheOption = BitmapCacheOption.OnLoad;
             bi.DecodePixelWidth = maxWidth;
+            if (uri.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
+            {
+                var stream = MusicPlayer.Utilities.PackResourceLoader.GetStream(uri);
+                if (stream != null)
+                {
+                    bi.StreamSource = stream;
+                }
+                else
+                {
+                    bi.UriSource = new Uri(uri, UriKind.Absolute);
+                }
+            }
+            else
+            {
+                bi.UriSource = new Uri(uri, UriKind.Absolute);
+            }
             bi.EndInit();
             bi.Freeze();
             if (bi.PixelWidth <= 0 || bi.PixelHeight <= 0)
@@ -1941,20 +2008,8 @@ InitializeComponent();
     // native size, so small files are unaffected.
     private int ComputeWallpaperDecodeWidth()
     {
-        try
-        {
-            double aw = ActualWidth;
-            if (double.IsNaN(aw) || aw < 640) aw = 640;
-            double scale = 1.0;
-            try { scale = VisualTreeHelper.GetDpi(this).DpiScaleX; } catch { }
-            if (scale <= 0 || double.IsNaN(scale)) scale = 1.0;
-            int target = (int)System.Math.Ceiling(aw * scale * 1.25);
-            if (target < 480) target = 480;
-            if (target > 3840) target = 3840;
-            LogHelper.LogInfo($"[Wallpaper] decode target: display={aw:0} scale={scale:0.##} → {target}px");
-            return target;
-        }
-        catch { return 1920; }
+        // Decode at full resolution so preload and selection share one cache key.
+        return 3840;
     }
 
     // Last-resort background: a tiny cached bitmap stretched to a solid theme

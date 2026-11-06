@@ -188,7 +188,7 @@ public partial class MainViewModel : ViewModelBase
 	private bool _lrcEditAutoCreated;
 	private string _selectedTheme = "Dark";
 	private string _selectedWallpaperCategory = "All";
-	private string _backgroundImagePath = "pack://application:,,,/Wallpaper/Defaut/bg_005.png";
+	private string _backgroundImagePath = "pack://application:,,,/wallpaper/defaut/bg_005.png";
 	private double _wallpaperBlur = 0.0;
 	private double _wallpaperAlpha = 51.0;
 	private string _themeEditWallpaperPath = string.Empty;
@@ -8114,7 +8114,7 @@ private async void LoadFolders()
 	private void OpenThemeEditor()
 	{
 		ThemeEditWallpaperPath = string.IsNullOrEmpty(BackgroundImagePath)
-			? WallpaperCatalog.FindById(WallpaperCatalog.DefaultId)?.ResourceUri ?? "pack://application:,,,/Wallpaper/Defaut/bg_005.png"
+			? WallpaperCatalog.FindById(WallpaperCatalog.DefaultId)?.ResourceUri ?? "pack://application:,,,/wallpaper/defaut/bg_005.png"
 			: BackgroundImagePath;
 		ThemeEditBlur = WallpaperBlur;
 		ThemeEditAlpha = WallpaperAlpha;
@@ -8299,7 +8299,7 @@ private async void LoadFolders()
 				_wallpaperPreloadCts = cts;
 				var uris = result.items.Select(i => !string.IsNullOrEmpty(i.ResourceUri) ? i.ResourceUri : i.FilePath)
 					.Where(s => !string.IsNullOrWhiteSpace(s));
-				_ = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(uris, 1920, cts.Token);
+				_ = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(uris, 3840, cts.Token);
 			}
 			catch { }
 			return true;

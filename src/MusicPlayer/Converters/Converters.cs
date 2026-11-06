@@ -687,11 +687,20 @@ public class WallpaperThumbnailConverter : IValueConverter
         {
             var bi = new System.Windows.Media.Imaging.BitmapImage();
             bi.BeginInit();
-            bi.UriSource = new Uri(thumbPath, UriKind.Absolute);
             bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
             bi.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.None;
             if (decodeWidth > 0)
                 bi.DecodePixelWidth = decodeWidth;
+            if (thumbPath.StartsWith("pack:", StringComparison.OrdinalIgnoreCase))
+            {
+                var stream = MusicPlayer.Utilities.PackResourceLoader.GetStream(thumbPath);
+                if (stream != null) bi.StreamSource = stream;
+                else bi.UriSource = new Uri(thumbPath, UriKind.Absolute);
+            }
+            else
+            {
+                bi.UriSource = new Uri(thumbPath, UriKind.Absolute);
+            }
             bi.EndInit();
             bi.Freeze();
 
