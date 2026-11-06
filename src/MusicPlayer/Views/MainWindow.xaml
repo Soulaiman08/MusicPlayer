@@ -3762,7 +3762,7 @@
                             <!-- Animated progress bar -->
                             <Border x:Name="progressTrack" Background="#40FFFFFF" CornerRadius="3" HorizontalAlignment="Left" Height="6">
                               <Border.RenderTransform>
-                                <ScaleTransform x:Name="progressScale" ScaleX="0" CenterX="0" CenterY="3" />
+                                <ScaleTransform x:Name="progressScale" ScaleX="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" CenterX="0" CenterY="3" />
                               </Border.RenderTransform>
                             </Border>
                             <!-- Progress percentage text -->
@@ -3785,11 +3785,10 @@
                       <!-- Loading indicator entrance / exit -->
                       <DataTrigger Binding="{Binding IsLoading}" Value="True">
                         <DataTrigger.EnterActions>
-                          <BeginStoryboard>
+                          <BeginStoryboard x:Name="progressFadeStoryboard">
                             <Storyboard>
                               <DoubleAnimation Storyboard.TargetName="progressSlide" Storyboard.TargetProperty="Y" From="8" To="0" Duration="0:0:0.18" EasingFunction="{StaticResource DS_Ease_OutCubic}" />
                               <DoubleAnimation Storyboard.TargetName="progressOverlay" Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.15" />
-                              <DoubleAnimation Storyboard.TargetName="progressScale" Storyboard.TargetProperty="ScaleX" From="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" To="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" Duration="0:0:0.2" EasingFunction="{StaticResource DS_Ease_OutCubic}" />
                             </Storyboard>
                           </BeginStoryboard>
                         </DataTrigger.EnterActions>
@@ -3798,7 +3797,6 @@
                             <Storyboard>
                               <DoubleAnimation Storyboard.TargetName="progressSlide" Storyboard.TargetProperty="Y" From="0" To="8" Duration="0:0:0.15" EasingFunction="{StaticResource DS_Ease_InQuad}" />
                               <DoubleAnimation Storyboard.TargetName="progressOverlay" Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.22" />
-                              <DoubleAnimation Storyboard.TargetName="progressScale" Storyboard.TargetProperty="ScaleX" From="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" To="{Binding LoadProgress, Converter={StaticResource ProgressToScaleConverter}}" Duration="0:0:0.22" EasingFunction="{StaticResource DS_Ease_InQuad}" />
                             </Storyboard>
                           </BeginStoryboard>
                           <RemoveStoryboard BeginStoryboardName="progressFadeStoryboard" />
