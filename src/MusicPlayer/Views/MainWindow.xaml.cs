@@ -1770,6 +1770,34 @@ InitializeComponent();
     private System.Threading.CancellationTokenSource? _wallpaperRebuildCts;
     private string _lastRebuiltWallpaperPath = string.Empty;
 
+    private void MonitorDispatcherOperation(System.Windows.Threading.DispatcherOperation op, long gen)
+    {
+        if (op.Status == System.Windows.Threading.DispatcherOperationStatus.Aborted)
+        {
+            CompleteThemeRebuildCallback(gen, false);
+            return;
+        }
+        if (op.Status == System.Windows.Threading.DispatcherOperationStatus.Completed)
+            return;
+
+        System.EventHandler? completedHandler = null;
+        System.EventHandler? abortedHandler = null;
+        Action finalize = () =>
+        {
+            if (completedHandler != null) op.Completed -= completedHandler;
+            if (abortedHandler != null) op.Aborted -= abortedHandler;
+            if (op.Status != System.Windows.Threading.DispatcherOperationStatus.Completed)
+                CompleteThemeRebuildCallback(gen, false);
+        };
+        completedHandler = (s, e) => finalize();
+        abortedHandler = (s, e) => finalize();
+        op.Completed += completedHandler;
+        op.Aborted += abortedHandler;
+
+        if (op.Status == System.Windows.Threading.DispatcherOperationStatus.Aborted)
+            finalize();
+    }
+
     private void CompleteThemeRebuildCallback(long gen, bool success)
     {
         System.Action<bool>? cb = null;
@@ -1910,36 +1938,36 @@ InitializeComponent();
                 if (primaryCopy != null && TryGetCachedWallpaper(cacheKey, out decoded))
                 {
                     LogHelper.LogInfo($"[Wallpaper] cache hit: {kindCopy} {decoded!.PixelWidth}x{decoded!.PixelHeight}");
-                    Dispatcher.BeginInvoke(new Action(() =>
+                    try { Dispatcher.BeginInvoke(new Action(() =>
                     {
                         if (gen != _bgGen || targetItem == null) return;
                         targetItem.LoadProgress = 55;
-                    }));
+                    })); } catch { }
                 }
                 else
                 {
-                    Dispatcher.BeginInvoke(new Action(() =>
+                    try { Dispatcher.BeginInvoke(new Action(() =>
                     {
                         if (gen != _bgGen || targetItem == null) return;
                         targetItem.LoadProgress = 20;
-                    }));
+                    })); } catch { }
                     decoded = (primaryCopy != null)
                         ? TryDecodeWallpaper(primaryCopy, decodeW, kindCopy)
                         : null;
                     if (decoded != null) StoreCachedWallpaper(cacheKey, decoded);
-                    Dispatcher.BeginInvoke(new Action(() =>
+                    try { Dispatcher.BeginInvoke(new Action(() =>
                     {
                         if (gen != _bgGen || targetItem == null) return;
                         targetItem.LoadProgress = 60;
-                    }));
+                    })); } catch { }
                 }
                 if (decoded == null)
                 {
-                    Dispatcher.BeginInvoke(new Action(() =>
+                    try { Dispatcher.BeginInvoke(new Action(() =>
                     {
                         if (gen != _bgGen || targetItem == null) return;
                         targetItem.LoadProgress = 50;
-                    }));
+                    })); } catch { }
                     decoded = TryDecodeWallpaper(fallbackPack, decodeW, "pack-default");
                     if (decoded != null) kindCopy = "pack-default";
                 }
@@ -2166,10 +2194,7 @@ InitializeComponent();
                             catch (Exception blurEx)
                             {
                                 LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
-                                Dispatcher.BeginInvoke(new Action(() =>
-                                {
-                                    if (gen != _bgGen) return;
-                                }));
+                                // result remains null; unified worker result path handles fallback + failure.
                             }
 
                             System.Windows.Threading.DispatcherOperation? workerResultOp = null;
@@ -2213,13 +2238,7 @@ InitializeComponent();
                                 CompleteThemeRebuildCallback(gen, false);
                             }
                             if (workerResultOp != null)
-                            {
-                                workerResultOp.Completed += (sender, e) =>
-                                {
-                                    if (workerResultOp.Status != System.Windows.Threading.DispatcherOperationStatus.Completed)
-                                        CompleteThemeRebuildCallback(gen, false);
-                                };
-                            }
+                                MonitorDispatcherOperation(workerResultOp, gen);
                         });
                         worker.SetApartmentState(System.Threading.ApartmentState.STA);
                         worker.Start();
@@ -2247,13 +2266,7 @@ InitializeComponent();
                             CompleteThemeRebuildCallback(gen, false);
                         }
                         if (blurExOp != null)
-                        {
-                            blurExOp.Completed += (sender, e) =>
-                            {
-                                if (blurExOp.Status != System.Windows.Threading.DispatcherOperationStatus.Completed)
-                                    CompleteThemeRebuildCallback(gen, false);
-                            };
-                        }
+                            MonitorDispatcherOperation(blurExOp, gen);
                     }
                 }));
                 }
@@ -2262,13 +2275,7 @@ InitializeComponent();
                     CompleteThemeRebuildCallback(gen, false);
                 }
                 if (finalDecodeOp != null)
-                {
-                    finalDecodeOp.Completed += (sender, e) =>
-                    {
-                        if (finalDecodeOp.Status != System.Windows.Threading.DispatcherOperationStatus.Completed)
-                            CompleteThemeRebuildCallback(gen, false);
-                    };
-                }
+                    MonitorDispatcherOperation(finalDecodeOp, gen);
             });
         }
         catch (Exception ex)
