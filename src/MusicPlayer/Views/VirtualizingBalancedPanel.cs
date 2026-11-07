@@ -38,6 +38,8 @@ namespace MusicPlayer.Views
         private int _cols;
         private double _rowHeight = 0;
         private double _lastMeasureWidth;
+        private int _firstRealizedIndex = -1;
+        private int _lastRealizedIndex = -1;
         private const double RowHeightEstimate = 200;
 
         private Size _extent = new Size(0, 0);
@@ -79,16 +81,59 @@ namespace MusicPlayer.Views
                 SetValue(ItemWidthPropertyKey, _slot);
         }
 
+        private void GetRequiredIndexRange(double offsetY, double viewportH, out int reqFirstIndex, out int reqLastIndex)
+        {
+            var owner = Owner;
+            int itemCount = owner?.Items.Count ?? 0;
+            if (itemCount <= 0)
+            {
+                reqFirstIndex = 0;
+                reqLastIndex = -1;
+                return;
+            }
+
+            double slot = _slot;
+            double estimatedRowHeight = slot > 0 ? slot + 44 : RowHeightEstimate;
+            double rowHeight = _rowHeight > 0 ? _rowHeight : estimatedRowHeight;
+            double stride = rowHeight + Math.Max(0, Gap);
+            int cols = _cols > 0 ? _cols : 1;
+            int totalRows = (itemCount + cols - 1) / cols;
+
+            double vpH = viewportH > 0 ? viewportH : (_viewport.Height > 0 ? _viewport.Height : estimatedRowHeight * 4);
+
+            // 1 row before, 2 rows after
+            int topRow = (int)Math.Floor(offsetY / stride);
+            int firstRow = Math.Max(0, topRow - 1);
+            int visibleRowCount = (int)Math.Ceiling(Math.Max(1, vpH) / stride);
+            int lastRow = Math.Min(totalRows - 1, topRow + visibleRowCount + 2);
+
+            reqFirstIndex = firstRow * cols;
+            reqLastIndex = Math.Min(itemCount - 1, (lastRow + 1) * cols - 1);
+            if (reqFirstIndex < 0) reqFirstIndex = 0;
+            if (reqLastIndex < reqFirstIndex) reqLastIndex = reqFirstIndex - 1;
+        }
+
         public void SetVerticalOffset(double offset)
         {
             double maxOffset = Math.Max(0, ExtentHeight - ViewportHeight);
             offset = Math.Max(0, Math.Min(offset, maxOffset));
-            if (Math.Abs(offset - _offset.Y) > 0.001)
+            if (Math.Abs(offset - _offset.Y) < 0.001)
+                return;
+
+            _offset.Y = offset;
+
+            // Fast path: if the new offset's required items are already realized, only arrange!
+            if (InternalChildren.Count > 0 && Owner != null && _firstRealizedIndex >= 0 && _lastRealizedIndex >= 0)
             {
-                _offset.Y = offset;
-                InvalidateMeasure();
-                _scrollOwner?.InvalidateScrollInfo();
+                GetRequiredIndexRange(_offset.Y, _viewport.Height, out int reqFirst, out int reqLast);
+                if (reqFirst >= _firstRealizedIndex && reqLast <= _lastRealizedIndex)
+                {
+                    InvalidateArrange();
+                    return;
+                }
             }
+
+            InvalidateMeasure();
         }
 
         public void SetHorizontalOffset(double offset)
@@ -190,15 +235,8 @@ namespace MusicPlayer.Views
             if (_offset.Y > maxOffset) _offset.Y = maxOffset;
             if (_offset.Y < 0) _offset.Y = 0;
 
-            // visible row range with balanced cache
-            int firstRow = itemCount > 0 ? (int)Math.Floor(_offset.Y / stride) - 2 : 0;
-            if (firstRow < 0) firstRow = 0;
-            int visibleRows = itemCount > 0 ? (int)Math.Ceiling(Math.Max(1, viewportHeight) / stride) + 4 : 0;
-            int lastRow = firstRow + (visibleRows > 0 ? visibleRows : 1);
-            int firstIndex = firstRow * cols;
-            int lastIndex = itemCount > 0 ? Math.Min(itemCount - 1, (lastRow + 1) * cols - 1) : -1;
-            if (firstIndex < 0) firstIndex = 0;
-            if (lastIndex < firstIndex) lastIndex = firstIndex - 1;
+            // visible row range with balanced cache (1 row before, 2 rows after)
+            GetRequiredIndexRange(_offset.Y, viewportHeight, out int firstIndex, out int lastIndex);
 
             // 1. Cleanup out-of-range containers FIRST
             if (InternalChildren.Count > 0 && Owner != null)
@@ -381,18 +419,36 @@ namespace MusicPlayer.Views
                 }
             }
 
+            if (InternalChildren.Count > 0 && Owner != null)
+            {
+                _firstRealizedIndex = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
+                _lastRealizedIndex = _firstRealizedIndex + InternalChildren.Count - 1;
+            }
+            else
+            {
+                _firstRealizedIndex = -1;
+                _lastRealizedIndex = -1;
+            }
+
             // Recompute extent with updated row height
             rowHeight = _rowHeight > 0 ? _rowHeight : estimatedRowHeight;
             stride = rowHeight + Math.Max(0, Gap);
             double finalExtentHeight = totalRows > 0 ? (totalRows - 1) * stride + rowHeight : 0;
-            _extent = new Size(availableSize.Width, finalExtentHeight);
-            _viewport = new Size(availableSize.Width, viewportHeight);
+            var newExtent = new Size(availableSize.Width, finalExtentHeight);
+            var newViewport = new Size(availableSize.Width, viewportHeight);
+
+            bool scrollInfoChanged = (newExtent != _extent || newViewport != _viewport);
+            _extent = newExtent;
+            _viewport = newViewport;
 
             double finalMaxOffset = Math.Max(0, finalExtentHeight - viewportHeight);
             if (_offset.Y > finalMaxOffset)
                 _offset.Y = finalMaxOffset;
 
-            _scrollOwner?.InvalidateScrollInfo();
+            if (scrollInfoChanged)
+            {
+                _scrollOwner?.InvalidateScrollInfo();
+            }
 
             double resultHeight = double.IsInfinity(availableSize.Height) ? _extent.Height : Math.Min(availableSize.Height, _extent.Height);
             return new Size(availableSize.Width, resultHeight);
@@ -470,15 +526,21 @@ namespace MusicPlayer.Views
             double rowHeight = _rowHeight > 0 ? _rowHeight : (slot > 0 ? slot + 44 : RowHeightEstimate);
             int cols = _cols > 0 ? _cols : 1;
             double stride = rowHeight + Math.Max(0, Gap);
+            double gapH = _gapH;
+            double vOffset = VerticalOffset;
 
-            foreach (UIElement child in InternalChildren)
+            int firstIdx = _firstRealizedIndex;
+            int count = InternalChildren.Count;
+
+            for (int i = 0; i < count; i++)
             {
-                int index = (Owner != null ? Owner.ItemContainerGenerator.IndexFromContainer(child) : -1);
+                UIElement child = InternalChildren[i];
+                int index = (firstIdx >= 0) ? (firstIdx + i) : (owner.ItemContainerGenerator.IndexFromContainer(child));
                 if (index < 0) continue;
                 int row = index / cols;
                 int col = index % cols;
-                double x = col * (_slot + _gapH);
-                double y = row * stride - VerticalOffset;
+                double x = col * (slot + gapH);
+                double y = row * stride - vOffset;
                 child.Arrange(new Rect(x, y, slot, rowHeight));
             }
 
@@ -493,6 +555,8 @@ namespace MusicPlayer.Views
         {
             base.OnItemsChanged(sender, args);
             _rowHeight = 0;
+            _firstRealizedIndex = -1;
+            _lastRealizedIndex = -1;
             InvalidateMeasure();
         }
     }
