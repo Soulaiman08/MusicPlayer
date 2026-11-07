@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Specialized;
+using System.Diagnostics;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -8,10 +10,51 @@ using System.Windows.Media;
 namespace MusicPlayer.Views
 {
     /// <summary>
-    /// High-performance virtualizing balanced grid panel: only materializes containers
-    /// for items whose rows intersect the viewport (+ buffer rows).
-    /// Observes parent ScrollViewer scroll offsets, provides exact template-measured row heights
-    /// (eliminating gap accumulation), and preserves complete DataContext/bindings across scrolling.
+    /// Lightweight, thread-safe diagnostics metrics for VirtualizingBalancedPanel
+    /// providing real-time instrumentation of layout duration and container reuse.
+    /// </summary>
+    public static class PanelMetrics
+    {
+        public static long MeasureCount;
+        public static long MeasureTotalMs;
+        public static long ArrangeCount;
+        public static long ArrangeTotalMs;
+        public static long FullResetCount;
+        public static long ContainersCreated;
+        public static long ContainersReused;
+        public static long ContainersRemoved;
+        public static int LastVisibleItemCount;
+        public static int LastBufferItemCount;
+        public static double LastMeasureDurationMs;
+        public static double LastArrangeDurationMs;
+
+        public static string GetSummary()
+        {
+            long mCount = Interlocked.Read(ref MeasureCount);
+            long mMs = Interlocked.Read(ref MeasureTotalMs);
+            long aCount = Interlocked.Read(ref ArrangeCount);
+            long aMs = Interlocked.Read(ref ArrangeTotalMs);
+            long resets = Interlocked.Read(ref FullResetCount);
+            long created = Interlocked.Read(ref ContainersCreated);
+            long reused = Interlocked.Read(ref ContainersReused);
+            long removed = Interlocked.Read(ref ContainersRemoved);
+
+            double avgMeasure = mCount > 0 ? (double)mMs / mCount : 0;
+            double avgArrange = aCount > 0 ? (double)aMs / aCount : 0;
+
+            return $"MeasureCalls={mCount} (avg {avgMeasure:F2}ms), " +
+                   $"ArrangeCalls={aCount} (avg {avgArrange:F2}ms), " +
+                   $"FullResets={resets}, Created={created}, Reused={reused}, Removed={removed}, " +
+                   $"LastVisible={LastVisibleItemCount}, LastBuffer={LastBufferItemCount}";
+        }
+    }
+
+    /// <summary>
+    /// High-performance virtualizing balanced grid panel:
+    /// Maintains stable container realization with incremental entry/exit management.
+    /// Preserves existing containers across scrolling (preventing DataContext detachment and image churn),
+    /// throttles redundant InvalidateMeasure passes on sub-row scroll deltas,
+    /// and provides pixel-accurate template-measured extent heights.
     /// </summary>
     public class VirtualizingBalancedPanel : VirtualizingPanel, IScrollInfo
     {
@@ -46,6 +89,8 @@ namespace MusicPlayer.Views
         private double _lastMeasureWidth = 0;
         private int _firstRealizedIndex = -1;
         private int _lastRealizedIndex = -1;
+        private int _currentFirstRow = -1;
+        private int _currentLastRow = -1;
 
         private ScrollViewer? _parentScrollViewer;
         private ScrollViewer? _scrollOwner;
@@ -103,7 +148,26 @@ namespace MusicPlayer.Views
 
         private void OnParentScrollChanged(object sender, ScrollChangedEventArgs e)
         {
-            if (Math.Abs(e.VerticalChange) > 0.01 || Math.Abs(e.ViewportHeightChange) > 0.01)
+            if (_parentScrollViewer == null) return;
+
+            // Only invalidate measure when the visible/buffer row window actually changes.
+            // When scrolling within the buffer row boundary, sub-pixel compositor scrolling handles
+            // translation smoothly at native monitor refresh rates with zero UI thread work.
+            double effectiveRowHeight = _rowHeight > 0 ? _rowHeight : (_slot > 0 ? _slot + 44 : 200);
+            double stride = effectiveRowHeight + Math.Max(0, Gap);
+            if (stride <= 0) stride = 200;
+
+            double offsetY = Math.Max(0, _parentScrollViewer.VerticalOffset);
+            double viewportH = _parentScrollViewer.ViewportHeight > 0
+                ? _parentScrollViewer.ViewportHeight
+                : (_parentScrollViewer.ActualHeight > 0 ? _parentScrollViewer.ActualHeight : 800);
+
+            int topRow = (int)Math.Floor(offsetY / stride);
+            int visibleRowCount = (int)Math.Ceiling(Math.Max(1, viewportH) / stride);
+            int firstRow = Math.Max(0, topRow - 1);
+            int lastRow = topRow + visibleRowCount + 2;
+
+            if (firstRow != _currentFirstRow || lastRow != _currentLastRow || Math.Abs(e.ViewportHeightChange) > 1.0)
             {
                 InvalidateMeasure();
             }
@@ -151,166 +215,273 @@ namespace MusicPlayer.Views
 
         protected override Size MeasureOverride(Size availableSize)
         {
-            var owner = Owner;
-            if (owner == null) return base.MeasureOverride(availableSize);
-
-            HookScrollViewer();
-
-            int prevCols = _cols;
-            double prevWidth = _lastMeasureWidth;
-            Solve(availableSize.Width);
-            if (prevCols != _cols || Math.Abs(prevWidth - availableSize.Width) > 0.5)
+            long t0 = Stopwatch.GetTimestamp();
+            try
             {
-                _rowHeight = 0;
-            }
-            _lastMeasureWidth = availableSize.Width;
+                var owner = Owner;
+                if (owner == null) return base.MeasureOverride(availableSize);
 
-            int itemCount = owner.Items.Count;
-            if (itemCount == 0)
-            {
-                ResetAllContainers();
-                return new Size(availableSize.Width, 0);
-            }
+                HookScrollViewer();
 
-            IItemContainerGenerator generator = ItemContainerGenerator;
-            if (generator == null)
-            {
-                return new Size(availableSize.Width, 0);
-            }
-
-            // 1. If row height is not established, probe item 0 to measure exact template DesiredSize
-            if (_rowHeight <= 0 && itemCount > 0)
-            {
-                GeneratorPosition p0 = generator.GeneratorPositionFromIndex(0);
-                using (generator.StartAt(p0, GeneratorDirection.Forward, true))
+                int prevCols = _cols;
+                double prevWidth = _lastMeasureWidth;
+                Solve(availableSize.Width);
+                if (prevCols != _cols || Math.Abs(prevWidth - availableSize.Width) > 0.5)
                 {
-                    var probe = generator.GenerateNext(out bool _) as UIElement;
-                    if (probe != null)
-                    {
-                        generator.PrepareItemContainer(probe);
-                        probe.Measure(new Size(_slot, double.PositiveInfinity));
-                        if (probe.DesiredSize.Height > 0)
-                        {
-                            _rowHeight = probe.DesiredSize.Height;
-                        }
-                    }
+                    _rowHeight = 0;
                 }
-                ResetAllContainers();
-            }
+                _lastMeasureWidth = availableSize.Width;
 
-            double effectiveRowHeight = _rowHeight > 0 ? _rowHeight : (_slot > 0 ? _slot + 44 : 200);
-            double stride = effectiveRowHeight + Math.Max(0, Gap);
-            int cols = _cols > 0 ? _cols : 1;
-            int totalRows = (itemCount + cols - 1) / cols;
-
-            // 2. Resolve scroll offset and viewport height from parent ScrollViewer
-            double offsetY = 0;
-            double viewportH = 800;
-
-            if (_parentScrollViewer != null)
-            {
-                offsetY = Math.Max(0, _parentScrollViewer.VerticalOffset);
-                viewportH = _parentScrollViewer.ViewportHeight > 0
-                    ? _parentScrollViewer.ViewportHeight
-                    : (_parentScrollViewer.ActualHeight > 0 ? _parentScrollViewer.ActualHeight : 800);
-            }
-            else if (!double.IsInfinity(availableSize.Height) && availableSize.Height > 0)
-            {
-                viewportH = availableSize.Height;
-            }
-
-            // 3. Compute active row range with buffer rows (1 row above, 2 rows below)
-            int topRow = (int)Math.Floor(offsetY / stride);
-            int firstRow = Math.Max(0, topRow - 1);
-            int visibleRowCount = (int)Math.Ceiling(Math.Max(1, viewportH) / stride);
-            int lastRow = Math.Min(totalRows - 1, topRow + visibleRowCount + 2);
-
-            int reqFirst = firstRow * cols;
-            int reqLast = Math.Min(itemCount - 1, (lastRow + 1) * cols - 1);
-            if (reqFirst < 0) reqFirst = 0;
-            if (reqLast < reqFirst) reqLast = reqFirst - 1;
-
-            int reqCount = reqLast >= reqFirst ? (reqLast - reqFirst + 1) : 0;
-
-            // 4. Clean range materialization: ensures zero broken bindings or missing containers
-            if (_firstRealizedIndex != reqFirst || _lastRealizedIndex != reqLast || InternalChildren.Count != reqCount)
-            {
-                ResetAllContainers();
-
-                if (reqCount > 0)
+                int itemCount = owner.Items.Count;
+                if (itemCount == 0)
                 {
-                    GeneratorPosition startPos = generator.GeneratorPositionFromIndex(reqFirst);
-                    using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
+                    ResetAllContainers();
+                    return new Size(availableSize.Width, 0);
+                }
+
+                IItemContainerGenerator generator = ItemContainerGenerator;
+                if (generator == null)
+                {
+                    return new Size(availableSize.Width, 0);
+                }
+
+                double effectiveRowHeight = _rowHeight > 0 ? _rowHeight : (_slot > 0 ? _slot + 44 : 200);
+                double stride = effectiveRowHeight + Math.Max(0, Gap);
+                int cols = _cols > 0 ? _cols : 1;
+                int totalRows = (itemCount + cols - 1) / cols;
+
+                // Resolve scroll offset and viewport height from parent ScrollViewer
+                double offsetY = 0;
+                double viewportH = 800;
+
+                if (_parentScrollViewer != null)
+                {
+                    offsetY = Math.Max(0, _parentScrollViewer.VerticalOffset);
+                    viewportH = _parentScrollViewer.ViewportHeight > 0
+                        ? _parentScrollViewer.ViewportHeight
+                        : (_parentScrollViewer.ActualHeight > 0 ? _parentScrollViewer.ActualHeight : 800);
+                }
+                else if (!double.IsInfinity(availableSize.Height) && availableSize.Height > 0)
+                {
+                    viewportH = availableSize.Height;
+                }
+
+                // Compute active row range with buffer rows (1 row above, 2 rows below)
+                int topRow = (int)Math.Floor(offsetY / stride);
+                int firstRow = Math.Max(0, topRow - 1);
+                int visibleRowCount = (int)Math.Ceiling(Math.Max(1, viewportH) / stride);
+                int lastRow = Math.Min(totalRows - 1, topRow + visibleRowCount + 2);
+
+                _currentFirstRow = firstRow;
+                _currentLastRow = lastRow;
+
+                int reqFirst = firstRow * cols;
+                int reqLast = Math.Min(itemCount - 1, (lastRow + 1) * cols - 1);
+                if (reqFirst < 0) reqFirst = 0;
+                if (reqLast < reqFirst) reqLast = reqFirst - 1;
+
+                int reqCount = reqLast >= reqFirst ? (reqLast - reqFirst + 1) : 0;
+                int visibleCount = Math.Min(itemCount, (topRow + visibleRowCount) * cols) - (topRow * cols);
+                PanelMetrics.LastVisibleItemCount = Math.Max(0, visibleCount);
+                PanelMetrics.LastBufferItemCount = Math.Max(0, reqCount - visibleCount);
+
+                Size childConstraint = new Size(_slot, double.PositiveInfinity);
+
+                // Incremental Container Management:
+                // If previous realized range overlaps with requested range, preserve all overlapping containers!
+                // Only generate newly needed rows and release rows that scrolled out of view.
+                bool canIncrement = _firstRealizedIndex >= 0 &&
+                                    _lastRealizedIndex >= _firstRealizedIndex &&
+                                    InternalChildren.Count == (_lastRealizedIndex - _firstRealizedIndex + 1) &&
+                                    reqLast >= _firstRealizedIndex &&
+                                    reqFirst <= _lastRealizedIndex;
+
+                if (canIncrement && reqCount > 0)
+                {
+                    try
                     {
-                        for (int i = reqFirst; i <= reqLast; i++)
+                        // 1. Remove out-of-range containers from the top (scrolling DOWN)
+                        if (_firstRealizedIndex < reqFirst)
                         {
-                            var container = generator.GenerateNext(out bool newlyRealized) as UIElement;
-                            if (container == null) break;
+                            int countToRemove = reqFirst - _firstRealizedIndex;
+                            generator.Remove(new GeneratorPosition(0, 0), countToRemove);
+                            RemoveInternalChildRange(0, countToRemove);
+                            _firstRealizedIndex = reqFirst;
+                            Interlocked.Add(ref PanelMetrics.ContainersRemoved, countToRemove);
+                        }
 
-                            AddInternalChild(container);
-                            generator.PrepareItemContainer(container);
+                        // 2. Remove out-of-range containers from the bottom (scrolling UP)
+                        if (_lastRealizedIndex > reqLast)
+                        {
+                            int countToRemove = _lastRealizedIndex - reqLast;
+                            int childStartIndex = InternalChildren.Count - countToRemove;
+                            generator.Remove(new GeneratorPosition(childStartIndex, 0), countToRemove);
+                            RemoveInternalChildRange(childStartIndex, countToRemove);
+                            _lastRealizedIndex = reqLast;
+                            Interlocked.Add(ref PanelMetrics.ContainersRemoved, countToRemove);
+                        }
 
-                            container.Measure(new Size(_slot, double.PositiveInfinity));
-                            if (container.DesiredSize.Height > _rowHeight)
+                        // 3. Generate newly needed containers at the top (scrolling UP)
+                        if (reqFirst < _firstRealizedIndex)
+                        {
+                            int prevFirst = _firstRealizedIndex;
+                            GeneratorPosition startPos = generator.GeneratorPositionFromIndex(reqFirst);
+                            using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
                             {
-                                _rowHeight = container.DesiredSize.Height;
+                                int insertIndex = 0;
+                                for (int i = reqFirst; i < prevFirst; i++)
+                                {
+                                    var container = generator.GenerateNext(out bool newlyRealized) as UIElement;
+                                    if (container == null) break;
+                                    InsertInternalChild(insertIndex++, container);
+                                    generator.PrepareItemContainer(container);
+                                    container.Measure(childConstraint);
+                                    if (_rowHeight <= 0 && container.DesiredSize.Height > 0)
+                                    {
+                                        _rowHeight = container.DesiredSize.Height;
+                                    }
+                                    Interlocked.Increment(ref PanelMetrics.ContainersCreated);
+                                }
+                            }
+                            _firstRealizedIndex = reqFirst;
+                        }
+
+                        // 4. Generate newly needed containers at the bottom (scrolling DOWN)
+                        if (reqLast > _lastRealizedIndex)
+                        {
+                            int prevLast = _lastRealizedIndex;
+                            GeneratorPosition startPos = generator.GeneratorPositionFromIndex(prevLast + 1);
+                            using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
+                            {
+                                for (int i = prevLast + 1; i <= reqLast; i++)
+                                {
+                                    var container = generator.GenerateNext(out bool newlyRealized) as UIElement;
+                                    if (container == null) break;
+                                    AddInternalChild(container);
+                                    generator.PrepareItemContainer(container);
+                                    container.Measure(childConstraint);
+                                    if (_rowHeight <= 0 && container.DesiredSize.Height > 0)
+                                    {
+                                        _rowHeight = container.DesiredSize.Height;
+                                    }
+                                    Interlocked.Increment(ref PanelMetrics.ContainersCreated);
+                                }
+                            }
+                            _lastRealizedIndex = reqLast;
+                        }
+
+                        // 5. Measure surviving overlapping containers (no-op if unchanged)
+                        int currentCount = InternalChildren.Count;
+                        Interlocked.Add(ref PanelMetrics.ContainersReused, currentCount);
+                        for (int i = 0; i < currentCount; i++)
+                        {
+                            UIElement child = InternalChildren[i];
+                            child.Measure(childConstraint);
+                            if (_rowHeight <= 0 && child.DesiredSize.Height > 0)
+                            {
+                                _rowHeight = child.DesiredSize.Height;
                             }
                         }
                     }
-                    _firstRealizedIndex = reqFirst;
-                    _lastRealizedIndex = reqLast;
-                }
-            }
-            else
-            {
-                // Measure existing realized containers
-                for (int i = 0; i < InternalChildren.Count; i++)
-                {
-                    UIElement child = InternalChildren[i];
-                    child.Measure(new Size(_slot, double.PositiveInfinity));
-                    if (child.DesiredSize.Height > _rowHeight)
+                    catch
                     {
-                        _rowHeight = child.DesiredSize.Height;
+                        // Resilient fallback on any generator drift
+                        canIncrement = false;
                     }
                 }
+
+                if (!canIncrement)
+                {
+                    // Clean realization for non-overlapping jumps, tab switches, and resets
+                    ResetAllContainers();
+
+                    if (reqCount > 0)
+                    {
+                        GeneratorPosition startPos = generator.GeneratorPositionFromIndex(reqFirst);
+                        using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
+                        {
+                            for (int i = reqFirst; i <= reqLast; i++)
+                            {
+                                var container = generator.GenerateNext(out bool newlyRealized) as UIElement;
+                                if (container == null) break;
+
+                                AddInternalChild(container);
+                                generator.PrepareItemContainer(container);
+
+                                container.Measure(childConstraint);
+                                if (_rowHeight <= 0 && container.DesiredSize.Height > 0)
+                                {
+                                    _rowHeight = container.DesiredSize.Height;
+                                }
+                                Interlocked.Increment(ref PanelMetrics.ContainersCreated);
+                            }
+                        }
+                        _firstRealizedIndex = reqFirst;
+                        _lastRealizedIndex = reqLast;
+                    }
+                }
+
+                // Total extent height: communicates full library height to parent ScrollViewer
+                double finalRowHeight = _rowHeight > 0 ? _rowHeight : effectiveRowHeight;
+                double finalStride = finalRowHeight + Math.Max(0, Gap);
+                double totalExtentHeight = totalRows > 0 ? (totalRows - 1) * finalStride + finalRowHeight : 0;
+
+                return new Size(availableSize.Width, totalExtentHeight);
             }
-
-            // 5. Total extent height: communicates full library height to parent ScrollViewer
-            double finalRowHeight = _rowHeight > 0 ? _rowHeight : effectiveRowHeight;
-            double finalStride = finalRowHeight + Math.Max(0, Gap);
-            double totalExtentHeight = totalRows > 0 ? (totalRows - 1) * finalStride + finalRowHeight : 0;
-
-            return new Size(availableSize.Width, totalExtentHeight);
+            finally
+            {
+                long elapsed = Stopwatch.GetTimestamp() - t0;
+                double ms = elapsed * 1000.0 / Stopwatch.Frequency;
+                PanelMetrics.LastMeasureDurationMs = ms;
+                Interlocked.Increment(ref PanelMetrics.MeasureCount);
+                Interlocked.Add(ref PanelMetrics.MeasureTotalMs, (long)ms);
+            }
         }
 
         protected override Size ArrangeOverride(Size finalSize)
         {
-            Solve(finalSize.Width);
-            var owner = Owner;
-            if (owner == null) return finalSize;
-
-            double slot = _slot;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : (slot > 0 ? slot + 44 : 200);
-            int cols = _cols > 0 ? _cols : 1;
-            double stride = rowHeight + Math.Max(0, Gap);
-            double gapH = _gapH;
-
-            int count = InternalChildren.Count;
-            int baseIndex = _firstRealizedIndex >= 0 ? _firstRealizedIndex : 0;
-
-            for (int i = 0; i < count; i++)
+            long t0 = Stopwatch.GetTimestamp();
+            try
             {
-                UIElement child = InternalChildren[i];
-                int itemIndex = baseIndex + i;
-                int row = itemIndex / cols;
-                int col = itemIndex % cols;
-                double x = col * (slot + gapH);
-                double y = row * stride;
+                Solve(finalSize.Width);
+                var owner = Owner;
+                if (owner == null) return finalSize;
 
-                child.Arrange(new Rect(x, y, slot, rowHeight));
+                double slot = _slot;
+                double rowHeight = _rowHeight > 0 ? _rowHeight : (_slot > 0 ? _slot + 44 : 200);
+                int cols = _cols > 0 ? _cols : 1;
+                double stride = rowHeight + Math.Max(0, Gap);
+                double gapH = _gapH;
+
+                int count = InternalChildren.Count;
+                int baseIndex = _firstRealizedIndex >= 0 ? _firstRealizedIndex : 0;
+
+                for (int i = 0; i < count; i++)
+                {
+                    UIElement child = InternalChildren[i];
+                    int itemIndex = baseIndex + i;
+
+                    int realIndex = owner.ItemContainerGenerator.IndexFromContainer(child);
+                    if (realIndex >= 0) itemIndex = realIndex;
+
+                    int row = itemIndex / cols;
+                    int col = itemIndex % cols;
+                    double x = col * (slot + gapH);
+                    double y = row * stride;
+
+                    child.Arrange(new Rect(x, y, slot, rowHeight));
+                }
+
+                return finalSize;
             }
-
-            return finalSize;
+            finally
+            {
+                long elapsed = Stopwatch.GetTimestamp() - t0;
+                double ms = elapsed * 1000.0 / Stopwatch.Frequency;
+                PanelMetrics.LastArrangeDurationMs = ms;
+                Interlocked.Increment(ref PanelMetrics.ArrangeCount);
+                Interlocked.Add(ref PanelMetrics.ArrangeTotalMs, (long)ms);
+            }
         }
 
         private void ResetAllContainers()
@@ -327,6 +498,9 @@ namespace MusicPlayer.Views
             RemoveInternalChildRange(0, InternalChildren.Count);
             _firstRealizedIndex = -1;
             _lastRealizedIndex = -1;
+            _currentFirstRow = -1;
+            _currentLastRow = -1;
+            Interlocked.Increment(ref PanelMetrics.FullResetCount);
         }
 
         protected override void OnItemsChanged(object sender, ItemsChangedEventArgs args)

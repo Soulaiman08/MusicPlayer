@@ -648,19 +648,40 @@ public class AlbumArtLoader
         return _cardsCache.TryGetValue(path, out var img) && img != null && img != _defaultArt;
     }
 
+    public static long MediumDecodesTotal;
+    public static long MediumDecodesOnUIThread;
+    public static long MediumDeduplicatedCount;
+
     public void EnqueueMediumArt(string path, MusicTrack? track = null, MusicPlayer.Services.WorkPriority priority = MusicPlayer.Services.WorkPriority.ImmediateVisible)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
         if (_cardsCache.ContainsKey(path)) return;
+        if (!_pendingMediumParses.TryAdd(path, 1))
+        {
+            Interlocked.Increment(ref MediumDeduplicatedCount);
+            return;
+        }
 
         _ = MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
             "cards:" + path,
             priority,
             ct =>
             {
-                if (ct.IsCancellationRequested) return Task.CompletedTask;
-                if (_cardsCache.ContainsKey(path)) return Task.CompletedTask;
-                ProcessMediumArt(path, track);
+                try
+                {
+                    if (ct.IsCancellationRequested) return Task.CompletedTask;
+                    if (_cardsCache.ContainsKey(path)) return Task.CompletedTask;
+                    if (System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true)
+                    {
+                        Interlocked.Increment(ref MediumDecodesOnUIThread);
+                    }
+                    Interlocked.Increment(ref MediumDecodesTotal);
+                    ProcessMediumArt(path, track);
+                }
+                finally
+                {
+                    _pendingMediumParses.TryRemove(path, out _);
+                }
                 return Task.CompletedTask;
             });
     }

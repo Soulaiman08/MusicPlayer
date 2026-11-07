@@ -1293,11 +1293,9 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
         if (ReferenceEquals(_albumArtLoader, loader)) return;
         if (_albumArtLoader != null)
         {
-            _albumArtLoader.MediumArtReady -= OnMediumArtReady;
             _albumArtLoader.MediumArtBatchReady -= OnMediumArtBatchReady;
         }
         _albumArtLoader = loader;
-        _albumArtLoader.MediumArtReady += OnMediumArtReady;
         _albumArtLoader.MediumArtBatchReady += OnMediumArtBatchReady;
     }
 
@@ -1312,7 +1310,6 @@ InitializeComponent();
    {
        if (_albumArtLoader != null)
        {
-           _albumArtLoader.MediumArtReady -= OnMediumArtReady;
            _albumArtLoader.MediumArtBatchReady -= OnMediumArtBatchReady;
            _albumArtLoader = null;
        }
