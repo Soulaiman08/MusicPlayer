@@ -1573,18 +1573,7 @@ InitializeComponent();
             Dispatcher.BeginInvoke(new Action(TryCompleteStartupPresentation));
         }
 
-        // Notify any pending theme-apply completion callbacks whose rebuild has
-        // reached this (or a newer) generation.
-        for (int i = _themeRebuildCallbacks.Count - 1; i >= 0; i--)
-        {
-            if (_themeRebuildCallbacks[i].Gen <= _bgGen)
-            {
-                var cb = _themeRebuildCallbacks[i].Callback;
-                _themeRebuildCallbacks.RemoveAt(i);
-                try { cb(true); }
-                catch { }
-            }
-        }
+
     }
 
     private void RebuildGlassBackdropCache()
@@ -1780,6 +1769,21 @@ InitializeComponent();
     private System.Threading.CancellationTokenSource? _wallpaperRebuildCts;
     private string _lastRebuiltWallpaperPath = string.Empty;
 
+    private void CompleteThemeRebuildCallback(long gen, bool success)
+    {
+        for (int i = _themeRebuildCallbacks.Count - 1; i >= 0; i--)
+        {
+            if (_themeRebuildCallbacks[i].Gen == gen)
+            {
+                var cb = _themeRebuildCallbacks[i].Callback;
+                _themeRebuildCallbacks.RemoveAt(i);
+                try { cb(success); }
+                catch { }
+                return;
+            }
+        }
+    }
+
     private void RebuildBlurCache(System.Action<bool>? onComplete = null)
     {
         // Dispatcher affinity: settings/theme paths raise this off the UI thread
@@ -1792,6 +1796,11 @@ InitializeComponent();
             return;
         }
         long gen = ++_bgGen;
+
+        // Supersede any previous pending theme rebuild callbacks.
+        var staleGens = _themeRebuildCallbacks.Select(x => x.Gen).Distinct().ToList();
+        foreach (var staleGen in staleGens)
+            CompleteThemeRebuildCallback(staleGen, false);
 
         if (onComplete != null)
         {
@@ -1812,6 +1821,7 @@ InitializeComponent();
                 // No ViewModel yet — apply solid fallback so the loading overlay
                 // can eventually dismiss, and retry when DataContext is set.
                 ApplySolidWallpaperFallback();
+                CompleteThemeRebuildCallback(gen, false);
                 return;
             }
 
@@ -1937,6 +1947,7 @@ InitializeComponent();
                             targetItem.HasLoadError = true;
                             targetItem.IsLoading = false;
                         }
+                        CompleteThemeRebuildCallback(gen, false);
                         return;
                     }
                     if (!wantBlur)
@@ -1949,6 +1960,7 @@ InitializeComponent();
                             targetItem.IsLoading = false;
                         }
                         LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} sharp {finalDecoded.PixelWidth}x{finalDecoded.PixelHeight} appliedMs={ElapsedMs(t0):0}");
+                        CompleteThemeRebuildCallback(gen, true);
                         return;
                     }
                     int dw = (int)ActualWidth, dh = (int)ActualHeight;
@@ -1966,6 +1978,7 @@ InitializeComponent();
                         LogHelper.LogInfo($"[Wallpaper] rebuild: not laid out yet, showing original ({finalKind})");
                         _bgDirty = true;
                         EnsureBlurCache();
+                        CompleteThemeRebuildCallback(gen, !wantBlur);
                         return;
                     }
                     try
@@ -2013,6 +2026,7 @@ InitializeComponent();
                                 targetItem.IsLoading = false;
                             }
                             LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur cached {pxW}x{pxH} appliedMs={ElapsedMs(t0):0}");
+                            CompleteThemeRebuildCallback(gen, true);
                             return;
                         }
                         if (TryGetPreparedBlur(preparedKey, out var cachedBlur) && cachedBlur != null)
@@ -2025,6 +2039,7 @@ InitializeComponent();
                                 targetItem.IsLoading = false;
                             }
                             LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur cached {pxW}x{pxH} appliedMs={ElapsedMs(t0):0}");
+                            CompleteThemeRebuildCallback(gen, true);
                             return;
                         }
                         if (targetItem != null) targetItem.LoadProgress = 70;
@@ -2092,7 +2107,11 @@ InitializeComponent();
 
                             Dispatcher.BeginInvoke(new Action(() =>
                             {
-                                if (gen != _bgGen) return;
+                                if (gen != _bgGen)
+                                {
+                                    // Stale worker result: do not apply, do not change newer result.
+                                    return;
+                                }
                                 if (result != null)
                                 {
                                     if (targetItem != null) targetItem.LoadProgress = 90;
@@ -2103,6 +2122,7 @@ InitializeComponent();
                                         targetItem.IsLoading = false;
                                     }
                                     LogHelper.LogInfo($"[Wallpaper] rebuild ok: kind={finalKind} blur {pxW}x{pxH} dpi={dpiScaleX:0.##} radius={blurRadiusEffective:0.##} appliedMs={ElapsedMs(t0):0}");
+                                    CompleteThemeRebuildCallback(gen, true);
                                 }
                                 else
                                 {
@@ -2113,6 +2133,8 @@ InitializeComponent();
                                         targetItem.LoadProgress = 100;
                                         targetItem.IsLoading = false;
                                     }
+                                    // Blur failed: fallback shown, but report failure.
+                                    CompleteThemeRebuildCallback(gen, false);
                                 }
                             }));
                         });
@@ -2131,6 +2153,7 @@ InitializeComponent();
                                 targetItem.HasLoadError = true;
                                 targetItem.IsLoading = false;
                             }
+                            CompleteThemeRebuildCallback(gen, false);
                         }));
                     }
                 }));
@@ -2144,6 +2167,7 @@ InitializeComponent();
             {
                 targetItem.HasLoadError = true;
                 targetItem.IsLoading = false;
+            CompleteThemeRebuildCallback(gen, false);
             }
         }
     }

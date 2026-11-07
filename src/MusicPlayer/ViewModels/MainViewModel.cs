@@ -8224,8 +8224,12 @@ private async void LoadFolders()
 	private async void SaveThemeEdit()
 	{
 		long gen = 0;
+		System.Threading.Tasks.TaskCompletionSource<bool>? tcs = null;
 		try
 		{
+			// Ignore repeated Apply while an operation is already running.
+			if (_themeApplyTcs != null) return;
+
 			try { _previewCts?.Cancel(); } catch { }
 
 			gen = ++_themeApplyGeneration;
@@ -8249,7 +8253,7 @@ private async void LoadFolders()
 
 			ShowStatusBarLoading("Applying theme...");
 
-			var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+			tcs = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
 			_themeApplyTcs = tcs;
 
 			WallpaperSettingsCommitted?.Invoke(this, EventArgs.Empty);
@@ -8291,6 +8295,13 @@ private async void LoadFolders()
 				OnPropertyChanged(nameof(IsThemeCommitting));
 			}
 			System.Diagnostics.Debug.WriteLine($"[ThemeEditor] SaveThemeEdit failed: {ex.Message}");
+		}
+		finally
+		{
+			if (tcs != null && _themeApplyTcs == tcs)
+			{
+				_themeApplyTcs = null;
+			}
 		}
 	}
 	private void CancelThemeEdit()
