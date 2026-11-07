@@ -154,7 +154,7 @@ namespace MusicPlayer.Views
             if (itemCount > 0 && lastIndex >= firstIndex)
             {
                 GeneratorPosition startPos = generator.GeneratorPositionFromIndex(firstIndex);
-                int childIndex = startPos.Offset == 0 ? startPos.Index + 1 : startPos.Index;
+                int childIndex = startPos.Offset == 0 ? startPos.Index : startPos.Index + 1;
                 using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
                 {
                     for (int i = firstIndex; i <= lastIndex; i++)
@@ -187,7 +187,18 @@ namespace MusicPlayer.Views
                 {
                     try
                     {
-                        generator.Remove(generator.GeneratorPositionFromIndex(index), 1);
+                        var genPos = generator.GeneratorPositionFromIndex(index);
+                        bool recycling = Owner != null &&
+                            VirtualizingPanel.GetVirtualizationMode(Owner) == VirtualizationMode.Recycling &&
+                            generator is IRecyclingItemContainerGenerator;
+                        if (recycling)
+                        {
+                            ((IRecyclingItemContainerGenerator)generator).Recycle(genPos, 1);
+                        }
+                        else
+                        {
+                            generator.Remove(genPos, 1);
+                        }
                         RemoveInternalChildRange(i, 1);
                     }
                     catch { }

@@ -1292,6 +1292,7 @@ InitializeComponent();
    SmoothScrollHelper.Initialize();
    DataContextChanged += OnDataContextChanged;
    Loaded += OnWindowLoaded;
+   AlbumArtLoader.Instance.MediumArtReady += OnMediumArtReady;
    Deactivated += OnWindowDeactivated;
 // Keeps the table headers' column separators aligned with the row separators,
 // which sit inside each list's scrollbar gutter.
@@ -2730,6 +2731,40 @@ InitializeComponent();
             {
                 LogHelper.LogError("SetDragRectangles", ex);
             }
+        }
+    }
+
+    private void OnMediumArtReady(string path)
+    {
+        try
+        {
+            foreach (Window w in System.Windows.Application.Current.Windows)
+            {
+                UpdateAlbumImages(w, path);
+            }
+        }
+        catch { }
+    }
+
+    private static void UpdateAlbumImages(DependencyObject root, string path)
+    {
+        if (root == null) return;
+        if (root is System.Windows.Controls.Image img)
+        {
+            var track = img.DataContext as MusicPlayer.Models.MusicTrack;
+            string? candidate = track != null
+                ? (!string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath)
+                : img.DataContext as string;
+            if (string.Equals(candidate, path, System.StringComparison.Ordinal))
+            {
+                var be = System.Windows.Data.BindingOperations.GetBindingExpression(img, System.Windows.Controls.Image.SourceProperty);
+                be?.UpdateTarget();
+            }
+        }
+        int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            UpdateAlbumImages(System.Windows.Media.VisualTreeHelper.GetChild(root, i), path);
         }
     }
 

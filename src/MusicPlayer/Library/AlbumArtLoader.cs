@@ -197,6 +197,7 @@ public class AlbumArtLoader
     private readonly ConcurrentDictionary<string, ImageSource?> _fullQualityCache = new();
     private readonly ConcurrentDictionary<string, byte> _pendingParses = new();
     private readonly ConcurrentDictionary<string, byte> _pendingMediumParses = new();
+    public event Action<string>? MediumArtReady;
     private readonly ConcurrentQueue<string> _preloadQueue = new();
     private ImageSource? _defaultArt;
     private volatile bool _preloading;
@@ -715,6 +716,19 @@ public class AlbumArtLoader
         });
     }
 
+    private void NotifyMediumArtReady(string path)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(() => MediumArtReady?.Invoke(path)));
+        }
+        else
+        {
+            MediumArtReady?.Invoke(path);
+        }
+    }
+
     private void EnqueueMediumArtParse(string path, MusicTrack? track)
     {
         if (_pendingMediumParses.ContainsKey(path)) return;
@@ -736,6 +750,7 @@ public class AlbumArtLoader
                     {
                         _mediumCache[path] = img;
                         _cache.TryAdd(path, img);
+                        NotifyMediumArtReady(path);
                     }
                 }
                 finally { _decodeGate.Release(); }
