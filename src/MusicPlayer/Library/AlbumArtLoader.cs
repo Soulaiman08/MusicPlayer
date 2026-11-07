@@ -774,7 +774,6 @@ public class AlbumArtLoader
                 if (img != null)
                 {
                     _mediumCache[path] = img;
-                    _cache.TryAdd(path, img);
                     TrimCache();
                     NotifyMediumArtReady(path);
                     return;
@@ -789,7 +788,6 @@ public class AlbumArtLoader
         if (mediumArt != null)
         {
             _mediumCache[path] = mediumArt;
-            _cache.TryAdd(path, mediumArt);
             TrimCache();
             NotifyMediumArtReady(path);
         }
@@ -1084,6 +1082,51 @@ public class AlbumArtLoader
         });
     }
 
+    /// <summary>
+    /// Preloads 220px medium-quality album artwork into <c>_mediumCache</c> for the given tracks.
+    /// Uses the disk cache when available; falls back to TagLib embedded pictures.
+    /// Safe to call on any thread. Does not pollute the 80px thumbnail cache.
+    /// </summary>
+    public Task PreloadMediumArtwork(
+        IEnumerable<MusicTrack> tracks,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.Run(() =>
+        {
+            var list = tracks.Where(t => t != null).ToList();
+            if (list.Count == 0) return;
+            Parallel.ForEach(list, new ParallelOptions
+            {
+                MaxDegreeOfParallelism = 4,
+                CancellationToken = cancellationToken
+            }, track =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
+                if (string.IsNullOrEmpty(path)) return;
+                // Skip if already in medium cache
+                if (_mediumCache.ContainsKey(path)) return;
+                try
+                {
+                    var hash = GetMd5Hash(path);
+                    var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
+                    var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
+                    var existingPath = File.Exists(cachedImagePath) ? cachedImagePath
+                                     : (File.Exists(cachedPngPath) ? cachedPngPath : null);
+                    if (existingPath != null)
+                    {
+                        var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
+                        if (img != null) { _mediumCache[path] = img; return; }
+                    }
+                    // Disk cache miss: decode from embedded tags (heavy path)
+                    var mediumArt = DecodeMediumValidPicture(track);
+                    if (mediumArt != null) _mediumCache[path] = mediumArt;
+                }
+                catch { }
+            });
+        }, cancellationToken);
+    }
+
     // Background warm-up: loads disk cache in parallel, then extracts missing with TagLib.
     public Task WarmUpArtCacheAsync(
         IEnumerable<MusicTrack> tracks,
@@ -1094,8 +1137,17 @@ public class AlbumArtLoader
             var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
             if (list.Count == 0) return;
 
-            // Phase 1: fast parallel memory load of already-cached disk thumbnails
+            // Phase 1: fast parallel memory load of already-cached disk thumbnails (80px)
             await PreloadTrackArtwork(list, cancellationToken);
+
+            // Phase 1b: warm up medium cache (220px) for distinct albums in this batch
+            var albumTracks = list
+                .Where(t => !string.IsNullOrEmpty(t.Album))
+                .GroupBy(t => t.Album, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+            if (albumTracks.Count > 0)
+                await PreloadMediumArtwork(albumTracks, cancellationToken);
 
             // Phase 2: any tracks without a disk thumbnail can be extracted via TagLib in the background
             foreach (var track in list)

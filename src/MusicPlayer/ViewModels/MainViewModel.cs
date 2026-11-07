@@ -4379,10 +4379,32 @@ public partial class MainViewModel : ViewModelBase
 		{
 		}
 		LogHelper.LogInfo($"[StartupPerf] BuildArtistItemsAsync done totalMs={_startupSw.ElapsedMilliseconds}");
+		// Populate ArtistImages dictionary immediately from preloaded cache, then
+		// decode on a background thread so the artist tab is ready on first visit.
+		if (_preloadedArtistResult != null)
+		{
+			var cached = _preloadedArtistResult.Value.CachedImages;
+			foreach (var kvp in cached)
+			{
+				if (!string.IsNullOrWhiteSpace(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value))
+					ArtistImages[kvp.Key] = kvp.Value;
+			}
+			_ = Task.Run(() => PreloadArtistImages(cached), token);
+		}
 		if (token.IsCancellationRequested) return;
 		if (sortedTracks != null && sortedTracks.Count > 0)
 		{
 			await _albumArt.PreloadTrackArtwork(sortedTracks.Take(60), token);
+			// Also warm up 220px medium cache for the first batch of distinct albums
+			// so the Albums tab renders crisp covers without a background decode burst.
+			var initialAlbums = sortedTracks
+				.Where(t => !string.IsNullOrEmpty(t.Album))
+				.GroupBy(t => t.Album, StringComparer.OrdinalIgnoreCase)
+				.Select(g => g.First())
+				.Take(60)
+				.ToList();
+			if (initialAlbums.Count > 0)
+				await _albumArt.PreloadMediumArtwork(initialAlbums, token);
 		}
 		LogHelper.LogInfo($"[StartupPerf] PreloadTrackArtwork done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;

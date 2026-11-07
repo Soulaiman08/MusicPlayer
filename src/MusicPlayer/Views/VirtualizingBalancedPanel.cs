@@ -129,11 +129,13 @@ namespace MusicPlayer.Views
                 if (reqFirst >= _firstRealizedIndex && reqLast <= _lastRealizedIndex)
                 {
                     InvalidateArrange();
+                    _scrollOwner?.InvalidateScrollInfo();
                     return;
                 }
             }
 
             InvalidateMeasure();
+            _scrollOwner?.InvalidateScrollInfo();
         }
 
         public void SetHorizontalOffset(double offset)
@@ -220,10 +222,10 @@ namespace MusicPlayer.Views
             double viewportHeight = availableSize.Height;
             if (double.IsInfinity(viewportHeight) || double.IsNaN(viewportHeight) || viewportHeight <= 0)
             {
-                if (_scrollOwner != null && _scrollOwner.ViewportHeight > 0)
-                    viewportHeight = _scrollOwner.ViewportHeight;
-                else if (_scrollOwner != null && _scrollOwner.ActualHeight > 0)
+                if (_scrollOwner != null && _scrollOwner.ActualHeight > 0)
                     viewportHeight = _scrollOwner.ActualHeight;
+                else if (_scrollOwner != null && _scrollOwner.ViewportHeight > 0)
+                    viewportHeight = _scrollOwner.ViewportHeight;
                 else if (_viewport.Height > 0 && _viewport.Height < 10000)
                     viewportHeight = _viewport.Height;
                 else
@@ -461,22 +463,25 @@ namespace MusicPlayer.Views
 
             UIElement child = InternalChildren[childIndex];
             IItemContainerGenerator generator = ItemContainerGenerator;
-            if (generator == null) return false;
+            if (generator == null)
+            {
+                RemoveInternalChildRange(childIndex, 1);
+                return true;
+            }
 
             int itemIndex = (Owner != null) ? Owner.ItemContainerGenerator.IndexFromContainer(child) : -1;
-            GeneratorPosition pos;
-            if (itemIndex >= 0)
+            if (itemIndex < 0)
             {
-                pos = generator.GeneratorPositionFromIndex(itemIndex);
-            }
-            else
-            {
-                pos = new GeneratorPosition(childIndex, 0);
+                // Container is already detached or unindexed; remove from visual tree so it does not become a zombie
+                RemoveInternalChildRange(childIndex, 1);
+                return true;
             }
 
+            GeneratorPosition pos = generator.GeneratorPositionFromIndex(itemIndex);
             if (pos.Index < 0 || pos.Offset != 0)
             {
-                pos = new GeneratorPosition(childIndex, 0);
+                RemoveInternalChildRange(childIndex, 1);
+                return true;
             }
 
             bool recycling = Owner != null &&
@@ -494,14 +499,15 @@ namespace MusicPlayer.Views
                     generator.Remove(pos, 1);
                 }
 
-                // Only remove visually if generator operation succeeded
                 RemoveInternalChildRange(childIndex, 1);
                 return true;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"SafeRemoveOrRecycleContainer failed for childIndex {childIndex}, itemIndex {itemIndex}: {ex.Message}");
-                return false;
+                // Ensure internal children list stays clean even if generator throws
+                RemoveInternalChildRange(childIndex, 1);
+                return true;
             }
         }
 
@@ -535,7 +541,8 @@ namespace MusicPlayer.Views
             for (int i = 0; i < count; i++)
             {
                 UIElement child = InternalChildren[i];
-                int index = (firstIdx >= 0) ? (firstIdx + i) : (owner.ItemContainerGenerator.IndexFromContainer(child));
+                int index = owner.ItemContainerGenerator.IndexFromContainer(child);
+                if (index < 0 && firstIdx >= 0) index = firstIdx + i;
                 if (index < 0) continue;
                 int row = index / cols;
                 int col = index % cols;
@@ -544,9 +551,11 @@ namespace MusicPlayer.Views
                 child.Arrange(new Rect(x, y, slot, rowHeight));
             }
 
-            double vpHeight = (_scrollOwner != null && _scrollOwner.ViewportHeight > 0)
-                ? _scrollOwner.ViewportHeight
-                : (_viewport.Height > 0 && _viewport.Height < _extent.Height ? _viewport.Height : finalSize.Height);
+            double vpHeight = (_scrollOwner != null && _scrollOwner.ActualHeight > 0)
+                ? _scrollOwner.ActualHeight
+                : ((_scrollOwner != null && _scrollOwner.ViewportHeight > 0)
+                    ? _scrollOwner.ViewportHeight
+                    : (_viewport.Height > 0 && _viewport.Height < _extent.Height ? _viewport.Height : finalSize.Height));
             _viewport = new Size(finalSize.Width, vpHeight);
             return finalSize;
         }
