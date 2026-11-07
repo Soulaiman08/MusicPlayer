@@ -192,9 +192,17 @@ public class AlbumArtLoader
 {
     private readonly DatabaseService _db;
     private readonly ILogger<AlbumArtLoader>? _logger;
-    private readonly ConcurrentDictionary<string, ImageSource?> _cache = new();
-    private readonly ConcurrentDictionary<string, ImageSource?> _mediumCache = new(); // mini-player quality
-    private readonly ConcurrentDictionary<string, ImageSource?> _fullQualityCache = new();
+    // Four isolated quality tiers
+    private readonly ConcurrentDictionary<string, ImageSource?> _listCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ImageSource?> _miniCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ImageSource?> _cardsCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ImageSource?> _fullCache = new(StringComparer.OrdinalIgnoreCase);
+
+    // Aliases for seamless backward compatibility
+    private ConcurrentDictionary<string, ImageSource?> _cache => _listCache;
+    private ConcurrentDictionary<string, ImageSource?> _mediumCache => _cardsCache;
+    private ConcurrentDictionary<string, ImageSource?> _fullQualityCache => _fullCache;
+
     private readonly ConcurrentDictionary<string, byte> _pendingParses = new();
     private readonly ConcurrentDictionary<string, byte> _pendingMediumParses = new();
     public event Action<string>? MediumArtReady;
@@ -348,12 +356,21 @@ public class AlbumArtLoader
 
     public static void SetScrollingActive(bool active) => _scrollingActive = active;
 
+    public const int ListDecodeSize = 80;    // List & track grid thumbnails: 80px
+    public const int MiniDecodeSize = 160;   // MiniPlayer: 160px (crisp Retina for 72-80px box)
+    public const int CardsDecodeSize = 240;  // Album & artist cards: 240px (crisp for 150-176px slot)
+    public const int DecodePixelSize = 80;   // Backwards compat alias
+    public const int MediumDecodeSize = 240; // Backwards compat alias
+
+    private const int MaxListCacheSize = 2500;
+    private const int MaxMiniCacheSize = 100;
+    private const int MaxCardsCacheSize = 1200;
+    private const int MaxFullCacheSize = 20;
     private const int MaxCacheSize = 2500;
-    private const int DecodePixelSize = 80;   // list thumbnails: 2× the ~40px display slot
-    private const int MediumDecodeSize = 220; // album cards and mini-player: crisp and fast at 150px display slot
+    private const int MaxMediumCacheSize = 1200;
+
     private const int ThumbEncodeSize = 512;
     private const int MaxThumbFileBytes = 1024 * 1024;
-    private const int MaxMediumCacheSize = 500; // Increased to 500 so albums view does not aggressively evict
 
     // Caps simultaneous background TagLib decodes so the post-scroll catch-up
     // backlog (measured: dozens of parses flushing at once after a wheel burst
@@ -515,7 +532,7 @@ public class AlbumArtLoader
     public ImageSource? LoadFullAlbumArt(MusicTrack? track)
     {
         if (track == null) return GetDefaultAlbumArt();
-        var path = track.FilePath;
+        var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
         if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
 
         if (_fullQualityCache.TryGetValue(path, out var cached) && cached != null)
@@ -527,82 +544,6 @@ public class AlbumArtLoader
             _fullQualityCache[path] = fullArt;
             TrimCache();
             return fullArt;
-        }
-
-        // Fallback: standard thumbnail if no embedded or dedicated full-res art exists
-        var normalArt = LoadAlbumArt(track);
-        if (normalArt != null && normalArt != _defaultArt)
-        {
-            _fullQualityCache[path] = normalArt;
-            TrimCache();
-            return normalArt;
-        }
-
-        return GetDefaultAlbumArt();
-    }
-
-    public bool HasMediumArt(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path)) return false;
-        return _mediumCache.TryGetValue(path, out var img) && img != null && img != _defaultArt;
-    }
-
-    public void EnqueueMediumArt(string path, MusicTrack? track = null)
-    {
-        EnqueueMediumArtParse(path, track);
-    }
-
-    // ── Medium quality (380px) — Mini Player ──────────────────────────────────
-    public ImageSource? LoadMediumAlbumArt(MusicTrack? track)
-    {
-        using var perfCall = new PerfMeasurement(isDecode: false);
-        if (track == null) return GetDefaultAlbumArt();
-        var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
-        if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
-
-        if (_mediumCache.TryGetValue(path, out var cached) && cached != null && cached != _defaultArt)
-        {
-            RecordMediumCacheHit();
-            return cached;
-        }
-
-        RecordMediumCacheMiss();
-
-        // Always queue background decode for true 220px medium art
-        EnqueueMediumArtParse(path, track);
-
-        // If thumbnail cache already has it in memory, return as instant preview,
-        // but DO NOT store thumbnail in _mediumCache!
-        if (_cache.TryGetValue(path, out var thumb) && thumb != null && thumb != _defaultArt)
-        {
-            RecordMediumThumbnailHit();
-            return thumb;
-        }
-
-        return GetDefaultAlbumArt();
-    }
-
-    public ImageSource? LoadMediumAlbumArt(string? filePath)
-    {
-        using var perfCall = new PerfMeasurement(isDecode: false);
-        if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
-
-        if (_mediumCache.TryGetValue(filePath, out var cached) && cached != null && cached != _defaultArt)
-        {
-            RecordMediumCacheHit();
-            return cached;
-        }
-
-        RecordMediumCacheMiss();
-
-        EnqueueMediumArtParse(filePath, null);
-
-        // If thumbnail cache already has it in memory, return as instant preview,
-        // but DO NOT store thumbnail in _mediumCache!
-        if (_cache.TryGetValue(filePath, out var thumb) && thumb != null && thumb != _defaultArt)
-        {
-            RecordMediumThumbnailHit();
-            return thumb;
         }
 
         return GetDefaultAlbumArt();
@@ -623,13 +564,177 @@ public class AlbumArtLoader
             return fullArt;
         }
 
-        var normalArt = LoadAlbumArt(filePath);
-        if (normalArt != null && normalArt != _defaultArt)
+        return GetDefaultAlbumArt();
+    }
+
+    // ── MiniPlayer Quality (160px) ────────────────────────────────────────────
+    public ImageSource? LoadMiniAlbumArt(MusicTrack? track)
+    {
+        if (track == null) return GetDefaultAlbumArt();
+        var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
+        if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
+
+        if (_miniCache.TryGetValue(path, out var cached) && cached != null && cached != _defaultArt)
+            return cached;
+
+        try
         {
-            _fullQualityCache[filePath] = normalArt;
-            TrimCache();
-            return normalArt;
+            var hash = GetMd5Hash(path);
+            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
+            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
+            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
+            if (existingPath != null)
+            {
+                var img = LoadSizedImageFromFile(existingPath, MiniDecodeSize);
+                if (img != null)
+                {
+                    _miniCache[path] = img;
+                    TrimCache();
+                    return img;
+                }
+            }
         }
+        catch { }
+
+        var miniArt = DecodeSizedValidPicture(track, MiniDecodeSize);
+        if (miniArt != null)
+        {
+            _miniCache[path] = miniArt;
+            TrimCache();
+            return miniArt;
+        }
+
+        return GetDefaultAlbumArt();
+    }
+
+    public ImageSource? LoadMiniAlbumArt(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
+        if (_miniCache.TryGetValue(filePath, out var cached) && cached != null && cached != _defaultArt)
+            return cached;
+
+        try
+        {
+            var hash = GetMd5Hash(filePath);
+            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
+            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
+            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
+            if (existingPath != null)
+            {
+                var img = LoadSizedImageFromFile(existingPath, MiniDecodeSize);
+                if (img != null)
+                {
+                    _miniCache[filePath] = img;
+                    TrimCache();
+                    return img;
+                }
+            }
+        }
+        catch { }
+
+        var dummyTrack = new MusicTrack { FilePath = filePath };
+        var miniArt = DecodeSizedValidPicture(dummyTrack, MiniDecodeSize);
+        if (miniArt != null)
+        {
+            _miniCache[filePath] = miniArt;
+            TrimCache();
+            return miniArt;
+        }
+
+        return GetDefaultAlbumArt();
+    }
+
+    public bool HasMediumArt(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        return _cardsCache.TryGetValue(path, out var img) && img != null && img != _defaultArt;
+    }
+
+    public void EnqueueMediumArt(string path, MusicTrack? track = null)
+    {
+        EnqueueMediumArtParse(path, track);
+    }
+
+    // ── Cards Quality (240px) — Album and Artist Cards ───────────────────────
+    public ImageSource? LoadCardsAlbumArt(MusicTrack? track) => LoadMediumAlbumArt(track);
+    public ImageSource? LoadCardsAlbumArt(string? filePath) => LoadMediumAlbumArt(filePath);
+
+    public ImageSource? LoadMediumAlbumArt(MusicTrack? track)
+    {
+        using var perfCall = new PerfMeasurement(isDecode: false);
+        if (track == null) return GetDefaultAlbumArt();
+        var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
+        if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
+
+        if (_cardsCache.TryGetValue(path, out var cached) && cached != null && cached != _defaultArt)
+        {
+            RecordMediumCacheHit();
+            return cached;
+        }
+
+        RecordMediumCacheMiss();
+
+        // Check disk cache first ({hash}.jpg)
+        try
+        {
+            var hash = GetMd5Hash(path);
+            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
+            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
+            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
+            if (existingPath != null)
+            {
+                var img = LoadSizedImageFromFile(existingPath, CardsDecodeSize);
+                if (img != null)
+                {
+                    _cardsCache[path] = img;
+                    TrimCache();
+                    NotifyMediumArtReady(path);
+                    return img;
+                }
+            }
+        }
+        catch { }
+
+        // Queue background decode for true 240px cards art
+        EnqueueMediumArtParse(path, track);
+
+        return GetDefaultAlbumArt();
+    }
+
+    public ImageSource? LoadMediumAlbumArt(string? filePath)
+    {
+        using var perfCall = new PerfMeasurement(isDecode: false);
+        if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
+
+        if (_cardsCache.TryGetValue(filePath, out var cached) && cached != null && cached != _defaultArt)
+        {
+            RecordMediumCacheHit();
+            return cached;
+        }
+
+        RecordMediumCacheMiss();
+
+        try
+        {
+            var hash = GetMd5Hash(filePath);
+            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
+            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
+            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
+            if (existingPath != null)
+            {
+                var img = LoadSizedImageFromFile(existingPath, CardsDecodeSize);
+                if (img != null)
+                {
+                    _cardsCache[filePath] = img;
+                    TrimCache();
+                    NotifyMediumArtReady(filePath);
+                    return img;
+                }
+            }
+        }
+        catch { }
+
+        EnqueueMediumArtParse(filePath, null);
 
         return GetDefaultAlbumArt();
     }
@@ -658,11 +763,6 @@ public class AlbumArtLoader
                     // by the warm-up while this task was queued.
                     if (_fullQualityCache.TryGetValue(path, out var done) && done != null)
                         return;
-                    if (_cache.TryGetValue(path, out var thumb) && thumb != null)
-                    {
-                        _fullQualityCache.TryAdd(path, thumb);
-                        return;
-                    }
 
                     var dummyTrack = new MusicTrack { FilePath = path };
                     var img = DecodeFirstValidPicture(dummyTrack);
@@ -836,14 +936,16 @@ public class AlbumArtLoader
         return null;
     }
 
-    private ImageSource? DecodeMediumValidPicture(MusicTrack track)
+    private ImageSource? DecodeMediumValidPicture(MusicTrack track) => DecodeSizedValidPicture(track, CardsDecodeSize);
+
+    private ImageSource? DecodeSizedValidPicture(MusicTrack track, int size)
     {
         try
         {
             var path = track.FilePath;
             if (!string.IsNullOrEmpty(track.AlbumArtPath) && File.Exists(track.AlbumArtPath))
             {
-                var img = LoadSizedImageFromFile(track.AlbumArtPath, MediumDecodeSize);
+                var img = LoadSizedImageFromFile(track.AlbumArtPath, size);
                 if (img != null) return img;
             }
 
@@ -855,7 +957,7 @@ public class AlbumArtLoader
             {
                 if (picture.Data.Data == null || picture.Data.Data.Length == 0) continue;
                 using var ms = new MemoryStream(picture.Data.Data);
-                var img = LoadSizedImageFromStream(ms, MediumDecodeSize);
+                var img = LoadSizedImageFromStream(ms, size);
                 if (img != null)
                 {
                     try
@@ -881,7 +983,7 @@ public class AlbumArtLoader
                     var sidecar = Path.Combine(dir, name);
                     if (File.Exists(sidecar))
                     {
-                        var img = LoadSizedImageFromFile(sidecar, MediumDecodeSize);
+                        var img = LoadSizedImageFromFile(sidecar, size);
                         if (img != null) return img;
                     }
                 }
@@ -912,13 +1014,7 @@ public class AlbumArtLoader
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.StreamSource = ms;
-            // Archive presentation: the Full Player frame is a fixed square
-            // (Viewbox Uniform, max 560). Every full-quality source is decoded
-            // to 1024x1024 so all covers fill the frame identically regardless
-            // of embedded size/aspect. Full path only — list thumbnails keep
-            // their own 256px pipeline.
-            image.DecodePixelWidth = 1024;
-            image.DecodePixelHeight = 1024;
+            // Original master resolution: do NOT downscale. Keep full quality.
             image.EndInit();
             image.Freeze();
             return image;
@@ -1083,11 +1179,11 @@ public class AlbumArtLoader
     }
 
     /// <summary>
-    /// Preloads 220px medium-quality album artwork into <c>_mediumCache</c> for the given tracks.
+    /// Preloads 240px Cards-quality album artwork into <c>_cardsCache</c> for the given tracks.
     /// Uses the disk cache when available; falls back to TagLib embedded pictures.
     /// Safe to call on any thread. Does not pollute the 80px thumbnail cache.
     /// </summary>
-    public Task PreloadMediumArtwork(
+    public Task PreloadCardsArtwork(
         IEnumerable<MusicTrack> tracks,
         CancellationToken cancellationToken = default)
     {
@@ -1104,8 +1200,8 @@ public class AlbumArtLoader
                 cancellationToken.ThrowIfCancellationRequested();
                 var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
                 if (string.IsNullOrEmpty(path)) return;
-                // Skip if already in medium cache
-                if (_mediumCache.ContainsKey(path)) return;
+                // Skip if already in cards cache
+                if (_cardsCache.ContainsKey(path)) return;
                 try
                 {
                     var hash = GetMd5Hash(path);
@@ -1115,17 +1211,22 @@ public class AlbumArtLoader
                                      : (File.Exists(cachedPngPath) ? cachedPngPath : null);
                     if (existingPath != null)
                     {
-                        var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
-                        if (img != null) { _mediumCache[path] = img; return; }
+                        var img = LoadSizedImageFromFile(existingPath, CardsDecodeSize);
+                        if (img != null) { _cardsCache[path] = img; return; }
                     }
                     // Disk cache miss: decode from embedded tags (heavy path)
-                    var mediumArt = DecodeMediumValidPicture(track);
-                    if (mediumArt != null) _mediumCache[path] = mediumArt;
+                    var cardsArt = DecodeSizedValidPicture(track, CardsDecodeSize);
+                    if (cardsArt != null) _cardsCache[path] = cardsArt;
                 }
                 catch { }
             });
         }, cancellationToken);
     }
+
+    public Task PreloadMediumArtwork(
+        IEnumerable<MusicTrack> tracks,
+        CancellationToken cancellationToken = default)
+        => PreloadCardsArtwork(tracks, cancellationToken);
 
     // Background warm-up: loads disk cache in parallel, then extracts missing with TagLib.
     public Task WarmUpArtCacheAsync(
@@ -1323,36 +1424,49 @@ public class AlbumArtLoader
 
     private void TrimCache()
     {
-        if (_cache.Count > MaxCacheSize)
+        if (_listCache.Count > MaxListCacheSize)
         {
-            int toRemove = _cache.Count - MaxCacheSize + 100;
+            int toRemove = _listCache.Count - MaxListCacheSize + 100;
             int removed = 0;
-            foreach (var key in _cache.Keys)
+            foreach (var key in _listCache.Keys)
             {
-                if (_cache.TryRemove(key, out _))
+                if (_listCache.TryRemove(key, out _))
                 {
                     if (++removed >= toRemove) break;
                 }
             }
         }
 
-        if (_mediumCache.Count > MaxMediumCacheSize)
+        if (_miniCache.Count > MaxMiniCacheSize)
         {
-            int toRemove = _mediumCache.Count - MaxMediumCacheSize + 50;
+            int toRemove = _miniCache.Count - MaxMiniCacheSize + 20;
             int removed = 0;
-            foreach (var key in _mediumCache.Keys)
+            foreach (var key in _miniCache.Keys)
             {
-                if (_mediumCache.TryRemove(key, out _))
+                if (_miniCache.TryRemove(key, out _))
                 {
                     if (++removed >= toRemove) break;
                 }
             }
         }
 
-        while (_fullQualityCache.Count > 12)
+        if (_cardsCache.Count > MaxCardsCacheSize)
         {
-            var oldest = _fullQualityCache.Keys.FirstOrDefault();
-            if (oldest != null) _fullQualityCache.TryRemove(oldest, out _);
+            int toRemove = _cardsCache.Count - MaxCardsCacheSize + 50;
+            int removed = 0;
+            foreach (var key in _cardsCache.Keys)
+            {
+                if (_cardsCache.TryRemove(key, out _))
+                {
+                    if (++removed >= toRemove) break;
+                }
+            }
+        }
+
+        while (_fullCache.Count > MaxFullCacheSize)
+        {
+            var oldest = _fullCache.Keys.FirstOrDefault();
+            if (oldest != null) _fullCache.TryRemove(oldest, out _);
             else break;
         }
     }
@@ -1399,9 +1513,10 @@ public class AlbumArtLoader
 
     public void ClearCache()
     {
-        _cache.Clear();
-        _mediumCache.Clear();
-        _fullQualityCache.Clear();
+        _listCache.Clear();
+        _miniCache.Clear();
+        _cardsCache.Clear();
+        _fullCache.Clear();
         try
         {
             if (Directory.Exists(AppPaths.AlbumArtCachePath))

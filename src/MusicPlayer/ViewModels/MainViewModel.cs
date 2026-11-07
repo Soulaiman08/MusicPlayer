@@ -4379,8 +4379,11 @@ public partial class MainViewModel : ViewModelBase
 		{
 		}
 		LogHelper.LogInfo($"[StartupPerf] BuildArtistItemsAsync done totalMs={_startupSw.ElapsedMilliseconds}");
-		// Populate ArtistImages dictionary immediately from preloaded cache, then
-		// decode on a background thread so the artist tab is ready on first visit.
+		statusCallback?.Invoke("Preparing artwork & artists...");
+
+		var preloadTasks = new List<Task>();
+
+		// 1. Preload ALL cached artist images
 		if (_preloadedArtistResult != null)
 		{
 			var cached = _preloadedArtistResult.Value.CachedImages;
@@ -4389,24 +4392,49 @@ public partial class MainViewModel : ViewModelBase
 				if (!string.IsNullOrWhiteSpace(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value))
 					ArtistImages[kvp.Key] = kvp.Value;
 			}
-			_ = Task.Run(() => PreloadArtistImages(cached), token);
+			if (cached.Count > 0)
+			{
+				preloadTasks.Add(Task.Run(() => PreloadArtistImages(cached), token));
+			}
 		}
-		if (token.IsCancellationRequested) return;
+
+		// 2. Preload ALL distinct album covers (Cards quality 240px) and initial list thumbnails (80px)
 		if (sortedTracks != null && sortedTracks.Count > 0)
 		{
-			await _albumArt.PreloadTrackArtwork(sortedTracks.Take(60), token);
-			// Also warm up 220px medium cache for the first batch of distinct albums
-			// so the Albums tab renders crisp covers without a background decode burst.
-			var initialAlbums = sortedTracks
+			var allAlbums = sortedTracks
 				.Where(t => !string.IsNullOrEmpty(t.Album))
 				.GroupBy(t => t.Album, StringComparer.OrdinalIgnoreCase)
 				.Select(g => g.First())
-				.Take(60)
 				.ToList();
-			if (initialAlbums.Count > 0)
-				await _albumArt.PreloadMediumArtwork(initialAlbums, token);
+
+			if (allAlbums.Count > 0)
+			{
+				preloadTasks.Add(_albumArt.PreloadCardsArtwork(allAlbums, token));
+			}
+
+			// Preload first 120 track thumbnails for snappy initial list view
+			preloadTasks.Add(_albumArt.PreloadTrackArtwork(sortedTracks.Take(120), token));
 		}
-		LogHelper.LogInfo($"[StartupPerf] PreloadTrackArtwork done totalMs={_startupSw.ElapsedMilliseconds}");
+
+		// 3. Await all preloading before hiding the loading screen, with a safe timeout
+		if (preloadTasks.Count > 0)
+		{
+			try
+			{
+				var combined = Task.WhenAll(preloadTasks);
+				var timeout = Task.Delay(10000, token);
+				var finished = await Task.WhenAny(combined, timeout);
+				if (finished == timeout && !token.IsCancellationRequested)
+				{
+					LogHelper.LogInfo("[StartupPerf] Artwork preload timed out after 10s, continuing launch");
+				}
+			}
+			catch (Exception ex)
+			{
+				LogHelper.LogError("[StartupPerf] Preload error", ex);
+			}
+		}
+		LogHelper.LogInfo($"[StartupPerf] Artwork and Artist Preload complete totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		GC.Collect(0);
 		LoadPlaylists();
@@ -6445,26 +6473,29 @@ private async void LoadArtists()
 	{
 		try
 		{
-			foreach (KeyValuePair<string, string> cachedImage in cachedImages)
+			Parallel.ForEach(cachedImages, new ParallelOptions { MaxDegreeOfParallelism = 4 }, cachedImage =>
 			{
 				if (!string.IsNullOrWhiteSpace(cachedImage.Key) && !string.IsNullOrWhiteSpace(cachedImage.Value) && !ArtistImageCache.ContainsKey(cachedImage.Key))
 				{
 					try
 					{
-						BitmapImage bitmapImage = new BitmapImage();
-						bitmapImage.BeginInit();
-						bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-						bitmapImage.DecodePixelWidth = 256;
-						bitmapImage.UriSource = new Uri(cachedImage.Value, UriKind.Absolute);
-						bitmapImage.EndInit();
-						((Freezable)bitmapImage).Freeze();
-						ArtistImageCache[cachedImage.Key] = bitmapImage;
+						if (System.IO.File.Exists(cachedImage.Value))
+						{
+							BitmapImage bitmapImage = new BitmapImage();
+							bitmapImage.BeginInit();
+							bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+							bitmapImage.DecodePixelWidth = 256;
+							bitmapImage.UriSource = new Uri(cachedImage.Value, UriKind.Absolute);
+							bitmapImage.EndInit();
+							bitmapImage.Freeze();
+							ArtistImageCache[cachedImage.Key] = bitmapImage;
+						}
 					}
 					catch
 					{
 					}
 				}
-			}
+			});
 		}
 		catch
 		{
