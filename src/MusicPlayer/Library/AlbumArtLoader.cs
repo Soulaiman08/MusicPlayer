@@ -541,6 +541,17 @@ public class AlbumArtLoader
         return GetDefaultAlbumArt();
     }
 
+    public bool HasMediumArt(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        return _mediumCache.TryGetValue(path, out var img) && img != null && img != _defaultArt;
+    }
+
+    public void EnqueueMediumArt(string path, MusicTrack? track = null)
+    {
+        EnqueueMediumArtParse(path, track);
+    }
+
     // ── Medium quality (380px) — Mini Player ──────────────────────────────────
     public ImageSource? LoadMediumAlbumArt(MusicTrack? track)
     {
@@ -549,25 +560,25 @@ public class AlbumArtLoader
         var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
         if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
 
-        if (_mediumCache.TryGetValue(path, out var cached) && cached != null)
+        if (_mediumCache.TryGetValue(path, out var cached) && cached != null && cached != _defaultArt)
         {
             RecordMediumCacheHit();
             return cached;
         }
 
-        // If thumbnail cache already has it in memory, use that instantly
+        RecordMediumCacheMiss();
+
+        // Always queue background decode for true 220px medium art
+        EnqueueMediumArtParse(path, track);
+
+        // If thumbnail cache already has it in memory, return as instant preview,
+        // but DO NOT store thumbnail in _mediumCache!
         if (_cache.TryGetValue(path, out var thumb) && thumb != null && thumb != _defaultArt)
         {
             RecordMediumThumbnailHit();
-            _mediumCache[path] = thumb;
             return thumb;
         }
 
-        RecordMediumCacheMiss();
-
-        // Never block the caller with TagLib or disk file IO.
-        // Defer decode to bounded background worker and return placeholder immediately.
-        EnqueueMediumArtParse(path, track);
         return GetDefaultAlbumArt();
     }
 
@@ -576,23 +587,24 @@ public class AlbumArtLoader
         using var perfCall = new PerfMeasurement(isDecode: false);
         if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
 
-        if (_mediumCache.TryGetValue(filePath, out var cached) && cached != null)
+        if (_mediumCache.TryGetValue(filePath, out var cached) && cached != null && cached != _defaultArt)
         {
             RecordMediumCacheHit();
             return cached;
         }
 
-        // If thumbnail cache already has it in memory, use that instantly
-        if (_cache.TryGetValue(filePath, out var thumb) && thumb != null && thumb != _defaultArt)
-        {
-            RecordMediumThumbnailHit();
-            _mediumCache[filePath] = thumb;
-            return thumb;
-        }
-
         RecordMediumCacheMiss();
 
         EnqueueMediumArtParse(filePath, null);
+
+        // If thumbnail cache already has it in memory, return as instant preview,
+        // but DO NOT store thumbnail in _mediumCache!
+        if (_cache.TryGetValue(filePath, out var thumb) && thumb != null && thumb != _defaultArt)
+        {
+            RecordMediumThumbnailHit();
+            return thumb;
+        }
+
         return GetDefaultAlbumArt();
     }
 

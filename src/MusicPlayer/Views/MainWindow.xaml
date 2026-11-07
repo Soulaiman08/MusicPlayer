@@ -1242,29 +1242,34 @@
                   </ScrollViewer>
                 </Grid>
                 <Grid Name="TabContent_Albums" Visibility="Collapsed">
-                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                    <ItemsControl ItemsSource="{Binding DisplayedAlbums}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                      <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                          <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
-                        </ItemsPanelTemplate>
-                      </ItemsControl.ItemsPanel>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                          <Border Cursor="Hand" Margin="0" HorizontalAlignment="Stretch" MouseLeftButtonUp="AlbumRow_Click">
-                            <StackPanel HorizontalAlignment="Center">
-                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" ClipToBounds="True">
-                                <Border Background="#28FFFFFF" />
-                                <Image Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium, IsAsync=True}" Loaded="AlbumArtImage_Loaded" Unloaded="AlbumArtImage_Unloaded" DataContextChanged="AlbumArtImage_DataContextChanged" />
-                              </Grid>
-                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="13" Foreground="#B8FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Text="{Binding Album}" />
-                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="11" Foreground="#80FFFFFF" HorizontalAlignment="Center" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Text="{Binding Artist}" />
-                            </StackPanel>
-                          </Border>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                  </ScrollViewer>
+                  <ItemsControl ItemsSource="{Binding DisplayedAlbums}" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ItemsControl.Template>
+                      <ControlTemplate TargetType="ItemsControl">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20">
+                          <ItemsPresenter />
+                        </ScrollViewer>
+                      </ControlTemplate>
+                    </ItemsControl.Template>
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Cursor="Hand" Margin="0" HorizontalAlignment="Stretch" MouseLeftButtonUp="AlbumRow_Click">
+                          <StackPanel HorizontalAlignment="Center">
+                            <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" ClipToBounds="True">
+                              <Border Background="#28FFFFFF" />
+                              <Image Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium, IsAsync=True}" Loaded="AlbumArtImage_Loaded" Unloaded="AlbumArtImage_Unloaded" DataContextChanged="AlbumArtImage_DataContextChanged" />
+                            </Grid>
+                            <TextBlock TextTrimming="CharacterEllipsis" FontSize="13" Foreground="#B8FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Text="{Binding Album}" />
+                            <TextBlock TextTrimming="CharacterEllipsis" FontSize="11" Foreground="#80FFFFFF" HorizontalAlignment="Center" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Text="{Binding Artist}" />
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
                 </Grid>
                 <Grid Name="TabContent_Genres" Visibility="Collapsed">
                   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">

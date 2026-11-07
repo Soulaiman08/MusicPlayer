@@ -2795,6 +2795,11 @@ InitializeComponent();
                 set.Add(new System.WeakReference<System.Windows.Controls.Image>(img));
             }
         }
+
+        if (AlbumArtLoader.Instance != null && !AlbumArtLoader.Instance.HasMediumArt(path))
+        {
+            AlbumArtLoader.Instance.EnqueueMediumArt(path, (dataContext ?? img.DataContext) as MusicPlayer.Models.MusicTrack);
+        }
     }
 
     internal static void UnregisterAlbumImage(System.Windows.Controls.Image? img, object? dataContext = null)
@@ -2855,7 +2860,7 @@ InitializeComponent();
             }
             foreach (var img in targets)
             {
-                if (img != null && img.IsLoaded)
+                if (img != null)
                 {
                     string? candidate = GetCoverPathFromDataContext(img.DataContext);
                     if (string.Equals(candidate, path, System.StringComparison.OrdinalIgnoreCase))
