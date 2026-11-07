@@ -1285,6 +1285,18 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
     private double _queueScrollVelocity = 0.0;
     private int    _queueScrollDir      = 0; // last scroll direction (-1 up, +1 down)
 
+    private AlbumArtLoader? _albumArtLoader;
+
+    public void AttachAlbumArtLoader(AlbumArtLoader loader)
+    {
+        if (loader == null) throw new ArgumentNullException(nameof(loader));
+        if (ReferenceEquals(_albumArtLoader, loader)) return;
+        if (_albumArtLoader != null)
+            _albumArtLoader.MediumArtReady -= OnMediumArtReady;
+        _albumArtLoader = loader;
+        _albumArtLoader.MediumArtReady += OnMediumArtReady;
+    }
+
     public MainWindow()
     {
 InitializeComponent();
@@ -1292,7 +1304,7 @@ InitializeComponent();
    SmoothScrollHelper.Initialize();
    DataContextChanged += OnDataContextChanged;
    Loaded += OnWindowLoaded;
-   AlbumArtLoader.Instance.MediumArtReady += OnMediumArtReady;
+   Closed += (_, _) => { if (_albumArtLoader != null) { _albumArtLoader.MediumArtReady -= OnMediumArtReady; _albumArtLoader = null; } };
    Deactivated += OnWindowDeactivated;
 // Keeps the table headers' column separators aligned with the row separators,
 // which sit inside each list's scrollbar gutter.
