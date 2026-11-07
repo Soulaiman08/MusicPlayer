@@ -37,6 +37,7 @@ namespace MusicPlayer.Views
         private double _gapH;
         private int _cols;
         private double _rowHeight = 0;
+        private double _lastMeasureWidth;
         private const double RowHeightEstimate = 200;
 
         private Size _extent = new Size(0, 0);
@@ -109,20 +110,41 @@ namespace MusicPlayer.Views
 
         public Rect MakeVisible(Visual visual, Rect rectangle)
         {
-            if (Owner == null) return Rect.Empty;
-            var container = visual as FrameworkElement;
-            int index = (Owner != null ? Owner.ItemContainerGenerator.IndexFromContainer(container) : -1);
+            if (visual == null) return Rect.Empty;
+            var container = FindContainerForElement(visual);
+            int index = (container != null && Owner != null ? Owner.ItemContainerGenerator.IndexFromContainer(container) : -1);
             if (index < 0) return Rect.Empty;
             int cols = _cols > 0 ? _cols : 1;
             int row = index / cols;
-            double stride = (_rowHeight > 0 ? _rowHeight : RowHeightEstimate) + Math.Max(0, Gap);
+            double slot = _slot > 0 ? _slot : RowHeightEstimate;
+            double rowHeight = _rowHeight > 0 ? _rowHeight : (slot + 44);
+            double stride = rowHeight + Math.Max(0, Gap);
             double itemTop = row * stride;
-            double itemBottom = itemTop + (_rowHeight > 0 ? _rowHeight : RowHeightEstimate);
+            double itemBottom = itemTop + rowHeight;
             if (itemTop < VerticalOffset)
                 SetVerticalOffset(itemTop);
             else if (itemBottom > VerticalOffset + ViewportHeight)
                 SetVerticalOffset(itemBottom - ViewportHeight);
             return new Rect(0, itemTop - VerticalOffset, ViewportWidth, itemBottom - itemTop);
+        }
+
+        private FrameworkElement? FindContainerForElement(Visual visual)
+        {
+            if (visual == null) return null;
+            if (Owner != null)
+            {
+                var c = Owner.ContainerFromElement(visual) as FrameworkElement;
+                if (c != null) return c;
+            }
+            DependencyObject? current = visual;
+            while (current != null && !ReferenceEquals(current, this))
+            {
+                var parent = VisualTreeHelper.GetParent(current);
+                if (ReferenceEquals(parent, this) && current is FrameworkElement fe)
+                    return fe;
+                current = parent;
+            }
+            return visual as FrameworkElement;
         }
 
         protected override Size MeasureOverride(Size availableSize)
@@ -131,17 +153,46 @@ namespace MusicPlayer.Views
             if (owner == null)
                 return base.MeasureOverride(availableSize);
 
+            if (_scrollOwner == null)
+                _scrollOwner = FindScrollOwner();
+
+            int prevCols = _cols;
+            double prevWidth = _lastMeasureWidth;
             Solve(availableSize.Width);
+            if (prevCols != _cols || Math.Abs(prevWidth - availableSize.Width) > 0.5)
+                _rowHeight = 0;
+            _lastMeasureWidth = availableSize.Width;
+
             double slot = _slot;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : RowHeightEstimate;
+            double estimatedRowHeight = slot > 0 ? slot + 44 : RowHeightEstimate;
+            double rowHeight = _rowHeight > 0 ? _rowHeight : estimatedRowHeight;
             double stride = rowHeight + Math.Max(0, Gap);
-            int cols = _cols;
+            int cols = _cols > 0 ? _cols : 1;
             int itemCount = owner.Items.Count;
+            int totalRows = cols > 0 ? (itemCount + cols - 1) / cols : 0;
+
+            double viewportHeight = availableSize.Height;
+            if (double.IsInfinity(viewportHeight) || double.IsNaN(viewportHeight) || viewportHeight <= 0)
+            {
+                if (_scrollOwner != null && _scrollOwner.ViewportHeight > 0)
+                    viewportHeight = _scrollOwner.ViewportHeight;
+                else if (_scrollOwner != null && _scrollOwner.ActualHeight > 0)
+                    viewportHeight = _scrollOwner.ActualHeight;
+                else if (_viewport.Height > 0)
+                    viewportHeight = _viewport.Height;
+                else
+                    viewportHeight = estimatedRowHeight * 4;
+            }
+
+            double initialExtentHeight = totalRows > 0 ? (totalRows - 1) * stride + rowHeight : 0;
+            double maxOffset = Math.Max(0, initialExtentHeight - viewportHeight);
+            if (_offset.Y > maxOffset) _offset.Y = maxOffset;
+            if (_offset.Y < 0) _offset.Y = 0;
 
             // visible row range with cache
-            int firstRow = itemCount > 0 ? (int)Math.Floor(VerticalOffset / stride) - 2 : 0;
+            int firstRow = itemCount > 0 ? (int)Math.Floor(_offset.Y / stride) - 2 : 0;
             if (firstRow < 0) firstRow = 0;
-            int visibleRows = itemCount > 0 ? (int)Math.Ceiling(Math.Max(1, ViewportHeight) / stride) + 4 : 0;
+            int visibleRows = itemCount > 0 ? (int)Math.Ceiling(Math.Max(1, viewportHeight) / stride) + 4 : 0;
             int lastRow = firstRow + (visibleRows > 0 ? visibleRows : 1);
             int firstIndex = firstRow * cols;
             int lastIndex = itemCount > 0 ? Math.Min(itemCount - 1, (lastRow + 1) * cols - 1) : -1;
@@ -155,6 +206,9 @@ namespace MusicPlayer.Views
             {
                 GeneratorPosition startPos = generator.GeneratorPositionFromIndex(firstIndex);
                 int childIndex = startPos.Offset == 0 ? startPos.Index : startPos.Index + 1;
+                if (childIndex < 0) childIndex = 0;
+                if (childIndex > InternalChildren.Count) childIndex = InternalChildren.Count;
+
                 using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
                 {
                     for (int i = firstIndex; i <= lastIndex; i++)
@@ -172,7 +226,10 @@ namespace MusicPlayer.Views
                         }
                         container.Measure(new Size(slot, double.PositiveInfinity));
                         var h = container.DesiredSize.Height;
-                        if (h > _rowHeight && h > 0) _rowHeight = h;
+                        if (h > _rowHeight && h > 0)
+                        {
+                            _rowHeight = h;
+                        }
                         childIndex++;
                     }
                 }
@@ -187,40 +244,49 @@ namespace MusicPlayer.Views
                 {
                     try
                     {
-                        var genPos = generator.GeneratorPositionFromIndex(index);
-                        bool recycling = Owner != null &&
-                            VirtualizingPanel.GetVirtualizationMode(Owner) == VirtualizationMode.Recycling &&
-                            generator is IRecyclingItemContainerGenerator;
-                        if (recycling)
+                        if (index >= 0)
                         {
-                            ((IRecyclingItemContainerGenerator)generator).Recycle(genPos, 1);
-                        }
-                        else
-                        {
-                            generator.Remove(genPos, 1);
+                            var genPos = generator.GeneratorPositionFromIndex(index);
+                            if (genPos.Index >= 0)
+                            {
+                                bool recycling = Owner != null &&
+                                    VirtualizingPanel.GetVirtualizationMode(Owner) == VirtualizationMode.Recycling &&
+                                    generator is IRecyclingItemContainerGenerator;
+                                if (recycling)
+                                {
+                                    ((IRecyclingItemContainerGenerator)generator).Recycle(genPos, 1);
+                                }
+                                else
+                                {
+                                    generator.Remove(genPos, 1);
+                                }
+                            }
                         }
                         RemoveInternalChildRange(i, 1);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"VirtualizingBalancedPanel cleanup failed for index {index}: {ex.Message}");
+                        try { RemoveInternalChildRange(i, 1); } catch { }
+                    }
                 }
             }
 
             // Recompute extent with updated row height
-            Solve(availableSize.Width);
-            rowHeight = _rowHeight > 0 ? _rowHeight : RowHeightEstimate;
+            rowHeight = _rowHeight > 0 ? _rowHeight : estimatedRowHeight;
             stride = rowHeight + Math.Max(0, Gap);
-            int totalRows = cols > 0 ? (itemCount + cols - 1) / cols : 0;
-            _extent = new Size(availableSize.Width,
-                totalRows > 0 ? (totalRows - 1) * stride + rowHeight : 0);
-            _viewport = availableSize;
-            if (_offset.Y > Math.Max(0, ExtentHeight - ViewportHeight))
-                _offset.Y = Math.Max(0, ExtentHeight - ViewportHeight);
+            double finalExtentHeight = totalRows > 0 ? (totalRows - 1) * stride + rowHeight : 0;
+            _extent = new Size(availableSize.Width, finalExtentHeight);
+            _viewport = new Size(availableSize.Width, viewportHeight);
+
+            double finalMaxOffset = Math.Max(0, finalExtentHeight - viewportHeight);
+            if (_offset.Y > finalMaxOffset)
+                _offset.Y = finalMaxOffset;
 
             _scrollOwner?.InvalidateScrollInfo();
-            if (ScrollOwner == null) _scrollOwner = FindScrollOwner();
-            _scrollOwner?.InvalidateScrollInfo();
 
-            return new Size(availableSize.Width, _extent.Height);
+            double resultHeight = double.IsInfinity(availableSize.Height) ? _extent.Height : availableSize.Height;
+            return new Size(availableSize.Width, resultHeight);
         }
 
         private ScrollViewer? FindScrollOwner()
@@ -241,8 +307,8 @@ namespace MusicPlayer.Views
             if (owner == null) return finalSize;
 
             double slot = _slot;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : RowHeightEstimate;
-            int cols = _cols;
+            double rowHeight = _rowHeight > 0 ? _rowHeight : (slot > 0 ? slot + 44 : RowHeightEstimate);
+            int cols = _cols > 0 ? _cols : 1;
             IItemContainerGenerator generator = ItemContainerGenerator;
 
             foreach (UIElement child in InternalChildren)

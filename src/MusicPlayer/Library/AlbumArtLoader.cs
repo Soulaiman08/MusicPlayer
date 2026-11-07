@@ -198,6 +198,11 @@ public class AlbumArtLoader
     private readonly ConcurrentDictionary<string, byte> _pendingParses = new();
     private readonly ConcurrentDictionary<string, byte> _pendingMediumParses = new();
     public event Action<string>? MediumArtReady;
+    private readonly LinkedList<(string Path, MusicTrack? Track)> _mediumWorkList = new();
+    private readonly object _mediumQueueLock = new();
+    private const int MaxMediumQueueCapacity = 256;
+    private const int MaxMediumWorkers = 2;
+    private int _mediumWorkersStarted;
     private readonly ConcurrentQueue<string> _preloadQueue = new();
     private ImageSource? _defaultArt;
     private volatile bool _preloading;
@@ -549,31 +554,6 @@ public class AlbumArtLoader
             RecordMediumCacheHit();
             return cached;
         }
-        RecordMediumCacheMiss();
-
-        // 1. Try disk cache first at MediumDecodeSize (220px)
-        try
-        {
-            var hash = GetMd5Hash(path);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                ImageSource? img;
-                using (new PerfMeasurement(isDecode: true))
-                    img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
-                if (img != null)
-                {
-                    RecordMediumDiskHit();
-                    _mediumCache[path] = img;
-                    TrimCache();
-                    return img;
-                }
-            }
-        }
-        catch { }
 
         // If thumbnail cache already has it in memory, use that instantly
         if (_cache.TryGetValue(path, out var thumb) && thumb != null && thumb != _defaultArt)
@@ -583,14 +563,12 @@ public class AlbumArtLoader
             return thumb;
         }
 
-        if (_scrollingActive)
-            return GetDefaultAlbumArt();
+        RecordMediumCacheMiss();
 
-        // Never block the caller with TagLib/File IO. Defer the decode to a bounded
-        // background worker and show the placeholder now.
+        // Never block the caller with TagLib or disk file IO.
+        // Defer decode to bounded background worker and return placeholder immediately.
         EnqueueMediumArtParse(path, track);
         return GetDefaultAlbumArt();
-
     }
 
     public ImageSource? LoadMediumAlbumArt(string? filePath)
@@ -603,31 +581,6 @@ public class AlbumArtLoader
             RecordMediumCacheHit();
             return cached;
         }
-        RecordMediumCacheMiss();
-
-        // Try loading from disk cache at medium decode size
-        try
-        {
-            var hash = GetMd5Hash(filePath);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                ImageSource? img;
-                using (new PerfMeasurement(isDecode: true))
-                    img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
-                if (img != null)
-                {
-                    RecordMediumDiskHit();
-                    _mediumCache[filePath] = img;
-                    TrimCache();
-                    return img;
-                }
-            }
-        }
-        catch { }
 
         // If thumbnail cache already has it in memory, use that instantly
         if (_cache.TryGetValue(filePath, out var thumb) && thumb != null && thumb != _defaultArt)
@@ -637,12 +590,10 @@ public class AlbumArtLoader
             return thumb;
         }
 
-        if (_scrollingActive)
-            return GetDefaultAlbumArt();
+        RecordMediumCacheMiss();
 
         EnqueueMediumArtParse(filePath, null);
         return GetDefaultAlbumArt();
-
     }
 
     public ImageSource? LoadFullAlbumArt(string? filePath)
@@ -731,36 +682,105 @@ public class AlbumArtLoader
 
     private void EnqueueMediumArtParse(string path, MusicTrack? track)
     {
-        if (_pendingMediumParses.ContainsKey(path)) return;
-        _pendingMediumParses[path] = 0;
-
-        Task.Run(async () =>
+        if (string.IsNullOrWhiteSpace(path)) return;
+        lock (_mediumQueueLock)
         {
+            if (!_pendingMediumParses.TryAdd(path, 0)) return;
+
+            while (_mediumWorkList.Count >= MaxMediumQueueCapacity)
+            {
+                var oldest = _mediumWorkList.First!.Value;
+                _mediumWorkList.RemoveFirst();
+                _pendingMediumParses.TryRemove(oldest.Path, out _);
+            }
+
+            _mediumWorkList.AddLast((path, track));
+            EnsureMediumWorkers();
+            Monitor.Pulse(_mediumQueueLock);
+        }
+    }
+
+    private void EnsureMediumWorkers()
+    {
+        lock (_mediumQueueLock)
+        {
+            while (_mediumWorkersStarted < MaxMediumWorkers)
+            {
+                _mediumWorkersStarted++;
+                _ = Task.Run(MediumWorkerLoop);
+            }
+        }
+    }
+
+    private void MediumWorkerLoop()
+    {
+        while (true)
+        {
+            (string Path, MusicTrack? Track) item;
+            lock (_mediumQueueLock)
+            {
+                while (_mediumWorkList.Count == 0)
+                {
+                    Monitor.Wait(_mediumQueueLock);
+                }
+                item = _mediumWorkList.Last!.Value;
+                _mediumWorkList.RemoveLast();
+            }
+
             try
             {
-                await _decodeGate.WaitAsync();
-                try
-                {
-                    if (_mediumCache.TryGetValue(path, out var done) && done != null)
-                        return;
-
-                    var sourceTrack = track ?? new MusicTrack { FilePath = path };
-                    var img = DecodeMediumValidPicture(sourceTrack);
-                    if (img != null)
-                    {
-                        _mediumCache[path] = img;
-                        _cache.TryAdd(path, img);
-                        NotifyMediumArtReady(path);
-                    }
-                }
-                finally { _decodeGate.Release(); }
+                ProcessMediumArt(item.Path, item.Track);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogHelper.LogError($"Medium art worker error for {item.Path}", ex);
+            }
             finally
             {
-                _pendingMediumParses.TryRemove(path, out _);
+                _pendingMediumParses.TryRemove(item.Path, out _);
             }
-        });
+        }
+    }
+
+    private void ProcessMediumArt(string path, MusicTrack? track)
+    {
+        if (_mediumCache.TryGetValue(path, out var cached) && cached != null)
+        {
+            NotifyMediumArtReady(path);
+            return;
+        }
+
+        try
+        {
+            var hash = GetMd5Hash(path);
+            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
+            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
+            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
+            if (existingPath != null)
+            {
+                var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
+                if (img != null)
+                {
+                    _mediumCache[path] = img;
+                    _cache.TryAdd(path, img);
+                    TrimCache();
+                    NotifyMediumArtReady(path);
+                    return;
+                }
+            }
+        }
+        catch { }
+
+        var sourceTrack = track ?? new MusicTrack { FilePath = path };
+        ImageSource? mediumArt = null;
+        try { mediumArt = DecodeMediumValidPicture(sourceTrack); } catch { }
+        if (mediumArt != null)
+        {
+            _mediumCache[path] = mediumArt;
+            _cache.TryAdd(path, mediumArt);
+            TrimCache();
+            NotifyMediumArtReady(path);
+        }
     }
 
     private ImageSource? DecodeFirstValidPicture(MusicTrack track)
@@ -786,6 +806,20 @@ public class AlbumArtLoader
                 using var ms = new MemoryStream(picture.Data.Data);
                 var img = LoadFullQualityFromStream(ms);
                 if (img != null) return img;
+            }
+            // Check for sidecar image in same directory (cover.jpg, folder.jpg)
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            {
+                foreach (var name in new[] { "cover.jpg", "folder.jpg", "front.jpg", "album.jpg", "cover.png", "folder.png" })
+                {
+                    var sidecar = Path.Combine(dir, name);
+                    if (File.Exists(sidecar))
+                    {
+                        var img = LoadFullQualityFromFile(sidecar);
+                        if (img != null) return img;
+                    }
+                }
             }
         }
         catch { }
@@ -826,6 +860,20 @@ public class AlbumArtLoader
                     }
                     catch { }
                     return img;
+                }
+            }
+            // Check for sidecar image in same directory (cover.jpg, folder.jpg)
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            {
+                foreach (var name in new[] { "cover.jpg", "folder.jpg", "front.jpg", "album.jpg", "cover.png", "folder.png" })
+                {
+                    var sidecar = Path.Combine(dir, name);
+                    if (File.Exists(sidecar))
+                    {
+                        var img = LoadSizedImageFromFile(sidecar, MediumDecodeSize);
+                        if (img != null) return img;
+                    }
                 }
             }
         }

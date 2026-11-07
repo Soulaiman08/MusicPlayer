@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -2748,35 +2748,123 @@ InitializeComponent();
 
     private void OnMediumArtReady(string path)
     {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var dispatcher = Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(() => OnMediumArtReady(path)));
+            return;
+        }
+
         try
         {
-            foreach (Window w in System.Windows.Application.Current.Windows)
-            {
-                UpdateAlbumImages(w, path);
-            }
+            UpdateAlbumImages(path);
         }
         catch { }
     }
 
-    private static void UpdateAlbumImages(DependencyObject root, string path)
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Generic.HashSet<System.WeakReference<System.Windows.Controls.Image>>> _registeredAlbumImages = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string? GetCoverPathFromDataContext(object? dataContext)
     {
-        if (root == null) return;
-        if (root is System.Windows.Controls.Image img)
+        if (dataContext is MusicPlayer.Models.MusicTrack track)
+            return !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
+        if (dataContext is string str)
+            return str;
+        return null;
+    }
+
+    internal static void RegisterAlbumImage(System.Windows.Controls.Image? img, object? dataContext = null)
+    {
+        if (img == null) return;
+        string? path = GetCoverPathFromDataContext(dataContext ?? img.DataContext);
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        var set = _registeredAlbumImages.GetOrAdd(path, _ => new System.Collections.Generic.HashSet<System.WeakReference<System.Windows.Controls.Image>>());
+        lock (set)
         {
-            var track = img.DataContext as MusicPlayer.Models.MusicTrack;
-            string? candidate = track != null
-                ? (!string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath)
-                : img.DataContext as string;
-            if (string.Equals(candidate, path, System.StringComparison.Ordinal))
+            bool alreadyPresent = false;
+            set.RemoveWhere(wr =>
             {
-                var be = System.Windows.Data.BindingOperations.GetBindingExpression(img, System.Windows.Controls.Image.SourceProperty);
-                be?.UpdateTarget();
+                if (!wr.TryGetTarget(out var target)) return true;
+                if (ReferenceEquals(target, img)) { alreadyPresent = true; }
+                return false;
+            });
+            if (!alreadyPresent)
+            {
+                set.Add(new System.WeakReference<System.Windows.Controls.Image>(img));
             }
         }
-        int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
-        for (int i = 0; i < count; i++)
+    }
+
+    internal static void UnregisterAlbumImage(System.Windows.Controls.Image? img, object? dataContext = null)
+    {
+        if (img == null) return;
+        string? path = GetCoverPathFromDataContext(dataContext ?? img.DataContext);
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        if (_registeredAlbumImages.TryGetValue(path, out var set))
         {
-            UpdateAlbumImages(System.Windows.Media.VisualTreeHelper.GetChild(root, i), path);
+            lock (set)
+            {
+                set.RemoveWhere(wr => !wr.TryGetTarget(out var target) || ReferenceEquals(target, img));
+            }
+        }
+    }
+
+    private void AlbumArtImage_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Image img)
+        {
+            RegisterAlbumImage(img);
+        }
+    }
+
+    private void AlbumArtImage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Image img)
+        {
+            UnregisterAlbumImage(img);
+        }
+    }
+
+    private void AlbumArtImage_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Image img)
+        {
+            UnregisterAlbumImage(img, e.OldValue);
+            RegisterAlbumImage(img, e.NewValue);
+        }
+    }
+
+    private static void UpdateAlbumImages(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        if (_registeredAlbumImages.TryGetValue(path, out var set))
+        {
+            System.Windows.Controls.Image[] targets;
+            lock (set)
+            {
+                set.RemoveWhere(wr => !wr.TryGetTarget(out _));
+                targets = new System.Windows.Controls.Image[set.Count];
+                int idx = 0;
+                foreach (var wr in set)
+                {
+                    if (wr.TryGetTarget(out var img)) targets[idx++] = img;
+                }
+            }
+            foreach (var img in targets)
+            {
+                if (img != null && img.IsLoaded)
+                {
+                    string? candidate = GetCoverPathFromDataContext(img.DataContext);
+                    if (string.Equals(candidate, path, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        var be = System.Windows.Data.BindingOperations.GetBindingExpression(img, System.Windows.Controls.Image.SourceProperty);
+                        be?.UpdateTarget();
+                    }
+                }
+            }
         }
     }
 
