@@ -8256,7 +8256,22 @@ private async void LoadFolders()
 			tcs = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
 			_themeApplyTcs = tcs;
 
-			WallpaperSettingsCommitted?.Invoke(this, EventArgs.Empty);
+			try
+			{
+				WallpaperSettingsCommitted?.Invoke(this, EventArgs.Empty);
+			}
+			catch (Exception invokeEx)
+			{
+				if (gen == _themeApplyGeneration)
+				{
+					ShowStatusBar("Failed to apply theme", 3000);
+					IsThemeCommitting = false;
+					OnPropertyChanged(nameof(IsThemeCommitting));
+				}
+				tcs?.TrySetResult(false);
+				System.Diagnostics.Debug.WriteLine($"[ThemeEditor] WallpaperSettingsCommitted failed: {invokeEx.Message}");
+				return;
+			}
 
 			bool success = false;
 			try

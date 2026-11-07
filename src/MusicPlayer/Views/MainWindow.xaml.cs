@@ -1792,7 +1792,14 @@ InitializeComponent();
         if (!Dispatcher.CheckAccess())
         {
             LogHelper.LogInfo("[Wallpaper] rebuild: marshaling to UI thread");
-            Dispatcher.BeginInvoke(new Action(() => RebuildBlurCache(onComplete)));
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() => RebuildBlurCache(onComplete)));
+            }
+            catch
+            {
+                try { onComplete?.Invoke(false); } catch { }
+            }
             return;
         }
         long gen = ++_bgGen;
@@ -1966,8 +1973,8 @@ InitializeComponent();
                     int dw = (int)ActualWidth, dh = (int)ActualHeight;
                     if (dw < 10 || dh < 10)
                     {
-                        // Not laid out yet â€” show the sharp original now; the next
-                        // size change re-triggers the blur through the debounce.
+                        // Not laid out yet — show the sharp original now; defer blur until
+                        // dimensions become valid, with a bounded retry (no hang).
                         if (targetItem != null) targetItem.LoadProgress = 90;
                         SetWallpaperSources(finalDecoded, finalDecoded);
                         if (targetItem != null)
@@ -1977,8 +1984,35 @@ InitializeComponent();
                         }
                         LogHelper.LogInfo($"[Wallpaper] rebuild: not laid out yet, showing original ({finalKind})");
                         _bgDirty = true;
-                        EnsureBlurCache();
-                        CompleteThemeRebuildCallback(gen, !wantBlur);
+                        int layoutAttempts = 0;
+                        var layoutTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+                        layoutTimer.Tick += (_, _) =>
+                        {
+                            layoutAttempts++;
+                            if (!IsLoaded || _bgGen != gen)
+                            {
+                                layoutTimer.Stop();
+                                return;
+                            }
+                            if (ActualWidth >= 10 && ActualHeight >= 10)
+                            {
+                                layoutTimer.Stop();
+                                // Transfer the pending callback to a fresh rebuild now
+                                // that dimensions are valid.
+                                for (int ci = _themeRebuildCallbacks.Count - 1; ci >= 0; ci--)
+                                {
+                                    if (_themeRebuildCallbacks[ci].Gen == gen)
+                                        _themeRebuildCallbacks.RemoveAt(ci);
+                                }
+                                RebuildBlurCache(onComplete);
+                            }
+                            else if (layoutAttempts >= 40)
+                            {
+                                layoutTimer.Stop();
+                                CompleteThemeRebuildCallback(gen, false);
+                            }
+                        };
+                        layoutTimer.Start();
                         return;
                     }
                     try
@@ -2167,11 +2201,11 @@ InitializeComponent();
             {
                 targetItem.HasLoadError = true;
                 targetItem.IsLoading = false;
-            CompleteThemeRebuildCallback(gen, false);
             }
+            CompleteThemeRebuildCallback(gen, false);
         }
-    }
 
+    }
     // Decode cache is now shared & memory-budgeted (see WallpaperDecodeCache).
     private static bool TryGetCachedWallpaper(string key, out BitmapImage? image)
         => MusicPlayer.Utilities.WallpaperDecodeCache.TryGet(key, out image);
