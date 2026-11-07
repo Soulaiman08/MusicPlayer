@@ -9,8 +9,9 @@ namespace MusicPlayer.Views
 {
     /// <summary>
     /// High-performance virtualizing balanced grid panel: only materializes containers
-    /// for items whose rows intersect the viewport (+ buffer rows). Reuses/recycles containers on scroll.
-    /// Supports pixel-smooth IScrollInfo and handles large libraries (10,000+ items) with constant memory.
+    /// for items whose rows intersect the viewport (+ buffer rows).
+    /// Observes parent ScrollViewer scroll offsets, provides exact template-measured row heights
+    /// (eliminating gap accumulation), and preserves complete DataContext/bindings across scrolling.
     /// </summary>
     public class VirtualizingBalancedPanel : VirtualizingPanel, IScrollInfo
     {
@@ -45,21 +46,18 @@ namespace MusicPlayer.Views
         private double _lastMeasureWidth = 0;
         private int _firstRealizedIndex = -1;
         private int _lastRealizedIndex = -1;
-        private const double RowHeightEstimate = 200;
 
-        private Size _extent = new Size(0, 0);
-        private Size _viewport = new Size(0, 0);
-        private Point _offset = new Point(0, 0);
+        private ScrollViewer? _parentScrollViewer;
         private ScrollViewer? _scrollOwner;
 
         public bool CanHorizontallyScroll { get; set; } = false;
         public bool CanVerticallyScroll { get; set; } = true;
-        public double ExtentWidth => _extent.Width;
-        public double ExtentHeight => _extent.Height;
-        public double ViewportWidth => _viewport.Width;
-        public double ViewportHeight => _viewport.Height;
-        public double HorizontalOffset => _offset.X;
-        public double VerticalOffset => _offset.Y;
+        public double ExtentWidth => _lastMeasureWidth;
+        public double ExtentHeight => ComputeTotalExtent();
+        public double ViewportWidth => _lastMeasureWidth;
+        public double ViewportHeight => _parentScrollViewer?.ViewportHeight ?? 800;
+        public double HorizontalOffset => 0;
+        public double VerticalOffset => _parentScrollViewer?.VerticalOffset ?? 0;
 
         public ScrollViewer? ScrollOwner
         {
@@ -68,6 +66,58 @@ namespace MusicPlayer.Views
         }
 
         private ItemsControl? Owner => ItemsControl.GetItemsOwner(this);
+
+        public VirtualizingBalancedPanel()
+        {
+            Loaded += (_, _) => HookScrollViewer();
+            Unloaded += (_, _) => UnhookScrollViewer();
+        }
+
+        protected override void OnVisualParentChanged(DependencyObject oldParent)
+        {
+            base.OnVisualParentChanged(oldParent);
+            HookScrollViewer();
+        }
+
+        private void HookScrollViewer()
+        {
+            var sv = FindAncestorScrollViewer(this);
+            if (ReferenceEquals(_parentScrollViewer, sv)) return;
+
+            UnhookScrollViewer();
+            _parentScrollViewer = sv;
+            if (_parentScrollViewer != null)
+            {
+                _parentScrollViewer.ScrollChanged += OnParentScrollChanged;
+            }
+        }
+
+        private void UnhookScrollViewer()
+        {
+            if (_parentScrollViewer != null)
+            {
+                _parentScrollViewer.ScrollChanged -= OnParentScrollChanged;
+                _parentScrollViewer = null;
+            }
+        }
+
+        private void OnParentScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            if (Math.Abs(e.VerticalChange) > 0.01 || Math.Abs(e.ViewportHeightChange) > 0.01)
+            {
+                InvalidateMeasure();
+            }
+        }
+
+        private static ScrollViewer? FindAncestorScrollViewer(DependencyObject? current)
+        {
+            while (current != null)
+            {
+                if (current is ScrollViewer sv) return sv;
+                current = VisualTreeHelper.GetParent(current);
+            }
+            return null;
+        }
 
         private void Solve(double width)
         {
@@ -89,65 +139,212 @@ namespace MusicPlayer.Views
             }
         }
 
-        private void GetRequiredIndexRange(double offsetY, double viewportH, out int reqFirstIndex, out int reqLastIndex)
+        private double ComputeTotalExtent()
+        {
+            int itemCount = Owner?.Items.Count ?? 0;
+            if (itemCount <= 0 || _cols <= 0) return 0;
+            double rowH = _rowHeight > 0 ? _rowHeight : (_slot + 44);
+            double stride = rowH + Math.Max(0, Gap);
+            int totalRows = (itemCount + _cols - 1) / _cols;
+            return totalRows > 0 ? (totalRows - 1) * stride + rowH : 0;
+        }
+
+        protected override Size MeasureOverride(Size availableSize)
         {
             var owner = Owner;
-            int itemCount = owner?.Items.Count ?? 0;
-            if (itemCount <= 0)
+            if (owner == null) return base.MeasureOverride(availableSize);
+
+            HookScrollViewer();
+
+            int prevCols = _cols;
+            double prevWidth = _lastMeasureWidth;
+            Solve(availableSize.Width);
+            if (prevCols != _cols || Math.Abs(prevWidth - availableSize.Width) > 0.5)
             {
-                reqFirstIndex = 0;
-                reqLastIndex = -1;
-                return;
+                _rowHeight = 0;
+            }
+            _lastMeasureWidth = availableSize.Width;
+
+            int itemCount = owner.Items.Count;
+            if (itemCount == 0)
+            {
+                ResetAllContainers();
+                return new Size(availableSize.Width, 0);
             }
 
-            double slot = _slot;
-            double estimatedRowHeight = slot > 0 ? slot + 44 : RowHeightEstimate;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : estimatedRowHeight;
-            double stride = rowHeight + Math.Max(0, Gap);
+            IItemContainerGenerator generator = ItemContainerGenerator;
+            if (generator == null)
+            {
+                return new Size(availableSize.Width, 0);
+            }
+
+            // 1. If row height is not established, probe item 0 to measure exact template DesiredSize
+            if (_rowHeight <= 0 && itemCount > 0)
+            {
+                GeneratorPosition p0 = generator.GeneratorPositionFromIndex(0);
+                using (generator.StartAt(p0, GeneratorDirection.Forward, true))
+                {
+                    var probe = generator.GenerateNext(out bool _) as UIElement;
+                    if (probe != null)
+                    {
+                        generator.PrepareItemContainer(probe);
+                        probe.Measure(new Size(_slot, double.PositiveInfinity));
+                        if (probe.DesiredSize.Height > 0)
+                        {
+                            _rowHeight = probe.DesiredSize.Height;
+                        }
+                    }
+                }
+                ResetAllContainers();
+            }
+
+            double effectiveRowHeight = _rowHeight > 0 ? _rowHeight : (_slot > 0 ? _slot + 44 : 200);
+            double stride = effectiveRowHeight + Math.Max(0, Gap);
             int cols = _cols > 0 ? _cols : 1;
             int totalRows = (itemCount + cols - 1) / cols;
 
-            double vpH = viewportH > 0 ? viewportH : (_viewport.Height > 0 ? _viewport.Height : estimatedRowHeight * 4);
+            // 2. Resolve scroll offset and viewport height from parent ScrollViewer
+            double offsetY = 0;
+            double viewportH = 800;
 
-            // 1 buffer row above, 2 buffer rows below
+            if (_parentScrollViewer != null)
+            {
+                offsetY = Math.Max(0, _parentScrollViewer.VerticalOffset);
+                viewportH = _parentScrollViewer.ViewportHeight > 0
+                    ? _parentScrollViewer.ViewportHeight
+                    : (_parentScrollViewer.ActualHeight > 0 ? _parentScrollViewer.ActualHeight : 800);
+            }
+            else if (!double.IsInfinity(availableSize.Height) && availableSize.Height > 0)
+            {
+                viewportH = availableSize.Height;
+            }
+
+            // 3. Compute active row range with buffer rows (1 row above, 2 rows below)
             int topRow = (int)Math.Floor(offsetY / stride);
             int firstRow = Math.Max(0, topRow - 1);
-            int visibleRowCount = (int)Math.Ceiling(Math.Max(1, vpH) / stride);
+            int visibleRowCount = (int)Math.Ceiling(Math.Max(1, viewportH) / stride);
             int lastRow = Math.Min(totalRows - 1, topRow + visibleRowCount + 2);
 
-            reqFirstIndex = firstRow * cols;
-            reqLastIndex = Math.Min(itemCount - 1, (lastRow + 1) * cols - 1);
-            if (reqFirstIndex < 0) reqFirstIndex = 0;
-            if (reqLastIndex < reqFirstIndex) reqLastIndex = reqFirstIndex - 1;
-        }
+            int reqFirst = firstRow * cols;
+            int reqLast = Math.Min(itemCount - 1, (lastRow + 1) * cols - 1);
+            if (reqFirst < 0) reqFirst = 0;
+            if (reqLast < reqFirst) reqLast = reqFirst - 1;
 
-        public void SetVerticalOffset(double offset)
-        {
-            double maxOffset = Math.Max(0, ExtentHeight - ViewportHeight);
-            offset = Math.Max(0, Math.Min(offset, maxOffset));
-            if (Math.Abs(offset - _offset.Y) < 0.001)
-                return;
+            int reqCount = reqLast >= reqFirst ? (reqLast - reqFirst + 1) : 0;
 
-            _offset.Y = offset;
-
-            // Fast path: if the new offset's required items are already realized, arrange only!
-            if (InternalChildren.Count > 0 && Owner != null && _firstRealizedIndex >= 0 && _lastRealizedIndex >= 0)
+            // 4. Clean range materialization: ensures zero broken bindings or missing containers
+            if (_firstRealizedIndex != reqFirst || _lastRealizedIndex != reqLast || InternalChildren.Count != reqCount)
             {
-                GetRequiredIndexRange(_offset.Y, _viewport.Height, out int reqFirst, out int reqLast);
-                if (reqFirst >= _firstRealizedIndex && reqLast <= _lastRealizedIndex)
+                ResetAllContainers();
+
+                if (reqCount > 0)
                 {
-                    InvalidateArrange();
-                    _scrollOwner?.InvalidateScrollInfo();
-                    return;
+                    GeneratorPosition startPos = generator.GeneratorPositionFromIndex(reqFirst);
+                    using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
+                    {
+                        for (int i = reqFirst; i <= reqLast; i++)
+                        {
+                            var container = generator.GenerateNext(out bool newlyRealized) as UIElement;
+                            if (container == null) break;
+
+                            AddInternalChild(container);
+                            generator.PrepareItemContainer(container);
+
+                            container.Measure(new Size(_slot, double.PositiveInfinity));
+                            if (container.DesiredSize.Height > _rowHeight)
+                            {
+                                _rowHeight = container.DesiredSize.Height;
+                            }
+                        }
+                    }
+                    _firstRealizedIndex = reqFirst;
+                    _lastRealizedIndex = reqLast;
+                }
+            }
+            else
+            {
+                // Measure existing realized containers
+                for (int i = 0; i < InternalChildren.Count; i++)
+                {
+                    UIElement child = InternalChildren[i];
+                    child.Measure(new Size(_slot, double.PositiveInfinity));
+                    if (child.DesiredSize.Height > _rowHeight)
+                    {
+                        _rowHeight = child.DesiredSize.Height;
+                    }
                 }
             }
 
+            // 5. Total extent height: communicates full library height to parent ScrollViewer
+            double finalRowHeight = _rowHeight > 0 ? _rowHeight : effectiveRowHeight;
+            double finalStride = finalRowHeight + Math.Max(0, Gap);
+            double totalExtentHeight = totalRows > 0 ? (totalRows - 1) * finalStride + finalRowHeight : 0;
+
+            return new Size(availableSize.Width, totalExtentHeight);
+        }
+
+        protected override Size ArrangeOverride(Size finalSize)
+        {
+            Solve(finalSize.Width);
+            var owner = Owner;
+            if (owner == null) return finalSize;
+
+            double slot = _slot;
+            double rowHeight = _rowHeight > 0 ? _rowHeight : (slot > 0 ? slot + 44 : 200);
+            int cols = _cols > 0 ? _cols : 1;
+            double stride = rowHeight + Math.Max(0, Gap);
+            double gapH = _gapH;
+
+            int count = InternalChildren.Count;
+            int baseIndex = _firstRealizedIndex >= 0 ? _firstRealizedIndex : 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                UIElement child = InternalChildren[i];
+                int itemIndex = baseIndex + i;
+                int row = itemIndex / cols;
+                int col = itemIndex % cols;
+                double x = col * (slot + gapH);
+                double y = row * stride;
+
+                child.Arrange(new Rect(x, y, slot, rowHeight));
+            }
+
+            return finalSize;
+        }
+
+        private void ResetAllContainers()
+        {
+            try
+            {
+                IItemContainerGenerator generator = ItemContainerGenerator;
+                if (generator != null && InternalChildren.Count > 0)
+                {
+                    generator.RemoveAll();
+                }
+            }
+            catch { }
+            RemoveInternalChildRange(0, InternalChildren.Count);
+            _firstRealizedIndex = -1;
+            _lastRealizedIndex = -1;
+        }
+
+        protected override void OnItemsChanged(object sender, ItemsChangedEventArgs args)
+        {
+            base.OnItemsChanged(sender, args);
+            _rowHeight = 0;
+            ResetAllContainers();
             InvalidateMeasure();
-            _scrollOwner?.InvalidateScrollInfo();
+        }
+
+        // ── IScrollInfo Implementation ──────────────────────────────────────────
+        public void SetVerticalOffset(double offset)
+        {
+            if (_parentScrollViewer != null)
+                _parentScrollViewer.ScrollToVerticalOffset(offset);
         }
 
         public void SetHorizontalOffset(double offset) { }
-
         public void LineUp() => SetVerticalOffset(VerticalOffset - 32);
         public void LineDown() => SetVerticalOffset(VerticalOffset + 32);
         public void LineLeft() { }
@@ -169,8 +366,7 @@ namespace MusicPlayer.Views
             if (index < 0) return Rect.Empty;
             int cols = _cols > 0 ? _cols : 1;
             int row = index / cols;
-            double slot = _slot > 0 ? _slot : RowHeightEstimate;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : (slot + 44);
+            double rowHeight = _rowHeight > 0 ? _rowHeight : (_slot + 44);
             double stride = rowHeight + Math.Max(0, Gap);
             double itemTop = row * stride;
             double itemBottom = itemTop + rowHeight;
@@ -198,364 +394,6 @@ namespace MusicPlayer.Views
                 current = parent;
             }
             return visual as FrameworkElement;
-        }
-
-        protected override Size MeasureOverride(Size availableSize)
-        {
-            var owner = Owner;
-            if (owner == null)
-                return base.MeasureOverride(availableSize);
-
-            if (_scrollOwner == null)
-                _scrollOwner = FindScrollOwner();
-
-            int prevCols = _cols;
-            double prevWidth = _lastMeasureWidth;
-            Solve(availableSize.Width);
-            if (prevCols != _cols || Math.Abs(prevWidth - availableSize.Width) > 0.5)
-                _rowHeight = 0;
-            _lastMeasureWidth = availableSize.Width;
-
-            double slot = _slot;
-            double estimatedRowHeight = slot > 0 ? slot + 44 : RowHeightEstimate;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : estimatedRowHeight;
-            double stride = rowHeight + Math.Max(0, Gap);
-            int cols = _cols > 0 ? _cols : 1;
-            int itemCount = owner.Items.Count;
-            int totalRows = cols > 0 ? (itemCount + cols - 1) / cols : 0;
-
-            double viewportHeight = availableSize.Height;
-            if (double.IsInfinity(viewportHeight) || double.IsNaN(viewportHeight) || viewportHeight <= 0)
-            {
-                if (_scrollOwner != null && _scrollOwner.ActualHeight > 0)
-                    viewportHeight = _scrollOwner.ActualHeight;
-                else if (_scrollOwner != null && _scrollOwner.ViewportHeight > 0)
-                    viewportHeight = _scrollOwner.ViewportHeight;
-                else if (_viewport.Height > 0 && _viewport.Height < 10000)
-                    viewportHeight = _viewport.Height;
-                else
-                    viewportHeight = estimatedRowHeight * 4;
-            }
-
-            double initialExtentHeight = totalRows > 0 ? (totalRows - 1) * stride + rowHeight : 0;
-            double maxOffset = Math.Max(0, initialExtentHeight - viewportHeight);
-            if (_offset.Y > maxOffset) _offset.Y = maxOffset;
-            if (_offset.Y < 0) _offset.Y = 0;
-
-            if (itemCount == 0)
-            {
-                ResetAllContainers();
-                _extent = new Size(availableSize.Width, 0);
-                _viewport = new Size(availableSize.Width, viewportHeight);
-                _scrollOwner?.InvalidateScrollInfo();
-                return new Size(availableSize.Width, 0);
-            }
-
-            // Visible row range with balanced cache
-            GetRequiredIndexRange(_offset.Y, viewportHeight, out int firstIndex, out int lastIndex);
-
-            IItemContainerGenerator generator = ItemContainerGenerator;
-            if (generator != null)
-            {
-                // If currently realized range is completely disjoint or uninitialized, do a clean sweep
-                if (InternalChildren.Count == 0 ||
-                    _firstRealizedIndex < 0 ||
-                    _lastRealizedIndex < firstIndex ||
-                    _firstRealizedIndex > lastIndex)
-                {
-                    ResetAllContainers();
-
-                    GeneratorPosition startPos = generator.GeneratorPositionFromIndex(firstIndex);
-                    int childIndex = (startPos.Offset == 0) ? startPos.Index : startPos.Index + 1;
-                    if (childIndex < 0) childIndex = 0;
-
-                    using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
-                    {
-                        for (int i = firstIndex; i <= lastIndex; i++)
-                        {
-                            bool newlyRealized;
-                            var container = generator.GenerateNext(out newlyRealized) as UIElement;
-                            if (container == null) break;
-
-                            if (newlyRealized || !InternalChildren.Contains(container))
-                            {
-                                if (childIndex >= InternalChildren.Count)
-                                    AddInternalChild(container);
-                                else
-                                    InsertInternalChild(childIndex, container);
-                                generator.PrepareItemContainer(container);
-                            }
-
-                            container.Measure(new Size(slot, double.PositiveInfinity));
-                            if (container.DesiredSize.Height > _rowHeight)
-                                _rowHeight = container.DesiredSize.Height;
-
-                            childIndex++;
-                        }
-                    }
-                }
-                else
-                {
-                    // Incremental adjustment: trim out-of-range trailing items
-                    for (int i = InternalChildren.Count - 1; i >= 0; i--)
-                    {
-                        int idx = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[i]);
-                        if (idx > lastIndex || idx < 0)
-                        {
-                            SafeRemoveOrRecycleContainer(i);
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-
-                    // Trim out-of-range leading items
-                    while (InternalChildren.Count > 0)
-                    {
-                        int idx = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
-                        if (idx >= 0 && idx < firstIndex)
-                        {
-                            SafeRemoveOrRecycleContainer(0);
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-
-                    // Fill missing items at the beginning
-                    if (InternalChildren.Count > 0)
-                    {
-                        int currentFirst = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
-                        if (firstIndex < currentFirst && currentFirst > 0)
-                        {
-                            GeneratorPosition startPos = generator.GeneratorPositionFromIndex(firstIndex);
-                            int childIndex = (startPos.Offset == 0) ? startPos.Index : startPos.Index + 1;
-                            if (childIndex < 0) childIndex = 0;
-
-                            using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
-                            {
-                                for (int i = firstIndex; i < currentFirst; i++)
-                                {
-                                    bool newlyRealized;
-                                    var container = generator.GenerateNext(out newlyRealized) as UIElement;
-                                    if (container == null) break;
-
-                                    if (newlyRealized || !InternalChildren.Contains(container))
-                                    {
-                                        if (childIndex >= InternalChildren.Count)
-                                            AddInternalChild(container);
-                                        else
-                                            InsertInternalChild(childIndex, container);
-                                        generator.PrepareItemContainer(container);
-                                    }
-
-                                    container.Measure(new Size(slot, double.PositiveInfinity));
-                                    if (container.DesiredSize.Height > _rowHeight)
-                                        _rowHeight = container.DesiredSize.Height;
-
-                                    childIndex++;
-                                }
-                            }
-                        }
-                    }
-
-                    // Fill missing items at the end
-                    if (InternalChildren.Count > 0)
-                    {
-                        int currentLast = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[InternalChildren.Count - 1]);
-                        if (lastIndex > currentLast)
-                        {
-                            GeneratorPosition startPos = generator.GeneratorPositionFromIndex(currentLast + 1);
-                            int childIndex = (startPos.Offset == 0) ? startPos.Index : startPos.Index + 1;
-                            if (childIndex < 0 || childIndex > InternalChildren.Count) childIndex = InternalChildren.Count;
-
-                            using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
-                            {
-                                for (int i = currentLast + 1; i <= lastIndex; i++)
-                                {
-                                    bool newlyRealized;
-                                    var container = generator.GenerateNext(out newlyRealized) as UIElement;
-                                    if (container == null) break;
-
-                                    if (newlyRealized || !InternalChildren.Contains(container))
-                                    {
-                                        if (childIndex >= InternalChildren.Count)
-                                            AddInternalChild(container);
-                                        else
-                                            InsertInternalChild(childIndex, container);
-                                        generator.PrepareItemContainer(container);
-                                    }
-
-                                    container.Measure(new Size(slot, double.PositiveInfinity));
-                                    if (container.DesiredSize.Height > _rowHeight)
-                                        _rowHeight = container.DesiredSize.Height;
-
-                                    childIndex++;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (InternalChildren.Count > 0 && owner != null)
-            {
-                _firstRealizedIndex = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
-                _lastRealizedIndex = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[InternalChildren.Count - 1]);
-            }
-            else
-            {
-                _firstRealizedIndex = -1;
-                _lastRealizedIndex = -1;
-            }
-
-            // Recompute extent with updated row height
-            rowHeight = _rowHeight > 0 ? _rowHeight : estimatedRowHeight;
-            stride = rowHeight + Math.Max(0, Gap);
-            double finalExtentHeight = totalRows > 0 ? (totalRows - 1) * stride + rowHeight : 0;
-            var newExtent = new Size(availableSize.Width, finalExtentHeight);
-            var newViewport = new Size(availableSize.Width, viewportHeight);
-
-            bool scrollInfoChanged = (newExtent != _extent || newViewport != _viewport);
-            _extent = newExtent;
-            _viewport = newViewport;
-
-            double finalMaxOffset = Math.Max(0, finalExtentHeight - viewportHeight);
-            if (_offset.Y > finalMaxOffset)
-                _offset.Y = finalMaxOffset;
-
-            if (scrollInfoChanged)
-            {
-                _scrollOwner?.InvalidateScrollInfo();
-            }
-
-            double resultHeight = double.IsInfinity(availableSize.Height) ? _extent.Height : Math.Min(availableSize.Height, _extent.Height);
-            return new Size(availableSize.Width, resultHeight);
-        }
-
-        private void ResetAllContainers()
-        {
-            try
-            {
-                IItemContainerGenerator generator = ItemContainerGenerator;
-                if (generator != null && InternalChildren.Count > 0)
-                {
-                    generator.RemoveAll();
-                }
-            }
-            catch { }
-            RemoveInternalChildRange(0, InternalChildren.Count);
-            _firstRealizedIndex = -1;
-            _lastRealizedIndex = -1;
-        }
-
-        private bool SafeRemoveOrRecycleContainer(int childIndex)
-        {
-            if (childIndex < 0 || childIndex >= InternalChildren.Count)
-                return false;
-
-            UIElement child = InternalChildren[childIndex];
-            IItemContainerGenerator generator = ItemContainerGenerator;
-            if (generator == null)
-            {
-                RemoveInternalChildRange(childIndex, 1);
-                return true;
-            }
-
-            int itemIndex = (Owner != null) ? Owner.ItemContainerGenerator.IndexFromContainer(child) : -1;
-            if (itemIndex < 0)
-            {
-                RemoveInternalChildRange(childIndex, 1);
-                return true;
-            }
-
-            GeneratorPosition pos = generator.GeneratorPositionFromIndex(itemIndex);
-            if (pos.Index < 0 || pos.Offset != 0)
-            {
-                RemoveInternalChildRange(childIndex, 1);
-                return true;
-            }
-
-            bool recycling = Owner != null &&
-                VirtualizingPanel.GetVirtualizationMode(Owner) == VirtualizationMode.Recycling &&
-                generator is IRecyclingItemContainerGenerator;
-
-            try
-            {
-                if (recycling && generator is IRecyclingItemContainerGenerator recGen)
-                {
-                    recGen.Recycle(pos, 1);
-                }
-                else
-                {
-                    generator.Remove(pos, 1);
-                }
-
-                RemoveInternalChildRange(childIndex, 1);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"SafeRemoveOrRecycleContainer failed for child {childIndex}: {ex.Message}");
-                RemoveInternalChildRange(childIndex, 1);
-                return true;
-            }
-        }
-
-        private ScrollViewer? FindScrollOwner()
-        {
-            DependencyObject current = this;
-            while (current != null)
-            {
-                if (current is ScrollViewer sv) return sv;
-                current = VisualTreeHelper.GetParent(current);
-            }
-            return null;
-        }
-
-        protected override Size ArrangeOverride(Size finalSize)
-        {
-            Solve(finalSize.Width);
-            var owner = Owner;
-            if (owner == null) return finalSize;
-
-            double slot = _slot;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : (slot > 0 ? slot + 44 : RowHeightEstimate);
-            int cols = _cols > 0 ? _cols : 1;
-            double stride = rowHeight + Math.Max(0, Gap);
-            double gapH = _gapH;
-            double vOffset = VerticalOffset;
-
-            int count = InternalChildren.Count;
-            for (int i = 0; i < count; i++)
-            {
-                UIElement child = InternalChildren[i];
-                int index = owner.ItemContainerGenerator.IndexFromContainer(child);
-                if (index < 0) continue;
-                int row = index / cols;
-                int col = index % cols;
-                double x = col * (slot + gapH);
-                double y = row * stride - vOffset;
-                child.Arrange(new Rect(x, y, slot, rowHeight));
-            }
-
-            double vpHeight = (_scrollOwner != null && _scrollOwner.ActualHeight > 0)
-                ? _scrollOwner.ActualHeight
-                : ((_scrollOwner != null && _scrollOwner.ViewportHeight > 0)
-                    ? _scrollOwner.ViewportHeight
-                    : (_viewport.Height > 0 && _viewport.Height < _extent.Height ? _viewport.Height : finalSize.Height));
-            _viewport = new Size(finalSize.Width, vpHeight);
-            return finalSize;
-        }
-
-        protected override void OnItemsChanged(object sender, ItemsChangedEventArgs args)
-        {
-            base.OnItemsChanged(sender, args);
-            ResetAllContainers();
-            _rowHeight = 0;
-            InvalidateMeasure();
         }
     }
 }

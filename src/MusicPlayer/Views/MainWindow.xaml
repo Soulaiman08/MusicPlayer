@@ -1155,11 +1155,9 @@
                     </ItemsControl.ItemTemplate>
                   </ListBox>
                   <Grid x:Name="AllSongsGridPanel" Grid.Row="0" Grid.RowSpan="2" Visibility="{Binding IsSongsGridView, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}">
-                    <ScrollViewer x:Name="SongsGridScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,8,20,16">
+                    <ScrollViewer x:Name="SongsGridScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Padding="20,8,20,16">
                       <ItemsControl ItemsSource="{Binding DisplayedTracks}"
-                                    VirtualizingPanel.IsVirtualizing="True"
-                                    VirtualizingPanel.VirtualizationMode="Recycling"
-                                    VirtualizingPanel.ScrollUnit="Pixel">
+                                    VirtualizingPanel.IsVirtualizing="True">
                         <ItemsControl.ItemsPanel>
                           <ItemsPanelTemplate>
                             <local:VirtualizingBalancedPanel MinItemWidth="260" MaxItemWidth="360" Gap="12"/>
@@ -1206,11 +1204,9 @@
                   </Grid>
                 </Grid>
                 <Grid Name="TabContent_Artists" Visibility="Collapsed">
-                  <ScrollViewer Name="ArtistsSearchScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20">
+                  <ScrollViewer Name="ArtistsSearchScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Padding="20,10,20,20">
                     <ItemsControl ItemsSource="{Binding DisplayedArtists}"
-                                  VirtualizingPanel.IsVirtualizing="True"
-                                  VirtualizingPanel.VirtualizationMode="Recycling"
-                                  VirtualizingPanel.ScrollUnit="Pixel">
+                                  VirtualizingPanel.IsVirtualizing="True">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
@@ -1248,11 +1244,9 @@
                   </ScrollViewer>
                 </Grid>
                 <Grid Name="TabContent_Albums" Visibility="Collapsed">
-                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20">
+                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Padding="20,10,20,20">
                     <ItemsControl ItemsSource="{Binding DisplayedAlbums}"
-                                  VirtualizingPanel.IsVirtualizing="True"
-                                  VirtualizingPanel.VirtualizationMode="Recycling"
-                                  VirtualizingPanel.ScrollUnit="Pixel">
+                                  VirtualizingPanel.IsVirtualizing="True">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
