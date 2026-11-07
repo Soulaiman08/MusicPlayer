@@ -1417,7 +1417,8 @@ InitializeComponent();
         _bgDirty = true;
         _glassDirty = true;
         _blurApplyRequestTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-        RebuildBlurCache();
+        long gen = ViewModel?.ThemeApplyGeneration ?? 0;
+        RebuildBlurCache(success => ViewModel?.NotifyThemeApplyCompleted(gen, success));
     }
 
     private void OnBackgroundPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -1570,6 +1571,19 @@ InitializeComponent();
         {
             _initialWallpaperReady = true;
             Dispatcher.BeginInvoke(new Action(TryCompleteStartupPresentation));
+        }
+
+        // Notify any pending theme-apply completion callbacks whose rebuild has
+        // reached this (or a newer) generation.
+        for (int i = _themeRebuildCallbacks.Count - 1; i >= 0; i--)
+        {
+            if (_themeRebuildCallbacks[i].Gen <= _bgGen)
+            {
+                var cb = _themeRebuildCallbacks[i].Callback;
+                _themeRebuildCallbacks.RemoveAt(i);
+                try { cb(true); }
+                catch { }
+            }
         }
     }
 
@@ -1762,10 +1776,11 @@ InitializeComponent();
     // overwrite a newer selection.
     private long _bgGen;
     private long _blurApplyRequestTicks;
+    private readonly System.Collections.Generic.List<(long Gen, System.Action<bool> Callback)> _themeRebuildCallbacks = new();
     private System.Threading.CancellationTokenSource? _wallpaperRebuildCts;
     private string _lastRebuiltWallpaperPath = string.Empty;
 
-    private void RebuildBlurCache()
+    private void RebuildBlurCache(System.Action<bool>? onComplete = null)
     {
         // Dispatcher affinity: settings/theme paths raise this off the UI thread
         // (LoadSettings runs on ThreadPool). Touching live visuals from there throws
@@ -1773,10 +1788,15 @@ InitializeComponent();
         if (!Dispatcher.CheckAccess())
         {
             LogHelper.LogInfo("[Wallpaper] rebuild: marshaling to UI thread");
-            Dispatcher.BeginInvoke(new Action(RebuildBlurCache));
+            Dispatcher.BeginInvoke(new Action(() => RebuildBlurCache(onComplete)));
             return;
         }
         long gen = ++_bgGen;
+
+        if (onComplete != null)
+        {
+            _themeRebuildCallbacks.Add((gen, onComplete));
+        }
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var oldCts = _wallpaperRebuildCts;
         var cts = new System.Threading.CancellationTokenSource();
@@ -2064,6 +2084,10 @@ InitializeComponent();
                             catch (Exception blurEx)
                             {
                                 LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
+                                Dispatcher.BeginInvoke(new Action(() =>
+                                {
+                                    if (gen != _bgGen) return;
+                                }));
                             }
 
                             Dispatcher.BeginInvoke(new Action(() =>

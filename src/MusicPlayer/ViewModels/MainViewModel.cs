@@ -92,6 +92,8 @@ public partial class MainViewModel : ViewModelBase
 	private string _renamePlaylistName = string.Empty;
 	private PlaylistViewModel? _renamingPlaylist;
 	private string _statusBarMessage = string.Empty;
+	private long _themeApplyGeneration;
+	private System.Threading.Tasks.TaskCompletionSource<bool>? _themeApplyTcs;
 	private bool _isStatusBarVisible;
 	private bool _isStatusBarHiddenLinkVisible;
 	private bool _isStatusBarLoading;
@@ -2113,6 +2115,18 @@ public partial class MainViewModel : ViewModelBase
 			}
 		};
 		timer.Start();
+	}
+
+	public long ThemeApplyGeneration => _themeApplyGeneration;
+
+	public void NotifyThemeApplyCompleted(long generation, bool success)
+	{
+		if (generation != _themeApplyGeneration) return;
+		var tcs = _themeApplyTcs;
+		if (tcs == null) return;
+		_themeApplyTcs = null;
+		try { tcs.TrySetResult(success); }
+		catch { }
 	}
 
 	public bool IsStatusBarHiddenLinkVisible
@@ -8207,34 +8221,77 @@ private async void LoadFolders()
 		ThemeEditAlpha = 51.0;
 	}
 
-	private void SaveThemeEdit()
+	private async void SaveThemeEdit()
 	{
-		try { _previewCts?.Cancel(); } catch { }
-
-		IsThemeCommitting = true;
-		OnPropertyChanged(nameof(IsThemeCommitting));
-
-		if (!string.IsNullOrEmpty(ThemeEditWallpaperPath))
+		long gen = 0;
+		try
 		{
-			_backgroundImagePath = ThemeEditWallpaperPath;
-			_db.SetSetting("app_wallpaper", _backgroundImagePath);
+			try { _previewCts?.Cancel(); } catch { }
+
+			gen = ++_themeApplyGeneration;
+			IsThemeCommitting = true;
+			OnPropertyChanged(nameof(IsThemeCommitting));
+
+			if (!string.IsNullOrEmpty(ThemeEditWallpaperPath))
+			{
+				_backgroundImagePath = ThemeEditWallpaperPath;
+				_db.SetSetting("app_wallpaper", _backgroundImagePath);
+			}
+			_wallpaperBlur = ThemeEditBlur;
+			_wallpaperAlpha = ThemeEditAlpha;
+			_db.SetSetting("app_wallpaper_blur", _wallpaperBlur.ToString(System.Globalization.CultureInfo.InvariantCulture));
+			_db.SetSetting("app_wallpaper_alpha", _wallpaperAlpha.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+			OnPropertyChanged(nameof(BackgroundImagePath));
+			OnPropertyChanged(nameof(WallpaperBlur));
+			OnPropertyChanged(nameof(WallpaperAlpha));
+			OnPropertyChanged(nameof(WallpaperAlphaOpacity));
+
+			ShowStatusBarLoading("Applying theme...");
+
+			var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+			_themeApplyTcs = tcs;
+
+			WallpaperSettingsCommitted?.Invoke(this, EventArgs.Empty);
+
+			bool success = false;
+			try
+			{
+				success = await tcs.Task;
+			}
+			catch
+			{
+				success = false;
+			}
+
+			// Stale generation: a newer apply superseded this one — do nothing.
+			if (gen != _themeApplyGeneration) return;
+
+			if (success)
+			{
+				ShowStatusBar("Theme applied successfully", 2500);
+				IsThemeCommitting = false;
+				OnPropertyChanged(nameof(IsThemeCommitting));
+				ExitThemeEditorToTheme();
+			}
+			else
+			{
+				ShowStatusBar("Failed to apply theme", 3000);
+				IsThemeCommitting = false;
+				OnPropertyChanged(nameof(IsThemeCommitting));
+				// Keep Theme Editor open on failure.
+			}
 		}
-		_wallpaperBlur = ThemeEditBlur;
-		_wallpaperAlpha = ThemeEditAlpha;
-		_db.SetSetting("app_wallpaper_blur", _wallpaperBlur.ToString(System.Globalization.CultureInfo.InvariantCulture));
-		_db.SetSetting("app_wallpaper_alpha", _wallpaperAlpha.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-		OnPropertyChanged(nameof(BackgroundImagePath));
-		OnPropertyChanged(nameof(WallpaperBlur));
-		OnPropertyChanged(nameof(WallpaperAlpha));
-		OnPropertyChanged(nameof(WallpaperAlphaOpacity));
-
-		WallpaperSettingsCommitted?.Invoke(this, EventArgs.Empty);
-
-		IsThemeCommitting = false;
-		OnPropertyChanged(nameof(IsThemeCommitting));
-
-		ExitThemeEditorToTheme();
+		catch (Exception ex)
+		{
+			if (gen != 0 && gen == _themeApplyGeneration)
+			{
+				ShowStatusBar("Failed to apply theme", 3000);
+				IsThemeCommitting = false;
+				OnPropertyChanged(nameof(IsThemeCommitting));
+			}
+			System.Diagnostics.Debug.WriteLine($"[ThemeEditor] SaveThemeEdit failed: {ex.Message}");
+		}
 	}
 	private void CancelThemeEdit()
 	{
