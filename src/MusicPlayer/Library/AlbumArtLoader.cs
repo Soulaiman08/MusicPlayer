@@ -585,37 +585,11 @@ public class AlbumArtLoader
         if (_scrollingActive)
             return GetDefaultAlbumArt();
 
-        if (System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true)
-        {
-            // Cold cache misses were blocking the Albums tab while the view was still
-            // measuring the card. Defer the decode to a worker and keep the current UI
-            // frame responsive; the cache is still the source of truth when the next
-            // binding refresh occurs.
-            EnqueueMediumArtParse(path, track);
-            return GetDefaultAlbumArt();
-        }
-
-        // 2. If disk cache miss or not yet created, decode from track at medium size
-        ImageSource? mediumArt;
-        using (new PerfMeasurement(isDecode: true))
-            mediumArt = DecodeMediumValidPicture(track);
-        if (mediumArt != null)
-        {
-            _mediumCache[path] = mediumArt;
-            TrimCache();
-            return mediumArt;
-        }
-
-        // 3. Fallback: thumbnail cache or default
-        var normalArt = LoadAlbumArt(track);
-        if (normalArt != null && normalArt != _defaultArt)
-        {
-            _mediumCache[path] = normalArt;
-            TrimCache();
-            return normalArt;
-        }
-
+        // Never block the caller with TagLib/File IO. Defer the decode to a bounded
+        // background worker and show the placeholder now.
+        EnqueueMediumArtParse(path, track);
         return GetDefaultAlbumArt();
+
     }
 
     public ImageSource? LoadMediumAlbumArt(string? filePath)
@@ -665,26 +639,9 @@ public class AlbumArtLoader
         if (_scrollingActive)
             return GetDefaultAlbumArt();
 
-        if (System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true)
-        {
-            EnqueueMediumArtParse(filePath, null);
-            return GetDefaultAlbumArt();
-        }
+        EnqueueMediumArtParse(filePath, null);
+        return GetDefaultAlbumArt();
 
-        // Fallback: decode directly from file
-        var dummy = new MusicTrack { FilePath = filePath };
-        ImageSource? mediumArt;
-        using (new PerfMeasurement(isDecode: true))
-            mediumArt = DecodeMediumValidPicture(dummy);
-        if (mediumArt != null)
-        {
-            _mediumCache[filePath] = mediumArt;
-            TrimCache();
-            return mediumArt;
-        }
-
-        // Fallback: use the list thumbnail (still better than nothing)
-        return LoadAlbumArt(filePath);
     }
 
     public ImageSource? LoadFullAlbumArt(string? filePath)

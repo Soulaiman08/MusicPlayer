@@ -4710,15 +4710,41 @@ public partial class MainViewModel : ViewModelBase
 	private async Task WarmUpAndRefreshAsync(List<MusicTrack> tracks, CancellationToken cancellationToken = default)
 	{
 		var sw = System.Diagnostics.Stopwatch.StartNew();
-		cancellationToken.ThrowIfCancellationRequested();
-		await _albumArt.WarmUpArtCacheAsync(tracks, cancellationToken);
-		cancellationToken.ThrowIfCancellationRequested();
-		long warmMs = sw.ElapsedMilliseconds;
-		await DispatchAsync(delegate
+		LogHelper.LogInfo("[StartupPerf] WarmUpAndRefresh start");
+		// Do not start heavy artwork extraction the moment the loading overlay
+		// disappears. Wait for the user to be idle (or for a minimum age) first.
+		await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
+			quietMs: 2000, minAgeMs: 5000, maxWaitMs: 120000, cancellationToken);
+		if (cancellationToken.IsCancellationRequested) return;
+
+		// Process the library in bounded batches so the UI thread and the decode
+		// gate are never held by an unbounded run. Each batch is cancellable and
+		// is re-run only when the user stops interacting.
+		const int batchSize = 64;
+		for (int offset = 0; offset < tracks.Count; offset += batchSize)
 		{
-			var list = new List<MusicTrack>(Tracks);
-			Tracks.ReplaceAll(list);
-		});
+			if (cancellationToken.IsCancellationRequested) return;
+			await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
+				quietMs: 1000, minAgeMs: 0, maxWaitMs: 60000, cancellationToken);
+			if (cancellationToken.IsCancellationRequested) return;
+
+			var batch = tracks.Skip(offset).Take(batchSize).ToList();
+			bool cancelled = await RunCancellableWorkWithWatchdogAsync(
+				ct => _albumArt.WarmUpArtCacheAsync(batch, ct),
+				() => MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(),
+				cancellationToken);
+			if (cancelled)
+			{
+				// Retry the same batch after the user goes idle again.
+				offset -= batchSize;
+				continue;
+			}
+			LogHelper.LogInfo($"[StartupPerf] WarmUp batch {offset / batchSize + 1} done totalMs={sw.ElapsedMilliseconds}");
+		}
+
+		long warmMs = sw.ElapsedMilliseconds;
+		// Intentionally no Collection Reset here: covers appear progressively as
+		// virtualized containers are (re)created, and the cache is already warm.
 		LogHelper.LogInfo($"WARMUP done warmMs={warmMs} totalMs={sw.ElapsedMilliseconds}");
 	}
 
@@ -6294,18 +6320,27 @@ public partial class MainViewModel : ViewModelBase
 		if (operation == null) return;
 		try
 		{
+			var swTotal = System.Diagnostics.Stopwatch.StartNew();
+			var swFetch = System.Diagnostics.Stopwatch.StartNew();
 			List<MusicTrack> items = await Task.Run(() => (from g in _db.GetAllTracks()
 					.GroupBy<MusicTrack, string>(t => string.IsNullOrWhiteSpace(t.Album) ? "Unknown Album" : t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
 				select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
 				orderby t.Album
 				select t).ToList());
+			long fetchMs = swFetch.ElapsedMilliseconds;
 			string sortOrder = LibrarySortOrder;
 			bool sortDescending = IsLibrarySortDescending;
+			var swSort = System.Diagnostics.Stopwatch.StartNew();
 			List<MusicTrack> sortedAlbums = items.Count >= 2
 				? await Task.Run(() => SortItems(items, false, sortOrder, sortDescending).ToList())
 				: items;
-		await ReplaceAllChunkedAsync(Albums, sortedAlbums);
-		PerfTabData("albums", Albums.Count);
+			long sortMs = swSort.ElapsedMilliseconds;
+			var swPublish = System.Diagnostics.Stopwatch.StartNew();
+			await ReplaceAllChunkedAsync(Albums, sortedAlbums);
+			long publishMs = swPublish.ElapsedMilliseconds;
+			PerfTabData("albums", Albums.Count);
+			if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
+				LogHelper.LogInfo($"TAB-DATA albums fetchMs={fetchMs} sortMs={sortMs} publishMs={publishMs} totalMs={swTotal.ElapsedMilliseconds} count={sortedAlbums.Count}");
 	}
 	catch
 	{
