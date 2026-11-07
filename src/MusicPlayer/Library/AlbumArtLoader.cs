@@ -206,11 +206,9 @@ public class AlbumArtLoader
     private readonly ConcurrentDictionary<string, byte> _pendingParses = new();
     private readonly ConcurrentDictionary<string, byte> _pendingMediumParses = new();
     public event Action<string>? MediumArtReady;
-    private readonly LinkedList<(string Path, MusicTrack? Track)> _mediumWorkList = new();
-    private readonly object _mediumQueueLock = new();
-    private const int MaxMediumQueueCapacity = 256;
-    private const int MaxMediumWorkers = 2;
-    private int _mediumWorkersStarted;
+    public event Action<IReadOnlySet<string>>? MediumArtBatchReady;
+    private readonly ConcurrentQueue<string> _batchedReadyPaths = new();
+    private int _batchFlushScheduled;
     private readonly ConcurrentQueue<string> _preloadQueue = new();
     private ImageSource? _defaultArt;
     private volatile bool _preloading;
@@ -650,9 +648,21 @@ public class AlbumArtLoader
         return _cardsCache.TryGetValue(path, out var img) && img != null && img != _defaultArt;
     }
 
-    public void EnqueueMediumArt(string path, MusicTrack? track = null)
+    public void EnqueueMediumArt(string path, MusicTrack? track = null, MusicPlayer.Services.WorkPriority priority = MusicPlayer.Services.WorkPriority.ImmediateVisible)
     {
-        EnqueueMediumArtParse(path, track);
+        if (string.IsNullOrWhiteSpace(path)) return;
+        if (_cardsCache.ContainsKey(path)) return;
+
+        _ = MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
+            "cards:" + path,
+            priority,
+            ct =>
+            {
+                if (ct.IsCancellationRequested) return Task.CompletedTask;
+                if (_cardsCache.ContainsKey(path)) return Task.CompletedTask;
+                ProcessMediumArt(path, track);
+                return Task.CompletedTask;
+            });
     }
 
     // ── Cards Quality (240px) — Album and Artist Cards ───────────────────────
@@ -674,39 +684,9 @@ public class AlbumArtLoader
 
         RecordMediumCacheMiss();
 
-        // While scrolling is active or the user is actively interacting, DO NOT perform synchronous
-        // disk reads or image decodes on the UI thread. Return default art immediately; the background
-        // queue will decode the image and fire MediumArtReady to populate the card smoothly.
-        if (_scrollingActive || MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(300))
-        {
-            EnqueueMediumArtParse(path, track);
-            return GetDefaultAlbumArt();
-        }
-
-        // Check disk cache first ({hash}.jpg)
-        try
-        {
-            var hash = GetMd5Hash(path);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                var img = LoadSizedImageFromFile(existingPath, CardsDecodeSize);
-                if (img != null)
-                {
-                    _cardsCache[path] = img;
-                    TrimCache();
-                    NotifyMediumArtReady(path);
-                    return img;
-                }
-            }
-        }
-        catch { }
-
-        // Queue background decode for true 240px cards art
-        EnqueueMediumArtParse(path, track);
-
+        // UI-Thread Protection: Zero disk I/O and zero JPEG decodes on UI thread.
+        // Return frozen default placeholder immediately; central coordinator handles decode.
+        EnqueueMediumArt(path, track, MusicPlayer.Services.WorkPriority.ImmediateVisible);
         return GetDefaultAlbumArt();
     }
 
@@ -723,36 +703,7 @@ public class AlbumArtLoader
 
         RecordMediumCacheMiss();
 
-        // While scrolling is active or the user is actively interacting, DO NOT perform synchronous
-        // disk reads or image decodes on the UI thread.
-        if (_scrollingActive || MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(300))
-        {
-            EnqueueMediumArtParse(filePath, null);
-            return GetDefaultAlbumArt();
-        }
-
-        try
-        {
-            var hash = GetMd5Hash(filePath);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                var img = LoadSizedImageFromFile(existingPath, CardsDecodeSize);
-                if (img != null)
-                {
-                    _cardsCache[filePath] = img;
-                    TrimCache();
-                    NotifyMediumArtReady(filePath);
-                    return img;
-                }
-            }
-        }
-        catch { }
-
-        EnqueueMediumArtParse(filePath, null);
-
+        EnqueueMediumArt(filePath, null, MusicPlayer.Services.WorkPriority.ImmediateVisible);
         return GetDefaultAlbumArt();
     }
 
@@ -761,7 +712,7 @@ public class AlbumArtLoader
         return DecodeFirstValidPicture(track);
     }
 
-    // Runs the TagLib Pictures scan + decode + Freeze() on a worker thread.
+    // Runs the TagLib Pictures scan + decode + Freeze() on a worker thread via BackgroundWorkCoordinator.
     // Freezing on the background thread makes the result safe to hand to the UI
     // virtualizer without any cross-thread marshalling cost.
     private void EnqueueFullArtParse(string path)
@@ -769,104 +720,67 @@ public class AlbumArtLoader
         if (_pendingParses.ContainsKey(path)) return;
         _pendingParses[path] = 0;
 
-        Task.Run(async () =>
-        {
-            try
+        _ = MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
+            "full:" + path,
+            MusicPlayer.Services.WorkPriority.ImmediateVisible,
+            ct =>
             {
-                await _decodeGate.WaitAsync();
                 try
                 {
-                    // Re-check memory first — the thumbnail may have been filled in
-                    // by the warm-up while this task was queued.
+                    if (ct.IsCancellationRequested) return Task.CompletedTask;
                     if (_fullQualityCache.TryGetValue(path, out var done) && done != null)
-                        return;
+                        return Task.CompletedTask;
 
                     var dummyTrack = new MusicTrack { FilePath = path };
                     var img = DecodeFirstValidPicture(dummyTrack);
                     if (img != null)
                         _fullQualityCache[path] = img;
                 }
-                finally { _decodeGate.Release(); }
-            }
-            catch { }
-            finally
-            {
-                _pendingParses.TryRemove(path, out _);
-            }
-        });
+                catch { }
+                finally
+                {
+                    _pendingParses.TryRemove(path, out _);
+                }
+                return Task.CompletedTask;
+            });
     }
 
     private void NotifyMediumArtReady(string path)
     {
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher != null && !dispatcher.CheckAccess())
+        _batchedReadyPaths.Enqueue(path);
+        if (Interlocked.CompareExchange(ref _batchFlushScheduled, 1, 0) == 0)
         {
-            dispatcher.BeginInvoke(new Action(() => MediumArtReady?.Invoke(path)));
-        }
-        else
-        {
-            MediumArtReady?.Invoke(path);
-        }
-    }
-
-    private void EnqueueMediumArtParse(string path, MusicTrack? track)
-    {
-        if (string.IsNullOrWhiteSpace(path)) return;
-        lock (_mediumQueueLock)
-        {
-            if (!_pendingMediumParses.TryAdd(path, 0)) return;
-
-            while (_mediumWorkList.Count >= MaxMediumQueueCapacity)
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher != null)
             {
-                var oldest = _mediumWorkList.First!.Value;
-                _mediumWorkList.RemoveFirst();
-                _pendingMediumParses.TryRemove(oldest.Path, out _);
-            }
-
-            _mediumWorkList.AddLast((path, track));
-            EnsureMediumWorkers();
-            Monitor.Pulse(_mediumQueueLock);
-        }
-    }
-
-    private void EnsureMediumWorkers()
-    {
-        lock (_mediumQueueLock)
-        {
-            while (_mediumWorkersStarted < MaxMediumWorkers)
-            {
-                _mediumWorkersStarted++;
-                _ = Task.Run(MediumWorkerLoop);
-            }
-        }
-    }
-
-    private void MediumWorkerLoop()
-    {
-        while (true)
-        {
-            (string Path, MusicTrack? Track) item;
-            lock (_mediumQueueLock)
-            {
-                while (_mediumWorkList.Count == 0)
+                dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() =>
                 {
-                    Monitor.Wait(_mediumQueueLock);
+                    Interlocked.Exchange(ref _batchFlushScheduled, 0);
+                    var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    while (_batchedReadyPaths.TryDequeue(out var p))
+                    {
+                        set.Add(p);
+                        MediumArtReady?.Invoke(p);
+                    }
+                    if (set.Count > 0)
+                    {
+                        MediumArtBatchReady?.Invoke(set);
+                    }
+                }));
+            }
+            else
+            {
+                Interlocked.Exchange(ref _batchFlushScheduled, 0);
+                var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                while (_batchedReadyPaths.TryDequeue(out var p))
+                {
+                    set.Add(p);
+                    MediumArtReady?.Invoke(p);
                 }
-                item = _mediumWorkList.Last!.Value;
-                _mediumWorkList.RemoveLast();
-            }
-
-            try
-            {
-                ProcessMediumArt(item.Path, item.Track);
-            }
-            catch (Exception ex)
-            {
-                LogHelper.LogError($"Medium art worker error for {item.Path}", ex);
-            }
-            finally
-            {
-                _pendingMediumParses.TryRemove(item.Path, out _);
+                if (set.Count > 0)
+                {
+                    MediumArtBatchReady?.Invoke(set);
+                }
             }
         }
     }
@@ -1172,38 +1086,52 @@ public class AlbumArtLoader
         IEnumerable<MusicTrack> tracks,
         CancellationToken cancellationToken = default)
     {
-        // Lightweight: checks disk cache in parallel. Loads instantly into memory.
-        return Task.Run(() =>
+        return Task.Run(async () =>
         {
             var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
             if (list.Count == 0 || cancellationToken.IsCancellationRequested) return;
-            Parallel.ForEach(list, new ParallelOptions
+
+            var tasks = new List<Task>();
+            foreach (var track in list)
             {
-                MaxDegreeOfParallelism = 2,
-                CancellationToken = cancellationToken
-            }, track =>
+                if (cancellationToken.IsCancellationRequested) break;
+                if (_cache.ContainsKey(track.FilePath)) continue;
+                if (!_pendingParses.TryAdd(track.FilePath, 1)) continue;
+
+                tasks.Add(MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
+                    "track:" + track.FilePath,
+                    MusicPlayer.Services.WorkPriority.Viewport,
+                    ct =>
+                    {
+                        try
+                        {
+                            if (ct.IsCancellationRequested || cancellationToken.IsCancellationRequested) return Task.CompletedTask;
+                            if (_cache.ContainsKey(track.FilePath)) return Task.CompletedTask;
+                            var art = LoadAlbumArtCore(track.FilePath);
+                            if (art != null && art != _defaultArt)
+                                _cache[track.FilePath] = art;
+                        }
+                        catch { }
+                        finally
+                        {
+                            _pendingParses.TryRemove(track.FilePath, out _);
+                        }
+                        return Task.CompletedTask;
+                    },
+                    cancellationToken));
+            }
+
+            if (tasks.Count > 0)
             {
-                if (cancellationToken.IsCancellationRequested) return;
-                if (_cache.ContainsKey(track.FilePath)) return;
-                if (!_pendingParses.TryAdd(track.FilePath, 1)) return;
-                try
-                {
-                    var art = LoadAlbumArtCore(track.FilePath);
-                    if (art != null && art != _defaultArt)
-                        _cache[track.FilePath] = art;
-                }
-                catch { }
-                finally
-                {
-                    _pendingParses.TryRemove(track.FilePath, out _);
-                }
-            });
+                await Task.WhenAll(tasks);
+            }
         }, cancellationToken);
     }
 
     /// <summary>
     /// Preloads 240px Cards-quality album artwork into <c>_cardsCache</c> for the given tracks.
     /// Uses the disk cache when available; falls back to TagLib embedded pictures.
+    /// Bounded by BackgroundWorkCoordinator to prevent CPU spikes.
     /// Safe to call on any thread. Does not pollute the 80px thumbnail cache.
     /// </summary>
     public Task PreloadCardsArtwork(
@@ -1212,54 +1140,47 @@ public class AlbumArtLoader
         CancellationToken cancellationToken = default,
         bool isPriority = false)
     {
-        return Task.Run(() =>
+        return Task.Run(async () =>
         {
             var list = tracks.Where(t => t != null).ToList();
             if (list.Count == 0 || cancellationToken.IsCancellationRequested) return;
-            Parallel.ForEach(list, new ParallelOptions
+
+            var priority = isPriority ? MusicPlayer.Services.WorkPriority.Viewport : MusicPlayer.Services.WorkPriority.BackgroundLibrary;
+            var tasks = new List<Task>();
+
+            foreach (var track in list)
             {
-                MaxDegreeOfParallelism = Math.Max(1, Math.Min(maxDegreeOfParallelism, 4)),
-                CancellationToken = cancellationToken
-            }, track =>
-            {
-                if (cancellationToken.IsCancellationRequested) return;
-                if (!isPriority && MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1200)) return;
+                if (cancellationToken.IsCancellationRequested) break;
                 var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
-                if (string.IsNullOrEmpty(path)) return;
-                // Skip if already in cards cache
-                if (_cardsCache.ContainsKey(path)) return;
-                if (!_pendingMediumParses.TryAdd(path, 1)) return;
-                try
-                {
-                    var hash = GetMd5Hash(path);
-                    var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-                    var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-                    var existingPath = File.Exists(cachedImagePath) ? cachedImagePath
-                                     : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-                    if (existingPath != null)
+                if (string.IsNullOrEmpty(path)) continue;
+                if (_cardsCache.ContainsKey(path)) continue;
+                if (!_pendingMediumParses.TryAdd(path, 1)) continue;
+
+                tasks.Add(MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
+                    "cards:" + path,
+                    priority,
+                    ct =>
                     {
-                        var img = LoadSizedImageFromFile(existingPath, CardsDecodeSize);
-                        if (img != null)
+                        try
                         {
-                            _cardsCache[path] = img;
-                            NotifyMediumArtReady(path);
-                            return;
+                            if (ct.IsCancellationRequested || cancellationToken.IsCancellationRequested) return Task.CompletedTask;
+                            if (_cardsCache.ContainsKey(path)) return Task.CompletedTask;
+                            ProcessMediumArt(path, track);
                         }
-                    }
-                    // Disk cache miss: decode from embedded tags (heavy path)
-                    var cardsArt = DecodeSizedValidPicture(track, CardsDecodeSize);
-                    if (cardsArt != null)
-                    {
-                        _cardsCache[path] = cardsArt;
-                        NotifyMediumArtReady(path);
-                    }
-                }
-                catch { }
-                finally
-                {
-                    _pendingMediumParses.TryRemove(path, out _);
-                }
-            });
+                        catch { }
+                        finally
+                        {
+                            _pendingMediumParses.TryRemove(path, out _);
+                        }
+                        return Task.CompletedTask;
+                    },
+                    cancellationToken));
+            }
+
+            if (tasks.Count > 0)
+            {
+                await Task.WhenAll(tasks);
+            }
         }, cancellationToken);
     }
 

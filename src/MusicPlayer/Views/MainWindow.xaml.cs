@@ -1292,9 +1292,13 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
         if (loader == null) throw new ArgumentNullException(nameof(loader));
         if (ReferenceEquals(_albumArtLoader, loader)) return;
         if (_albumArtLoader != null)
+        {
             _albumArtLoader.MediumArtReady -= OnMediumArtReady;
+            _albumArtLoader.MediumArtBatchReady -= OnMediumArtBatchReady;
+        }
         _albumArtLoader = loader;
         _albumArtLoader.MediumArtReady += OnMediumArtReady;
+        _albumArtLoader.MediumArtBatchReady += OnMediumArtBatchReady;
     }
 
     public MainWindow()
@@ -1304,7 +1308,15 @@ InitializeComponent();
    SmoothScrollHelper.Initialize();
    DataContextChanged += OnDataContextChanged;
    Loaded += OnWindowLoaded;
-   Closed += (_, _) => { if (_albumArtLoader != null) { _albumArtLoader.MediumArtReady -= OnMediumArtReady; _albumArtLoader = null; } };
+   Closed += (_, _) =>
+   {
+       if (_albumArtLoader != null)
+       {
+           _albumArtLoader.MediumArtReady -= OnMediumArtReady;
+           _albumArtLoader.MediumArtBatchReady -= OnMediumArtBatchReady;
+           _albumArtLoader = null;
+       }
+   };
    Deactivated += OnWindowDeactivated;
 // Keeps the table headers' column separators aligned with the row separators,
 // which sit inside each list's scrollbar gutter.
@@ -2763,6 +2775,31 @@ InitializeComponent();
         catch { }
     }
 
+    private void OnMediumArtBatchReady(System.Collections.Generic.IReadOnlySet<string> paths)
+    {
+        if (paths == null || paths.Count == 0) return;
+        var dispatcher = Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(() => OnMediumArtBatchReady(paths)));
+            return;
+        }
+
+        try
+        {
+            UpdateAlbumImagesBatch(paths);
+        }
+        catch { }
+    }
+
+    private static void UpdateAlbumImagesBatch(System.Collections.Generic.IReadOnlySet<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            UpdateAlbumImages(path);
+        }
+    }
+
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Generic.HashSet<System.WeakReference<System.Windows.Controls.Image>>> _registeredAlbumImages = new(StringComparer.OrdinalIgnoreCase);
 
     private static string? GetCoverPathFromDataContext(object? dataContext)
@@ -3757,12 +3794,13 @@ InitializeComponent();
         if (itemsControl == null) return 0;
         var presenter = FindVisualChild<ItemsPresenter>(itemsControl);
         var panel = presenter != null ? FindVisualChild<Panel>(presenter) : null;
-        return panel?.Children.Count ?? FindVisualChild<BalancedItemsPanel>(itemsControl)?.Children.Count ?? 0;
+        return panel?.Children.Count ?? FindVisualChild<VirtualizingBalancedPanel>(itemsControl)?.Children.Count ?? FindVisualChild<BalancedItemsPanel>(itemsControl)?.Children.Count ?? 0;
     }
 
     private static int GetItemsPanelChildCount(DependencyObject? root)
     {
         if (root == null) return 0;
+        if (root is VirtualizingBalancedPanel vPanel) return vPanel.Children.Count;
         if (root is BalancedItemsPanel panel) return panel.Children.Count;
         if (root is not System.Windows.Media.Visual && root is not System.Windows.Media.Media3D.Visual3D) return 0;
 
@@ -4738,21 +4776,28 @@ InitializeComponent();
         var artEl = AlbumDetailArtBorder ?? FindAlbumDetailArt();
         if (artEl is Border artBorder && artBorder.Background is ImageBrush artBrush && artBrush.ImageSource != null)
             return artBrush.ImageSource;
+
         var loader = AlbumArtLoader.Instance;
         if (loader != null && ViewModel != null &&
             ViewModel.AlbumCoverTracks.TryGetValue((_artistTransitionArtistName ?? string.Empty).Trim(), out var cover) && cover != null)
         {
-            var full = loader.LoadFullAlbumArt(cover);
-            if (full != null) return full;
+            var path = !string.IsNullOrEmpty(cover.AlbumArtPath) ? cover.AlbumArtPath : cover.FilePath;
+            if (!string.IsNullOrEmpty(path))
+            {
+                if (loader.HasMediumArt(path)) return loader.LoadCardsAlbumArt(path);
+                var full = loader.LoadFullAlbumArt(cover);
+                if (full != null && full != loader.GetDefaultAlbumArt()) return full;
+            }
         }
-        var converter = new Converters.AlbumArtConverter();
+
         if (_albumTransitionTrack != null)
         {
-            var fromTrack = converter.Convert(_albumTransitionTrack, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource;
-            if (fromTrack != null) return fromTrack;
+            var path = !string.IsNullOrEmpty(_albumTransitionTrack.AlbumArtPath) ? _albumTransitionTrack.AlbumArtPath : _albumTransitionTrack.FilePath;
+            if (!string.IsNullOrEmpty(path) && loader != null && loader.HasMediumArt(path))
+                return loader.LoadCardsAlbumArt(path);
         }
-        return (_albumTransitionTrack != null ? loader?.LoadFullAlbumArt(_albumTransitionTrack) : null)
-            ?? loader?.GetDefaultAlbumArt();
+
+        return loader?.GetDefaultAlbumArt();
     }
 
     private void AlbumDetailBack_Click(object sender, RoutedEventArgs e)
@@ -5022,12 +5067,13 @@ InitializeComponent();
         string name = _artistTransitionArtistName;
         if (string.IsNullOrEmpty(name)) return;
 
-        try { ContentGrid.UpdateLayout(); } catch { }
-
+        // Note: Do NOT call ContentGrid.UpdateLayout() synchronously here; forcing a full-window layout
+        // pass right before the animation freezes the UI thread.
         FrameworkElement? card = null;
         FrameworkElement? circle = null;
         foreach (UIElement child in ContentGrid.Children)
         {
+            if (child.Visibility != Visibility.Visible) continue;
             var hit = FindHeroSourceCard(child, name, _isAlbumTransition);
             if (hit != null)
             {

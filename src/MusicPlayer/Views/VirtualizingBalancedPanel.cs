@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -6,8 +7,11 @@ using System.Windows.Media;
 
 namespace MusicPlayer.Views
 {
-    // Real virtualizing grid panel: only materializes containers for items whose
-    // rows intersect the viewport (plus a small cache). Reuses containers on scroll.
+    /// <summary>
+    /// High-performance virtualizing balanced grid panel: only materializes containers
+    /// for items whose rows intersect the viewport (+ buffer rows). Reuses/recycles containers on scroll.
+    /// Supports pixel-smooth IScrollInfo and handles large libraries (10,000+ items) with constant memory.
+    /// </summary>
     public class VirtualizingBalancedPanel : VirtualizingPanel, IScrollInfo
     {
         public static readonly DependencyProperty MinItemWidthProperty =
@@ -22,9 +26,10 @@ namespace MusicPlayer.Views
             DependencyProperty.Register("Gap", typeof(double), typeof(VirtualizingBalancedPanel),
                 new FrameworkPropertyMetadata(8d, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsArrange));
 
+        // Intentionally WITHOUT AffectsMeasure/AffectsArrange to prevent recursive layout cycles during MeasureOverride/ArrangeOverride
         private static readonly DependencyPropertyKey ItemWidthPropertyKey =
             DependencyProperty.RegisterReadOnly("ItemWidth", typeof(double), typeof(VirtualizingBalancedPanel),
-                new FrameworkPropertyMetadata(150d, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsArrange));
+                new FrameworkPropertyMetadata(150d));
 
         public static readonly DependencyProperty ItemWidthProperty = ItemWidthPropertyKey.DependencyProperty;
 
@@ -33,11 +38,11 @@ namespace MusicPlayer.Views
         public double Gap { get => (double)GetValue(GapProperty); set => SetValue(GapProperty, value); }
         public double ItemWidth => (double)GetValue(ItemWidthProperty);
 
-        private double _slot;
-        private double _gapH;
-        private int _cols;
+        private double _slot = 150;
+        private double _gapH = 8;
+        private int _cols = 4;
         private double _rowHeight = 0;
-        private double _lastMeasureWidth;
+        private double _lastMeasureWidth = 0;
         private int _firstRealizedIndex = -1;
         private int _lastRealizedIndex = -1;
         private const double RowHeightEstimate = 200;
@@ -77,8 +82,11 @@ namespace MusicPlayer.Views
             _slot = Math.Max(1, slot);
             _gapH = gap + (cols > 1 ? Math.Max(0, w - used) / (cols - 1) : 0);
             _cols = Math.Max(1, cols);
+
             if (Math.Abs(ItemWidth - _slot) > 0.5)
+            {
                 SetValue(ItemWidthPropertyKey, _slot);
+            }
         }
 
         private void GetRequiredIndexRange(double offsetY, double viewportH, out int reqFirstIndex, out int reqLastIndex)
@@ -101,7 +109,7 @@ namespace MusicPlayer.Views
 
             double vpH = viewportH > 0 ? viewportH : (_viewport.Height > 0 ? _viewport.Height : estimatedRowHeight * 4);
 
-            // 1 row before, 2 rows after
+            // 1 buffer row above, 2 buffer rows below
             int topRow = (int)Math.Floor(offsetY / stride);
             int firstRow = Math.Max(0, topRow - 1);
             int visibleRowCount = (int)Math.Ceiling(Math.Max(1, vpH) / stride);
@@ -122,7 +130,7 @@ namespace MusicPlayer.Views
 
             _offset.Y = offset;
 
-            // Fast path: if the new offset's required items are already realized, only arrange!
+            // Fast path: if the new offset's required items are already realized, arrange only!
             if (InternalChildren.Count > 0 && Owner != null && _firstRealizedIndex >= 0 && _lastRealizedIndex >= 0)
             {
                 GetRequiredIndexRange(_offset.Y, _viewport.Height, out int reqFirst, out int reqLast);
@@ -138,10 +146,7 @@ namespace MusicPlayer.Views
             _scrollOwner?.InvalidateScrollInfo();
         }
 
-        public void SetHorizontalOffset(double offset)
-        {
-            // no horizontal scrolling
-        }
+        public void SetHorizontalOffset(double offset) { }
 
         public void LineUp() => SetVerticalOffset(VerticalOffset - 32);
         public void LineDown() => SetVerticalOffset(VerticalOffset + 32);
@@ -237,76 +242,31 @@ namespace MusicPlayer.Views
             if (_offset.Y > maxOffset) _offset.Y = maxOffset;
             if (_offset.Y < 0) _offset.Y = 0;
 
-            // visible row range with balanced cache (1 row before, 2 rows after)
-            GetRequiredIndexRange(_offset.Y, viewportHeight, out int firstIndex, out int lastIndex);
-
-            // 1. Cleanup out-of-range containers FIRST
-            if (InternalChildren.Count > 0 && Owner != null)
+            if (itemCount == 0)
             {
-                // Clean up any individual disconnected containers (itemIndex < 0)
-                for (int i = InternalChildren.Count - 1; i >= 0; i--)
-                {
-                    int idx = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[i]);
-                    if (idx < 0)
-                    {
-                        SafeRemoveOrRecycleContainer(i);
-                    }
-                }
-
-                if (InternalChildren.Count > 0)
-                {
-                    int firstRealized = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
-                    int lastRealized = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[InternalChildren.Count - 1]);
-
-                    // If completely disjoint from the new range, clean all from back to front
-                    if (itemCount == 0 || lastIndex < firstRealized || firstIndex > lastRealized)
-                    {
-                        for (int i = InternalChildren.Count - 1; i >= 0; i--)
-                        {
-                            if (!SafeRemoveOrRecycleContainer(i)) break;
-                        }
-                    }
-                    else
-                    {
-                        // Remove trailing out-of-range containers (from the end)
-                        for (int i = InternalChildren.Count - 1; i >= 0; i--)
-                        {
-                            int idx = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[i]);
-                            if (idx > lastIndex)
-                            {
-                                if (!SafeRemoveOrRecycleContainer(i)) break;
-                            }
-                            else
-                            {
-                                break;
-                            }
-                        }
-
-                        // Remove leading out-of-range containers (from the start)
-                        while (InternalChildren.Count > 0)
-                        {
-                            int idx = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
-                            if (idx >= 0 && idx < firstIndex)
-                            {
-                                if (!SafeRemoveOrRecycleContainer(0)) break;
-                            }
-                            else
-                            {
-                                break;
-                            }
-                        }
-                    }
-                }
+                ResetAllContainers();
+                _extent = new Size(availableSize.Width, 0);
+                _viewport = new Size(availableSize.Width, viewportHeight);
+                _scrollOwner?.InvalidateScrollInfo();
+                return new Size(availableSize.Width, 0);
             }
 
-            // 2. Generate missing containers for [firstIndex, lastIndex]
-            if (itemCount > 0 && lastIndex >= firstIndex && Owner != null)
+            // Visible row range with balanced cache
+            GetRequiredIndexRange(_offset.Y, viewportHeight, out int firstIndex, out int lastIndex);
+
+            IItemContainerGenerator generator = ItemContainerGenerator;
+            if (generator != null)
             {
-                IItemContainerGenerator generator = ItemContainerGenerator;
-                if (InternalChildren.Count == 0)
+                // If currently realized range is completely disjoint or uninitialized, do a clean sweep
+                if (InternalChildren.Count == 0 ||
+                    _firstRealizedIndex < 0 ||
+                    _lastRealizedIndex < firstIndex ||
+                    _firstRealizedIndex > lastIndex)
                 {
+                    ResetAllContainers();
+
                     GeneratorPosition startPos = generator.GeneratorPositionFromIndex(firstIndex);
-                    int childIndex = startPos.Offset == 0 ? startPos.Index : startPos.Index + 1;
+                    int childIndex = (startPos.Offset == 0) ? startPos.Index : startPos.Index + 1;
                     if (childIndex < 0) childIndex = 0;
 
                     using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
@@ -336,95 +296,114 @@ namespace MusicPlayer.Views
                 }
                 else
                 {
-                    int rStart = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
-                    int rEnd = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[InternalChildren.Count - 1]);
-
-                    // Generate any items before rStart (scrolling up)
-                    if (firstIndex < rStart)
+                    // Incremental adjustment: trim out-of-range trailing items
+                    for (int i = InternalChildren.Count - 1; i >= 0; i--)
                     {
-                        GeneratorPosition startPos = generator.GeneratorPositionFromIndex(firstIndex);
-                        int childIndex = startPos.Offset == 0 ? startPos.Index : startPos.Index + 1;
-                        if (childIndex < 0) childIndex = 0;
-
-                        using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
+                        int idx = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[i]);
+                        if (idx > lastIndex || idx < 0)
                         {
-                            for (int i = firstIndex; i < rStart; i++)
+                            SafeRemoveOrRecycleContainer(i);
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    // Trim out-of-range leading items
+                    while (InternalChildren.Count > 0)
+                    {
+                        int idx = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
+                        if (idx >= 0 && idx < firstIndex)
+                        {
+                            SafeRemoveOrRecycleContainer(0);
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    // Fill missing items at the beginning
+                    if (InternalChildren.Count > 0)
+                    {
+                        int currentFirst = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
+                        if (firstIndex < currentFirst && currentFirst > 0)
+                        {
+                            GeneratorPosition startPos = generator.GeneratorPositionFromIndex(firstIndex);
+                            int childIndex = (startPos.Offset == 0) ? startPos.Index : startPos.Index + 1;
+                            if (childIndex < 0) childIndex = 0;
+
+                            using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
                             {
-                                bool newlyRealized;
-                                var container = generator.GenerateNext(out newlyRealized) as UIElement;
-                                if (container == null) break;
-
-                                if (newlyRealized || !InternalChildren.Contains(container))
+                                for (int i = firstIndex; i < currentFirst; i++)
                                 {
-                                    if (childIndex >= InternalChildren.Count)
-                                        AddInternalChild(container);
-                                    else
-                                        InsertInternalChild(childIndex, container);
-                                    generator.PrepareItemContainer(container);
+                                    bool newlyRealized;
+                                    var container = generator.GenerateNext(out newlyRealized) as UIElement;
+                                    if (container == null) break;
+
+                                    if (newlyRealized || !InternalChildren.Contains(container))
+                                    {
+                                        if (childIndex >= InternalChildren.Count)
+                                            AddInternalChild(container);
+                                        else
+                                            InsertInternalChild(childIndex, container);
+                                        generator.PrepareItemContainer(container);
+                                    }
+
+                                    container.Measure(new Size(slot, double.PositiveInfinity));
+                                    if (container.DesiredSize.Height > _rowHeight)
+                                        _rowHeight = container.DesiredSize.Height;
+
+                                    childIndex++;
                                 }
-
-                                container.Measure(new Size(slot, double.PositiveInfinity));
-                                if (container.DesiredSize.Height > _rowHeight)
-                                    _rowHeight = container.DesiredSize.Height;
-
-                                childIndex++;
                             }
                         }
                     }
 
-                    // Generate any items after rEnd (scrolling down)
-                    if (lastIndex > rEnd)
+                    // Fill missing items at the end
+                    if (InternalChildren.Count > 0)
                     {
-                        GeneratorPosition startPos = generator.GeneratorPositionFromIndex(rEnd + 1);
-                        int childIndex = startPos.Offset == 0 ? startPos.Index : startPos.Index + 1;
-                        if (childIndex < 0 || childIndex > InternalChildren.Count) childIndex = InternalChildren.Count;
-
-                        using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
+                        int currentLast = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[InternalChildren.Count - 1]);
+                        if (lastIndex > currentLast)
                         {
-                            for (int i = rEnd + 1; i <= lastIndex; i++)
+                            GeneratorPosition startPos = generator.GeneratorPositionFromIndex(currentLast + 1);
+                            int childIndex = (startPos.Offset == 0) ? startPos.Index : startPos.Index + 1;
+                            if (childIndex < 0 || childIndex > InternalChildren.Count) childIndex = InternalChildren.Count;
+
+                            using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
                             {
-                                bool newlyRealized;
-                                var container = generator.GenerateNext(out newlyRealized) as UIElement;
-                                if (container == null) break;
-
-                                if (newlyRealized || !InternalChildren.Contains(container))
+                                for (int i = currentLast + 1; i <= lastIndex; i++)
                                 {
-                                    if (childIndex >= InternalChildren.Count)
-                                        AddInternalChild(container);
-                                    else
-                                        InsertInternalChild(childIndex, container);
-                                    generator.PrepareItemContainer(container);
+                                    bool newlyRealized;
+                                    var container = generator.GenerateNext(out newlyRealized) as UIElement;
+                                    if (container == null) break;
+
+                                    if (newlyRealized || !InternalChildren.Contains(container))
+                                    {
+                                        if (childIndex >= InternalChildren.Count)
+                                            AddInternalChild(container);
+                                        else
+                                            InsertInternalChild(childIndex, container);
+                                        generator.PrepareItemContainer(container);
+                                    }
+
+                                    container.Measure(new Size(slot, double.PositiveInfinity));
+                                    if (container.DesiredSize.Height > _rowHeight)
+                                        _rowHeight = container.DesiredSize.Height;
+
+                                    childIndex++;
                                 }
-
-                                container.Measure(new Size(slot, double.PositiveInfinity));
-                                if (container.DesiredSize.Height > _rowHeight)
-                                    _rowHeight = container.DesiredSize.Height;
-
-                                childIndex++;
                             }
                         }
                     }
                 }
             }
 
-            // 3. Only measure all children if row height is not yet established
-            if (_rowHeight <= 0)
+            if (InternalChildren.Count > 0 && owner != null)
             {
-                foreach (UIElement child in InternalChildren)
-                {
-                    child.Measure(new Size(slot, double.PositiveInfinity));
-                    var h = child.DesiredSize.Height;
-                    if (h > _rowHeight && h > 0)
-                    {
-                        _rowHeight = h;
-                    }
-                }
-            }
-
-            if (InternalChildren.Count > 0 && Owner != null)
-            {
-                _firstRealizedIndex = Owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
-                _lastRealizedIndex = _firstRealizedIndex + InternalChildren.Count - 1;
+                _firstRealizedIndex = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[0]);
+                _lastRealizedIndex = owner.ItemContainerGenerator.IndexFromContainer(InternalChildren[InternalChildren.Count - 1]);
             }
             else
             {
@@ -456,6 +435,22 @@ namespace MusicPlayer.Views
             return new Size(availableSize.Width, resultHeight);
         }
 
+        private void ResetAllContainers()
+        {
+            try
+            {
+                IItemContainerGenerator generator = ItemContainerGenerator;
+                if (generator != null && InternalChildren.Count > 0)
+                {
+                    generator.RemoveAll();
+                }
+            }
+            catch { }
+            RemoveInternalChildRange(0, InternalChildren.Count);
+            _firstRealizedIndex = -1;
+            _lastRealizedIndex = -1;
+        }
+
         private bool SafeRemoveOrRecycleContainer(int childIndex)
         {
             if (childIndex < 0 || childIndex >= InternalChildren.Count)
@@ -472,7 +467,6 @@ namespace MusicPlayer.Views
             int itemIndex = (Owner != null) ? Owner.ItemContainerGenerator.IndexFromContainer(child) : -1;
             if (itemIndex < 0)
             {
-                // Container is already detached or unindexed; remove from visual tree so it does not become a zombie
                 RemoveInternalChildRange(childIndex, 1);
                 return true;
             }
@@ -504,8 +498,7 @@ namespace MusicPlayer.Views
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"SafeRemoveOrRecycleContainer failed for childIndex {childIndex}, itemIndex {itemIndex}: {ex.Message}");
-                // Ensure internal children list stays clean even if generator throws
+                System.Diagnostics.Debug.WriteLine($"SafeRemoveOrRecycleContainer failed for child {childIndex}: {ex.Message}");
                 RemoveInternalChildRange(childIndex, 1);
                 return true;
             }
@@ -535,14 +528,11 @@ namespace MusicPlayer.Views
             double gapH = _gapH;
             double vOffset = VerticalOffset;
 
-            int firstIdx = _firstRealizedIndex;
             int count = InternalChildren.Count;
-
             for (int i = 0; i < count; i++)
             {
                 UIElement child = InternalChildren[i];
                 int index = owner.ItemContainerGenerator.IndexFromContainer(child);
-                if (index < 0 && firstIdx >= 0) index = firstIdx + i;
                 if (index < 0) continue;
                 int row = index / cols;
                 int col = index % cols;
@@ -563,9 +553,8 @@ namespace MusicPlayer.Views
         protected override void OnItemsChanged(object sender, ItemsChangedEventArgs args)
         {
             base.OnItemsChanged(sender, args);
+            ResetAllContainers();
             _rowHeight = 0;
-            _firstRealizedIndex = -1;
-            _lastRealizedIndex = -1;
             InvalidateMeasure();
         }
     }

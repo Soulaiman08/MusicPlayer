@@ -96,8 +96,9 @@ public sealed class ArtistImageService : IDisposable
             var data = await _http.GetByteArrayAsync(imageUrl, ct);
             if (data.Length < 2000) return null; // reject tiny/blank responses
 
-            // ✅ Process through FaceCropHelper: smart square crop centered on face
-            data = await FaceCropHelper.ProcessArtistImageAsync(data);
+            // ✅ Process through FaceCropHelper: smart square crop centered on face (routed via BackgroundWorkCoordinator)
+            data = await BackgroundWorkCoordinator.Instance.ExecuteCpuWorkAsync(
+                _ => FaceCropHelper.ProcessArtistImageAsync(data), ct);
             if (data.Length < 100) return null;
 
             await File.WriteAllBytesAsync(path, data, ct);
@@ -142,7 +143,8 @@ public sealed class ArtistImageService : IDisposable
                     var isAlreadySquare = await IsImageSquareAsync(original);
                     if (isAlreadySquare) return;
 
-                    var processed = await FaceCropHelper.ProcessArtistImageAsync(original);
+                    var processed = await BackgroundWorkCoordinator.Instance.ExecuteCpuWorkAsync(
+                        _ => FaceCropHelper.ProcessArtistImageAsync(original), ct);
                     if (processed.Length > 1000)
                     {
                         await File.WriteAllBytesAsync(file, processed, ct);

@@ -276,7 +276,7 @@ namespace MusicPlayer.Views
 
         private static readonly DependencyPropertyKey ItemWidthPropertyKey =
             DependencyProperty.RegisterReadOnly("ItemWidth", typeof(double), typeof(BalancedItemsPanel),
-                new FrameworkPropertyMetadata(150d, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsArrange));
+                new FrameworkPropertyMetadata(150d));
 
         public static readonly DependencyProperty ItemWidthProperty = ItemWidthPropertyKey.DependencyProperty;
 

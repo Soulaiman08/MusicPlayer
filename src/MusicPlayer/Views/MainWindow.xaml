@@ -1155,11 +1155,14 @@
                     </ItemsControl.ItemTemplate>
                   </ListBox>
                   <Grid x:Name="AllSongsGridPanel" Grid.Row="0" Grid.RowSpan="2" Visibility="{Binding IsSongsGridView, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}">
-                    <ScrollViewer x:Name="SongsGridScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,8,20,16">
-                      <ItemsControl ItemsSource="{Binding DisplayedTracks}">
+                    <ScrollViewer x:Name="SongsGridScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,8,20,16">
+                      <ItemsControl ItemsSource="{Binding DisplayedTracks}"
+                                    VirtualizingPanel.IsVirtualizing="True"
+                                    VirtualizingPanel.VirtualizationMode="Recycling"
+                                    VirtualizingPanel.ScrollUnit="Pixel">
                         <ItemsControl.ItemsPanel>
                           <ItemsPanelTemplate>
-                            <local:BalancedItemsPanel MinItemWidth="260" MaxItemWidth="360" Gap="12"/>
+                            <local:VirtualizingBalancedPanel MinItemWidth="260" MaxItemWidth="360" Gap="12"/>
                           </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
@@ -1203,20 +1206,23 @@
                   </Grid>
                 </Grid>
                 <Grid Name="TabContent_Artists" Visibility="Collapsed">
-                  <ScrollViewer Name="ArtistsSearchScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Padding="20,10,20,20">
-                    <ItemsControl ItemsSource="{Binding DisplayedArtists}">
+                  <ScrollViewer Name="ArtistsSearchScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20">
+                    <ItemsControl ItemsSource="{Binding DisplayedArtists}"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling"
+                                  VirtualizingPanel.ScrollUnit="Pixel">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                          <local:BalancedItemsPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
+                          <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
                         </ItemsPanelTemplate>
                       </ItemsControl.ItemsPanel>
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
                           <Border Cursor="Hand" Margin="0,0" HorizontalAlignment="Stretch" MouseLeftButtonUp="ArtistRow_Click">
                             <StackPanel HorizontalAlignment="Center">
-                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}">
+                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}">
                                 <UIElement.Clip>
-                                  <EllipseGeometry Center="{Binding ItemWidth, Converter={StaticResource HalfPointConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" RadiusX="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" RadiusY="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" />
+                                  <EllipseGeometry Center="{Binding ItemWidth, Converter={StaticResource HalfPointConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusX="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusY="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" />
                                 </UIElement.Clip>
                                 <Border Background="#28FFFFFF" />
                                 <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="LowQuality" RenderOptions.CachingHint="Cache" />
@@ -1242,23 +1248,26 @@
                   </ScrollViewer>
                 </Grid>
                 <Grid Name="TabContent_Albums" Visibility="Collapsed">
-                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Padding="20,10,20,20">
-                    <ItemsControl ItemsSource="{Binding DisplayedAlbums}">
+                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20">
+                    <ItemsControl ItemsSource="{Binding DisplayedAlbums}"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling"
+                                  VirtualizingPanel.ScrollUnit="Pixel">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                          <local:BalancedItemsPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
+                          <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
                         </ItemsPanelTemplate>
                       </ItemsControl.ItemsPanel>
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
                           <Border Cursor="Hand" Margin="0" HorizontalAlignment="Stretch" MouseLeftButtonUp="AlbumRow_Click">
                             <StackPanel HorizontalAlignment="Center">
-                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" ClipToBounds="True">
+                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" ClipToBounds="True">
                                 <Border Background="#28FFFFFF" />
                                 <Image Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="Linear" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium, IsAsync=True}" />
                               </Grid>
-                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="13" Foreground="#B8FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" Text="{Binding Album}" />
-                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="11" Foreground="#80FFFFFF" HorizontalAlignment="Center" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" Text="{Binding Artist}" />
+                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="13" Foreground="#B8FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Text="{Binding Album}" />
+                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="11" Foreground="#80FFFFFF" HorizontalAlignment="Center" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Text="{Binding Artist}" />
                             </StackPanel>
                           </Border>
                         </DataTemplate>

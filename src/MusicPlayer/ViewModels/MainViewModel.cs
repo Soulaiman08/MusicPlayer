@@ -4453,7 +4453,7 @@ public partial class MainViewModel : ViewModelBase
 			var remainingAlbums = allAlbums.Skip(12).ToList();
 			StartTrackedBackgroundTask("BackgroundAlbumsPreload", async ct =>
 			{
-				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 2000, minAgeMs: 4000, maxWaitMs: 30000, ct);
+				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 1000, minAgeMs: 1500, maxWaitMs: 30000, ct);
 				if (ct.IsCancellationRequested) return;
 				const int albumBatchSize = 16;
 				for (int i = 0; i < remainingAlbums.Count; i += albumBatchSize)
@@ -4461,7 +4461,7 @@ public partial class MainViewModel : ViewModelBase
 					if (ct.IsCancellationRequested) break;
 					if (MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1500))
 					{
-						await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 2000, minAgeMs: 0, maxWaitMs: 60000, ct);
+						await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 1500, minAgeMs: 0, maxWaitMs: 60000, ct);
 						if (ct.IsCancellationRequested) break;
 					}
 					var batch = remainingAlbums.Skip(i).Take(albumBatchSize);
@@ -4476,7 +4476,7 @@ public partial class MainViewModel : ViewModelBase
 			var remainingArtists = cachedArtists.Skip(6).ToList();
 			StartTrackedBackgroundTask("BackgroundArtistsPreload", async ct =>
 			{
-				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 2500, minAgeMs: 8000, maxWaitMs: 30000, ct);
+				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 1000, minAgeMs: 2000, maxWaitMs: 30000, ct);
 				if (ct.IsCancellationRequested) return;
 				const int artistBatchSize = 16;
 				for (int i = 0; i < remainingArtists.Count; i += artistBatchSize)
@@ -4484,7 +4484,7 @@ public partial class MainViewModel : ViewModelBase
 					if (ct.IsCancellationRequested) break;
 					if (MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1500))
 					{
-						await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 2000, minAgeMs: 0, maxWaitMs: 60000, ct);
+						await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 1500, minAgeMs: 0, maxWaitMs: 60000, ct);
 						if (ct.IsCancellationRequested) break;
 					}
 					var batch = remainingArtists.Skip(i).Take(artistBatchSize);
@@ -6543,40 +6543,39 @@ private async void LoadArtists()
 			var list = cachedImages.ToList();
 			if (list.Count == 0 || cancellationToken.IsCancellationRequested) return;
 
-			Parallel.ForEach(list, new ParallelOptions
-			{
-				MaxDegreeOfParallelism = Math.Max(1, Math.Min(maxDegreeOfParallelism, 4)),
-				CancellationToken = cancellationToken
-			}, cachedImage =>
-			{
-				if (cancellationToken.IsCancellationRequested) return;
-				if (!isPriority && MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1200)) return;
-				if (string.IsNullOrWhiteSpace(cachedImage.Key) || string.IsNullOrWhiteSpace(cachedImage.Value)) return;
-				if (ArtistImageCache.ContainsKey(cachedImage.Key)) return;
-				if (!_inFlightArtistPreloads.TryAdd(cachedImage.Key, 1)) return;
+			var priority = isPriority ? MusicPlayer.Services.WorkPriority.Viewport : MusicPlayer.Services.WorkPriority.BackgroundLibrary;
 
-				try
-				{
-					if (System.IO.File.Exists(cachedImage.Value))
+			foreach (var cachedImage in list)
+			{
+				if (cancellationToken.IsCancellationRequested) break;
+				if (string.IsNullOrWhiteSpace(cachedImage.Key) || string.IsNullOrWhiteSpace(cachedImage.Value)) continue;
+				if (ArtistImageCache.ContainsKey(cachedImage.Key)) continue;
+
+				_ = MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
+					"artist:" + cachedImage.Key,
+					priority,
+					ct =>
 					{
-						BitmapImage bitmapImage = new BitmapImage();
-						bitmapImage.BeginInit();
-						bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-						bitmapImage.DecodePixelWidth = 256;
-						bitmapImage.UriSource = new Uri(cachedImage.Value, UriKind.Absolute);
-						bitmapImage.EndInit();
-						bitmapImage.Freeze();
-						ArtistImageCache[cachedImage.Key] = bitmapImage;
-					}
-				}
-				catch
-				{
-				}
-				finally
-				{
-					_inFlightArtistPreloads.TryRemove(cachedImage.Key, out _);
-				}
-			});
+						if (ct.IsCancellationRequested) return Task.CompletedTask;
+						if (ArtistImageCache.ContainsKey(cachedImage.Key)) return Task.CompletedTask;
+						try
+						{
+							if (System.IO.File.Exists(cachedImage.Value))
+							{
+								BitmapImage bitmapImage = new BitmapImage();
+								bitmapImage.BeginInit();
+								bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+								bitmapImage.DecodePixelWidth = 256;
+								bitmapImage.UriSource = new Uri(cachedImage.Value, UriKind.Absolute);
+								bitmapImage.EndInit();
+								bitmapImage.Freeze();
+								ArtistImageCache[cachedImage.Key] = bitmapImage;
+							}
+						}
+						catch { }
+						return Task.CompletedTask;
+					}, cancellationToken);
+			}
 		}
 		catch
 		{
@@ -6588,9 +6587,6 @@ private async void LoadArtists()
 		try
 		{
 			// Filter on the calling (UI) thread — cheap dictionary/string reads.
-			// The per-artist kick-off (file probes, regex, HTTP client setup) used
-			// to run inline here: measured fetchKickMs=89 on the UI thread right
-			// after a tab fill, which showed up as a ~118ms dropped frame.
 			List<MusicTrack> missing = new List<MusicTrack>(items.Count);
 			foreach (MusicTrack t in items)
 			{
@@ -6602,49 +6598,51 @@ private async void LoadArtists()
 			}
 			if (missing.Count == 0 || cancellationToken.IsCancellationRequested) return;
 
-			await Task.Run(async delegate
+			var pendingUpdates = new System.Collections.Concurrent.ConcurrentQueue<KeyValuePair<string, string>>();
+			int flushScheduled = 0;
+
+			void ScheduleFlush()
 			{
-				SemaphoreSlim sem = new SemaphoreSlim(6);
-				try
+				if (Interlocked.CompareExchange(ref flushScheduled, 1, 0) == 0)
 				{
-					await Task.WhenAll(missing.Select((Func<MusicTrack, Task>)async delegate(MusicTrack track)
+					_ = DispatchAsync(() =>
 					{
-						await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
-						try
+						Interlocked.Exchange(ref flushScheduled, 0);
+						bool anyAdded = false;
+						while (pendingUpdates.TryDequeue(out var kvp))
 						{
-							cancellationToken.ThrowIfCancellationRequested();
-							string path = await _artistImages.GetArtistImageAsync(track.Artist, cancellationToken).ConfigureAwait(false);
-							if (path != null)
+							if (!ArtistImages.ContainsKey(kvp.Key))
 							{
-								cancellationToken.ThrowIfCancellationRequested();
-								await DispatchAsync(delegate
-								{
-									if (!ArtistImages.ContainsKey(track.Artist))
-									{
-										ArtistImages[track.Artist] = path;
-										OnPropertyChanged(nameof(ArtistImages));
-									}
-								});
+								ArtistImages[kvp.Key] = kvp.Value;
+								anyAdded = true;
 							}
 						}
-						catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+						if (anyAdded)
 						{
+							OnPropertyChanged(nameof(ArtistImages));
 						}
-						catch (Exception ex)
-						{
-							_logger.LogWarning(ex, "Failed to fetch artist image: {Artist}", track.Artist);
-						}
-						finally
-						{
-							sem.Release();
-						}
-					}));
+					});
 				}
-				finally
+			}
+
+			await Task.WhenAll(missing.Select(async track =>
+			{
+				try
 				{
-					sem.Dispose();
+					string? path = await MusicPlayer.Services.BackgroundWorkCoordinator.Instance.ExecuteNetworkWorkAsync(
+						ct => _artistImages.GetArtistImageAsync(track.Artist, ct), cancellationToken).ConfigureAwait(false);
+					if (path != null && !cancellationToken.IsCancellationRequested)
+					{
+						pendingUpdates.Enqueue(new KeyValuePair<string, string>(track.Artist, path));
+						ScheduleFlush();
+					}
 				}
-			}, cancellationToken);
+				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+				catch (Exception ex)
+				{
+					_logger.LogWarning(ex, "Failed to fetch artist image: {Artist}", track.Artist);
+				}
+			})).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{

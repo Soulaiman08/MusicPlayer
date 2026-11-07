@@ -1095,8 +1095,11 @@ public static class SmoothScrollHelper
     // scrolls. These gates let that work wait for the user to pause instead.
     private static long _lastInteractionTicks; // 0 = never interacted
 
-    internal static void MarkInteraction() =>
+    internal static void MarkInteraction()
+    {
         Interlocked.Exchange(ref _lastInteractionTicks, Stopwatch.GetTimestamp());
+        MusicPlayer.Services.BackgroundWorkCoordinator.Instance.NotifyInteractionStarted();
+    }
 
     /// <summary>True while the user interacted within <paramref name="quietMs"/> (never interacted → false).</summary>
     internal static bool IsInteractingNow(int quietMs = 1500)
