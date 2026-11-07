@@ -674,6 +674,15 @@ public class AlbumArtLoader
 
         RecordMediumCacheMiss();
 
+        // While scrolling is active or the user is actively interacting, DO NOT perform synchronous
+        // disk reads or image decodes on the UI thread. Return default art immediately; the background
+        // queue will decode the image and fire MediumArtReady to populate the card smoothly.
+        if (_scrollingActive || MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(300))
+        {
+            EnqueueMediumArtParse(path, track);
+            return GetDefaultAlbumArt();
+        }
+
         // Check disk cache first ({hash}.jpg)
         try
         {
@@ -713,6 +722,14 @@ public class AlbumArtLoader
         }
 
         RecordMediumCacheMiss();
+
+        // While scrolling is active or the user is actively interacting, DO NOT perform synchronous
+        // disk reads or image decodes on the UI thread.
+        if (_scrollingActive || MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(300))
+        {
+            EnqueueMediumArtParse(filePath, null);
+            return GetDefaultAlbumArt();
+        }
 
         try
         {
@@ -1192,7 +1209,8 @@ public class AlbumArtLoader
     public Task PreloadCardsArtwork(
         IEnumerable<MusicTrack> tracks,
         int maxDegreeOfParallelism = 2,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool isPriority = false)
     {
         return Task.Run(() =>
         {
@@ -1205,6 +1223,7 @@ public class AlbumArtLoader
             }, track =>
             {
                 if (cancellationToken.IsCancellationRequested) return;
+                if (!isPriority && MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1200)) return;
                 var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
                 if (string.IsNullOrEmpty(path)) return;
                 // Skip if already in cards cache
@@ -1220,11 +1239,20 @@ public class AlbumArtLoader
                     if (existingPath != null)
                     {
                         var img = LoadSizedImageFromFile(existingPath, CardsDecodeSize);
-                        if (img != null) { _cardsCache[path] = img; return; }
+                        if (img != null)
+                        {
+                            _cardsCache[path] = img;
+                            NotifyMediumArtReady(path);
+                            return;
+                        }
                     }
                     // Disk cache miss: decode from embedded tags (heavy path)
                     var cardsArt = DecodeSizedValidPicture(track, CardsDecodeSize);
-                    if (cardsArt != null) _cardsCache[path] = cardsArt;
+                    if (cardsArt != null)
+                    {
+                        _cardsCache[path] = cardsArt;
+                        NotifyMediumArtReady(path);
+                    }
                 }
                 catch { }
                 finally
@@ -1238,7 +1266,7 @@ public class AlbumArtLoader
     public Task PreloadCardsArtwork(
         IEnumerable<MusicTrack> tracks,
         CancellationToken cancellationToken)
-        => PreloadCardsArtwork(tracks, 2, cancellationToken);
+        => PreloadCardsArtwork(tracks, 2, cancellationToken, isPriority: false);
 
     public Task PreloadMediumArtwork(
         IEnumerable<MusicTrack> tracks,
@@ -1258,20 +1286,16 @@ public class AlbumArtLoader
             // Phase 1: fast parallel memory load of already-cached disk thumbnails (80px)
             await PreloadTrackArtwork(list, cancellationToken);
 
-            // Phase 1b: warm up medium cache (220px) for distinct albums in this batch
-            var albumTracks = list
-                .Where(t => !string.IsNullOrEmpty(t.Album))
-                .GroupBy(t => t.Album, StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.First())
-                .ToList();
-            if (albumTracks.Count > 0)
-                await PreloadMediumArtwork(albumTracks, cancellationToken);
-
             // Phase 2: any tracks without a disk thumbnail can be extracted via TagLib in the background
             foreach (var track in list)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (_cache.ContainsKey(track.FilePath)) continue;
+                if (MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1200))
+                {
+                    await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
+                        quietMs: 1500, minAgeMs: 0, maxWaitMs: 30000, cancellationToken);
+                }
                 try { WarmUpArtCore(track.FilePath); } catch { }
             }
         }, cancellationToken);

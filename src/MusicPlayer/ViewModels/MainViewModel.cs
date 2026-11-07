@@ -4384,7 +4384,7 @@ public partial class MainViewModel : ViewModelBase
 		var preloadTasks = new List<Task>();
 
 		// Stage 1: Essential items for the initial screen
-		// 1. Initial cached artists (top 12)
+		// 1. Initial cached artists (top 6)
 		List<KeyValuePair<string, string>>? cachedArtists = null;
 		if (_preloadedArtistResult != null)
 		{
@@ -4396,11 +4396,11 @@ public partial class MainViewModel : ViewModelBase
 			}
 			if (cachedArtists.Count > 0)
 			{
-				preloadTasks.Add(Task.Run(() => PreloadArtistImages(cachedArtists.Take(12), 2, token), token));
+				preloadTasks.Add(Task.Run(() => PreloadArtistImages(cachedArtists.Take(6), 1, token, isPriority: true), token));
 			}
 		}
 
-		// 2. Initial distinct album covers (first 16) and initial track thumbnails (first 40)
+		// 2. Initial distinct album covers (first 12) and initial track thumbnails (first 25)
 		List<MusicTrack>? allAlbums = null;
 		if (sortedTracks != null && sortedTracks.Count > 0)
 		{
@@ -4412,24 +4412,24 @@ public partial class MainViewModel : ViewModelBase
 
 			if (allAlbums.Count > 0)
 			{
-				preloadTasks.Add(_albumArt.PreloadCardsArtwork(allAlbums.Take(16), 2, token));
+				preloadTasks.Add(_albumArt.PreloadCardsArtwork(allAlbums.Take(12), 2, token, isPriority: true));
 			}
 
-			// Preload first 40 track thumbnails for snappy initial list view
-			preloadTasks.Add(_albumArt.PreloadTrackArtwork(sortedTracks.Take(40), token));
+			// Preload first 25 track thumbnails for snappy initial list view
+			preloadTasks.Add(_albumArt.PreloadTrackArtwork(sortedTracks.Take(25), token));
 		}
 
-		// 3. Await Stage 1 preloading with a fast 1.5s timeout before releasing the loading screen
+		// 3. Await Stage 1 preloading with a fast 1.0s timeout before releasing the loading screen
 		if (preloadTasks.Count > 0)
 		{
 			try
 			{
 				var combined = Task.WhenAll(preloadTasks);
-				var timeout = Task.Delay(1500, token);
+				var timeout = Task.Delay(1000, token);
 				var finished = await Task.WhenAny(combined, timeout);
 				if (finished == timeout && !token.IsCancellationRequested)
 				{
-					LogHelper.LogInfo("[StartupPerf] Stage 1 artwork preload reached 1.5s threshold, displaying UI immediately");
+					LogHelper.LogInfo("[StartupPerf] Stage 1 artwork preload reached 1.0s threshold, displaying UI immediately");
 				}
 			}
 			catch (Exception ex)
@@ -4448,36 +4448,48 @@ public partial class MainViewModel : ViewModelBase
 		LogHelper.LogInfo($"[StartupPerf] InitializeAsync complete - UI VISIBLE totalMs={_startupSw.ElapsedMilliseconds}");
 
 		// Stage 2: Background throttled preloading of remaining library albums and artists
-		if (allAlbums != null && allAlbums.Count > 16)
+		if (allAlbums != null && allAlbums.Count > 12)
 		{
-			var remainingAlbums = allAlbums.Skip(16).ToList();
+			var remainingAlbums = allAlbums.Skip(12).ToList();
 			StartTrackedBackgroundTask("BackgroundAlbumsPreload", async ct =>
 			{
-				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 1500, minAgeMs: 2500, maxWaitMs: 30000, ct);
+				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 2000, minAgeMs: 4000, maxWaitMs: 30000, ct);
 				if (ct.IsCancellationRequested) return;
-				const int albumBatchSize = 32;
+				const int albumBatchSize = 16;
 				for (int i = 0; i < remainingAlbums.Count; i += albumBatchSize)
 				{
 					if (ct.IsCancellationRequested) break;
+					if (MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1500))
+					{
+						await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 2000, minAgeMs: 0, maxWaitMs: 60000, ct);
+						if (ct.IsCancellationRequested) break;
+					}
 					var batch = remainingAlbums.Skip(i).Take(albumBatchSize);
-					await _albumArt.PreloadCardsArtwork(batch, 2, ct);
+					await _albumArt.PreloadCardsArtwork(batch, 1, ct, isPriority: false);
+					await Task.Delay(40, ct);
 				}
 			});
 		}
 
-		if (cachedArtists != null && cachedArtists.Count > 12)
+		if (cachedArtists != null && cachedArtists.Count > 6)
 		{
-			var remainingArtists = cachedArtists.Skip(12).ToList();
+			var remainingArtists = cachedArtists.Skip(6).ToList();
 			StartTrackedBackgroundTask("BackgroundArtistsPreload", async ct =>
 			{
-				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 1500, minAgeMs: 2500, maxWaitMs: 30000, ct);
+				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 2500, minAgeMs: 8000, maxWaitMs: 30000, ct);
 				if (ct.IsCancellationRequested) return;
-				const int artistBatchSize = 32;
+				const int artistBatchSize = 16;
 				for (int i = 0; i < remainingArtists.Count; i += artistBatchSize)
 				{
 					if (ct.IsCancellationRequested) break;
+					if (MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1500))
+					{
+						await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 2000, minAgeMs: 0, maxWaitMs: 60000, ct);
+						if (ct.IsCancellationRequested) break;
+					}
 					var batch = remainingArtists.Skip(i).Take(artistBatchSize);
-					await Task.Run(() => PreloadArtistImages(batch, 2, ct), ct);
+					await Task.Run(() => PreloadArtistImages(batch, 1, ct, isPriority: false), ct);
+					await Task.Delay(40, ct);
 				}
 			});
 		}
@@ -4800,20 +4812,20 @@ public partial class MainViewModel : ViewModelBase
 		var sw = System.Diagnostics.Stopwatch.StartNew();
 		LogHelper.LogInfo("[StartupPerf] WarmUpAndRefresh start");
 		// Do not start heavy artwork extraction the moment the loading overlay
-		// disappears. Wait for the user to be idle (or for a minimum age) first.
+		// disappears. Wait for the user to be idle (and for staged preload to settle) first.
 		await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-			quietMs: 2000, minAgeMs: 5000, maxWaitMs: 120000, cancellationToken);
+			quietMs: 3000, minAgeMs: 12000, maxWaitMs: 120000, cancellationToken);
 		if (cancellationToken.IsCancellationRequested) return;
 
 		// Process the library in bounded batches so the UI thread and the decode
 		// gate are never held by an unbounded run. Each batch is cancellable and
 		// is re-run only when the user stops interacting.
-		const int batchSize = 64;
+		const int batchSize = 32;
 		for (int offset = 0; offset < tracks.Count; offset += batchSize)
 		{
 			if (cancellationToken.IsCancellationRequested) return;
 			await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-				quietMs: 1000, minAgeMs: 0, maxWaitMs: 60000, cancellationToken);
+				quietMs: 1500, minAgeMs: 0, maxWaitMs: 60000, cancellationToken);
 			if (cancellationToken.IsCancellationRequested) return;
 
 			var batch = tracks.Skip(offset).Take(batchSize).ToList();
@@ -4828,6 +4840,7 @@ public partial class MainViewModel : ViewModelBase
 				continue;
 			}
 			LogHelper.LogInfo($"[StartupPerf] WarmUp batch {offset / batchSize + 1} done totalMs={sw.ElapsedMilliseconds}");
+			await Task.Delay(40, cancellationToken);
 		}
 
 		long warmMs = sw.ElapsedMilliseconds;
@@ -6424,7 +6437,13 @@ public partial class MainViewModel : ViewModelBase
 				: items;
 			long sortMs = swSort.ElapsedMilliseconds;
 			var swPublish = System.Diagnostics.Stopwatch.StartNew();
-			_ = _albumArt.PreloadCardsArtwork(sortedAlbums.Take(24), 2);
+			try
+			{
+				var viewport = sortedAlbums.Take(24).ToList();
+				var preloadTask = _albumArt.PreloadCardsArtwork(viewport, 2, _uiOps.Token, isPriority: true);
+				await Task.WhenAny(preloadTask, Task.Delay(120, _uiOps.Token));
+			}
+			catch { }
 			await ReplaceAllChunkedAsync(Albums, sortedAlbums);
 			long publishMs = swPublish.ElapsedMilliseconds;
 			PerfTabData("albums", Albums.Count);
@@ -6463,7 +6482,13 @@ private async void LoadArtists()
 				: result.Items);
 			long sortMs = swSort.ElapsedMilliseconds;
 			var swFill = System.Diagnostics.Stopwatch.StartNew();
-			_ = Task.Run(() => PreloadArtistImages(result.CachedImages.Take(24), 2));
+			try
+			{
+				var viewportArtists = result.CachedImages.Take(24).ToList();
+				var preloadTask = Task.Run(() => PreloadArtistImages(viewportArtists, 2, _uiOps.Token, isPriority: true), _uiOps.Token);
+				await Task.WhenAny(preloadTask, Task.Delay(120, _uiOps.Token));
+			}
+			catch { }
 			await ReplaceAllChunkedAsync(Artists, sortedArtists);
 			long fillMs = swFill.ElapsedMilliseconds;
 			PerfTabData("artists", Artists.Count);
@@ -6511,7 +6536,7 @@ private async void LoadArtists()
 
 	private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _inFlightArtistPreloads = new(StringComparer.OrdinalIgnoreCase);
 
-	private void PreloadArtistImages(IEnumerable<KeyValuePair<string, string>> cachedImages, int maxDegreeOfParallelism = 2, CancellationToken cancellationToken = default)
+	private void PreloadArtistImages(IEnumerable<KeyValuePair<string, string>> cachedImages, int maxDegreeOfParallelism = 2, CancellationToken cancellationToken = default, bool isPriority = false)
 	{
 		try
 		{
@@ -6525,6 +6550,7 @@ private async void LoadArtists()
 			}, cachedImage =>
 			{
 				if (cancellationToken.IsCancellationRequested) return;
+				if (!isPriority && MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1200)) return;
 				if (string.IsNullOrWhiteSpace(cachedImage.Key) || string.IsNullOrWhiteSpace(cachedImage.Value)) return;
 				if (ArtistImageCache.ContainsKey(cachedImage.Key)) return;
 				if (!_inFlightArtistPreloads.TryAdd(cachedImage.Key, 1)) return;
