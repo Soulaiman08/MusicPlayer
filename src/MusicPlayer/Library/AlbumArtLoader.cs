@@ -1159,14 +1159,16 @@ public class AlbumArtLoader
         return Task.Run(() =>
         {
             var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
-            if (list.Count == 0) return;
+            if (list.Count == 0 || cancellationToken.IsCancellationRequested) return;
             Parallel.ForEach(list, new ParallelOptions
             {
-                MaxDegreeOfParallelism = 4,
+                MaxDegreeOfParallelism = 2,
                 CancellationToken = cancellationToken
             }, track =>
             {
+                if (cancellationToken.IsCancellationRequested) return;
                 if (_cache.ContainsKey(track.FilePath)) return;
+                if (!_pendingParses.TryAdd(track.FilePath, 1)) return;
                 try
                 {
                     var art = LoadAlbumArtCore(track.FilePath);
@@ -1174,8 +1176,12 @@ public class AlbumArtLoader
                         _cache[track.FilePath] = art;
                 }
                 catch { }
+                finally
+                {
+                    _pendingParses.TryRemove(track.FilePath, out _);
+                }
             });
-        });
+        }, cancellationToken);
     }
 
     /// <summary>
@@ -1185,23 +1191,25 @@ public class AlbumArtLoader
     /// </summary>
     public Task PreloadCardsArtwork(
         IEnumerable<MusicTrack> tracks,
+        int maxDegreeOfParallelism = 2,
         CancellationToken cancellationToken = default)
     {
         return Task.Run(() =>
         {
             var list = tracks.Where(t => t != null).ToList();
-            if (list.Count == 0) return;
+            if (list.Count == 0 || cancellationToken.IsCancellationRequested) return;
             Parallel.ForEach(list, new ParallelOptions
             {
-                MaxDegreeOfParallelism = 4,
+                MaxDegreeOfParallelism = Math.Max(1, Math.Min(maxDegreeOfParallelism, 4)),
                 CancellationToken = cancellationToken
             }, track =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                if (cancellationToken.IsCancellationRequested) return;
                 var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
                 if (string.IsNullOrEmpty(path)) return;
                 // Skip if already in cards cache
                 if (_cardsCache.ContainsKey(path)) return;
+                if (!_pendingMediumParses.TryAdd(path, 1)) return;
                 try
                 {
                     var hash = GetMd5Hash(path);
@@ -1219,9 +1227,18 @@ public class AlbumArtLoader
                     if (cardsArt != null) _cardsCache[path] = cardsArt;
                 }
                 catch { }
+                finally
+                {
+                    _pendingMediumParses.TryRemove(path, out _);
+                }
             });
         }, cancellationToken);
     }
+
+    public Task PreloadCardsArtwork(
+        IEnumerable<MusicTrack> tracks,
+        CancellationToken cancellationToken)
+        => PreloadCardsArtwork(tracks, 2, cancellationToken);
 
     public Task PreloadMediumArtwork(
         IEnumerable<MusicTrack> tracks,
