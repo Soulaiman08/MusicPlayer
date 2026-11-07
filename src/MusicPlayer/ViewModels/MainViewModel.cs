@@ -94,6 +94,7 @@ public partial class MainViewModel : ViewModelBase
 	private string _statusBarMessage = string.Empty;
 	private long _themeApplyGeneration;
 	private System.Threading.Tasks.TaskCompletionSource<bool>? _themeApplyTcs;
+	private readonly object _themeApplyTcsLock = new();
 	private bool _isStatusBarVisible;
 	private bool _isStatusBarHiddenLinkVisible;
 	private bool _isStatusBarLoading;
@@ -2121,12 +2122,19 @@ public partial class MainViewModel : ViewModelBase
 
 	public void NotifyThemeApplyCompleted(long generation, bool success)
 	{
-		if (generation != _themeApplyGeneration) return;
-		var tcs = _themeApplyTcs;
-		if (tcs == null) return;
-		_themeApplyTcs = null;
-		try { tcs.TrySetResult(success); }
-		catch { }
+		System.Threading.Tasks.TaskCompletionSource<bool>? tcs = null;
+		lock (_themeApplyTcsLock)
+		{
+			if (generation != _themeApplyGeneration) return;
+			tcs = _themeApplyTcs;
+			if (tcs == null) return;
+			_themeApplyTcs = null;
+		}
+		if (tcs != null)
+		{
+			try { tcs.TrySetResult(success); }
+			catch { }
+		}
 	}
 
 	public bool IsStatusBarHiddenLinkVisible
@@ -8228,7 +8236,10 @@ private async void LoadFolders()
 		try
 		{
 			// Ignore repeated Apply while an operation is already running.
-			if (_themeApplyTcs != null) return;
+			lock (_themeApplyTcsLock)
+			{
+				if (_themeApplyTcs != null) return;
+			}
 
 			try { _previewCts?.Cancel(); } catch { }
 
@@ -8254,7 +8265,10 @@ private async void LoadFolders()
 			ShowStatusBarLoading("Applying theme...");
 
 			tcs = new System.Threading.Tasks.TaskCompletionSource<bool>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
-			_themeApplyTcs = tcs;
+			lock (_themeApplyTcsLock)
+			{
+				_themeApplyTcs = tcs;
+			}
 
 			try
 			{
@@ -8313,9 +8327,13 @@ private async void LoadFolders()
 		}
 		finally
 		{
-			if (tcs != null && _themeApplyTcs == tcs)
+			if (tcs != null)
 			{
-				_themeApplyTcs = null;
+				lock (_themeApplyTcsLock)
+				{
+					if (_themeApplyTcs == tcs)
+						_themeApplyTcs = null;
+				}
 			}
 		}
 	}

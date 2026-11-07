@@ -1766,21 +1766,29 @@ InitializeComponent();
     private long _bgGen;
     private long _blurApplyRequestTicks;
     private readonly System.Collections.Generic.List<(long Gen, System.Action<bool> Callback)> _themeRebuildCallbacks = new();
+    private readonly object _themeRebuildCallbacksLock = new();
     private System.Threading.CancellationTokenSource? _wallpaperRebuildCts;
     private string _lastRebuiltWallpaperPath = string.Empty;
 
     private void CompleteThemeRebuildCallback(long gen, bool success)
     {
-        for (int i = _themeRebuildCallbacks.Count - 1; i >= 0; i--)
+        System.Action<bool>? cb = null;
+        lock (_themeRebuildCallbacksLock)
         {
-            if (_themeRebuildCallbacks[i].Gen == gen)
+            for (int i = _themeRebuildCallbacks.Count - 1; i >= 0; i--)
             {
-                var cb = _themeRebuildCallbacks[i].Callback;
-                _themeRebuildCallbacks.RemoveAt(i);
-                try { cb(success); }
-                catch { }
-                return;
+                if (_themeRebuildCallbacks[i].Gen == gen)
+                {
+                    cb = _themeRebuildCallbacks[i].Callback;
+                    _themeRebuildCallbacks.RemoveAt(i);
+                    break;
+                }
             }
+        }
+        if (cb != null)
+        {
+            try { cb(success); }
+            catch { }
         }
     }
 
@@ -1805,13 +1813,20 @@ InitializeComponent();
         long gen = ++_bgGen;
 
         // Supersede any previous pending theme rebuild callbacks.
-        var staleGens = _themeRebuildCallbacks.Select(x => x.Gen).Distinct().ToList();
+        List<long> staleGens;
+        lock (_themeRebuildCallbacksLock)
+        {
+            staleGens = _themeRebuildCallbacks.Select(x => x.Gen).Distinct().ToList();
+        }
         foreach (var staleGen in staleGens)
             CompleteThemeRebuildCallback(staleGen, false);
 
         if (onComplete != null)
         {
-            _themeRebuildCallbacks.Add((gen, onComplete));
+            lock (_themeRebuildCallbacksLock)
+            {
+                _themeRebuildCallbacks.Add((gen, onComplete));
+            }
         }
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var oldCts = _wallpaperRebuildCts;
@@ -1932,7 +1947,10 @@ InitializeComponent();
                 BitmapImage? finalDecoded = decoded;
                 string finalKind = kindCopy;
                 if (token.IsCancellationRequested) return;
-                Dispatcher.BeginInvoke(new Action(() =>
+                System.Windows.Threading.DispatcherOperation? finalDecodeOp = null;
+                try
+                {
+                    finalDecodeOp = Dispatcher.BeginInvoke(new Action(() =>
                 {
                     if (gen != _bgGen)
                     {
@@ -1986,32 +2004,47 @@ InitializeComponent();
                         _bgDirty = true;
                         int layoutAttempts = 0;
                         var layoutTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
-                        layoutTimer.Tick += (_, _) =>
+                        EventHandler layoutTick = null!;
+                        layoutTick = (_, _) =>
                         {
                             layoutAttempts++;
-                            if (!IsLoaded || _bgGen != gen)
+                            if (_bgGen != gen)
                             {
                                 layoutTimer.Stop();
+                                layoutTimer.Tick -= layoutTick;
+                                return;
+                            }
+                            if (!IsLoaded)
+                            {
+                                layoutTimer.Stop();
+                                layoutTimer.Tick -= layoutTick;
+                                CompleteThemeRebuildCallback(gen, false);
                                 return;
                             }
                             if (ActualWidth >= 10 && ActualHeight >= 10)
                             {
                                 layoutTimer.Stop();
+                                layoutTimer.Tick -= layoutTick;
                                 // Transfer the pending callback to a fresh rebuild now
                                 // that dimensions are valid.
-                                for (int ci = _themeRebuildCallbacks.Count - 1; ci >= 0; ci--)
+                                lock (_themeRebuildCallbacksLock)
                                 {
-                                    if (_themeRebuildCallbacks[ci].Gen == gen)
-                                        _themeRebuildCallbacks.RemoveAt(ci);
+                                    for (int ci = _themeRebuildCallbacks.Count - 1; ci >= 0; ci--)
+                                    {
+                                        if (_themeRebuildCallbacks[ci].Gen == gen)
+                                            _themeRebuildCallbacks.RemoveAt(ci);
+                                    }
                                 }
                                 RebuildBlurCache(onComplete);
                             }
                             else if (layoutAttempts >= 40)
                             {
                                 layoutTimer.Stop();
+                                layoutTimer.Tick -= layoutTick;
                                 CompleteThemeRebuildCallback(gen, false);
                             }
                         };
+                        layoutTimer.Tick += layoutTick;
                         layoutTimer.Start();
                         return;
                     }
@@ -2139,7 +2172,10 @@ InitializeComponent();
                                 }));
                             }
 
-                            Dispatcher.BeginInvoke(new Action(() =>
+                            System.Windows.Threading.DispatcherOperation? workerResultOp = null;
+                            try
+                            {
+                                workerResultOp = Dispatcher.BeginInvoke(new Action(() =>
                             {
                                 if (gen != _bgGen)
                                 {
@@ -2171,6 +2207,19 @@ InitializeComponent();
                                     CompleteThemeRebuildCallback(gen, false);
                                 }
                             }));
+                            }
+                            catch
+                            {
+                                CompleteThemeRebuildCallback(gen, false);
+                            }
+                            if (workerResultOp != null)
+                            {
+                                workerResultOp.Completed += (sender, e) =>
+                                {
+                                    if (workerResultOp.Status != System.Windows.Threading.DispatcherOperationStatus.Completed)
+                                        CompleteThemeRebuildCallback(gen, false);
+                                };
+                            }
                         });
                         worker.SetApartmentState(System.Threading.ApartmentState.STA);
                         worker.Start();
@@ -2178,7 +2227,10 @@ InitializeComponent();
                     catch (Exception blurEx)
                     {
                         LogHelper.LogError("[Wallpaper] rebuild: blur stage failed, showing original", blurEx);
-                        Dispatcher.BeginInvoke(new Action(() =>
+                        System.Windows.Threading.DispatcherOperation? blurExOp = null;
+                        try
+                        {
+                            blurExOp = Dispatcher.BeginInvoke(new Action(() =>
                         {
                             if (gen != _bgGen) return;
                             SetWallpaperSources(finalDecoded, finalDecoded);
@@ -2189,8 +2241,34 @@ InitializeComponent();
                             }
                             CompleteThemeRebuildCallback(gen, false);
                         }));
+                        }
+                        catch
+                        {
+                            CompleteThemeRebuildCallback(gen, false);
+                        }
+                        if (blurExOp != null)
+                        {
+                            blurExOp.Completed += (sender, e) =>
+                            {
+                                if (blurExOp.Status != System.Windows.Threading.DispatcherOperationStatus.Completed)
+                                    CompleteThemeRebuildCallback(gen, false);
+                            };
+                        }
                     }
                 }));
+                }
+                catch
+                {
+                    CompleteThemeRebuildCallback(gen, false);
+                }
+                if (finalDecodeOp != null)
+                {
+                    finalDecodeOp.Completed += (sender, e) =>
+                    {
+                        if (finalDecodeOp.Status != System.Windows.Threading.DispatcherOperationStatus.Completed)
+                            CompleteThemeRebuildCallback(gen, false);
+                    };
+                }
             });
         }
         catch (Exception ex)
