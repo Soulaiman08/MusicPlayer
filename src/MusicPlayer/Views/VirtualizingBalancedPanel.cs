@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,6 +11,8 @@ namespace MusicPlayer.Views
     // rows intersect the viewport (plus a small cache). Reuses containers on scroll.
     public class VirtualizingBalancedPanel : VirtualizingPanel, IScrollInfo
     {
+        internal readonly record struct VisibleRange(int VisibleRows, int FirstIndex, int LastIndex, double Offset);
+
         public static readonly DependencyProperty MinItemWidthProperty =
             DependencyProperty.Register("MinItemWidth", typeof(double), typeof(VirtualizingBalancedPanel),
                 new FrameworkPropertyMetadata(140d, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsArrange));
@@ -43,6 +46,7 @@ namespace MusicPlayer.Views
         private Size _viewport = new Size(0, 0);
         private Point _offset = new Point(0, 0);
         private ScrollViewer? _scrollOwner;
+        private ScrollViewer? _fallbackScrollViewer;
 
         public bool CanHorizontallyScroll { get; set; } = false;
         public bool CanVerticallyScroll { get; set; } = true;
@@ -51,23 +55,126 @@ namespace MusicPlayer.Views
         public double ViewportWidth => _viewport.Width;
         public double ViewportHeight => _viewport.Height;
         public double HorizontalOffset => _offset.X;
-        public double VerticalOffset => _offset.Y;
+        public double VerticalOffset => _scrollOwner == null && _fallbackScrollViewer != null
+            ? _fallbackScrollViewer.VerticalOffset
+            : _offset.Y;
 
         public ScrollViewer? ScrollOwner
         {
             get => _scrollOwner;
-            set => _scrollOwner = value;
+            set
+            {
+                if (ReferenceEquals(_scrollOwner, value)) return;
+                _scrollOwner = value;
+                EnsureFallbackScrollViewer();
+            }
         }
 
         private ItemsControl? Owner => ItemsControl.GetItemsOwner(this);
 
+        private static bool IsFinitePositive(double value) => double.IsFinite(value) && value > 0;
+
+        private static double GetSafeGap(double gap) =>
+            double.IsFinite(gap) && gap > 0 ? gap : 0;
+
+        private double ResolveWidth(double width)
+        {
+            if (IsFinitePositive(width)) return width;
+            if (_scrollOwner != null && IsFinitePositive(_scrollOwner.ViewportWidth)) return _scrollOwner.ViewportWidth;
+            return IsFinitePositive(MinItemWidth) ? Math.Max(1, MinItemWidth) : 140;
+        }
+
+        internal static double ResolveViewportHeight(double availableHeight, double scrollViewerHeight, double verticalPadding)
+        {
+            if (IsFinitePositive(availableHeight)) return availableHeight;
+
+            double actualViewportHeight = scrollViewerHeight - Math.Max(0, verticalPadding);
+            if (IsFinitePositive(actualViewportHeight)) return actualViewportHeight;
+
+            return RowHeightEstimate;
+        }
+
+        internal static double ResolveGenerationOffset(bool usesScrollInfo, double panelOffset, double scrollViewerOffset) =>
+            usesScrollInfo ? panelOffset : scrollViewerOffset;
+
+        private static double GetExtentHeight(int itemCount, int cols, double rowHeight, double gap)
+        {
+            if (itemCount <= 0 || cols <= 0) return 0;
+
+            rowHeight = IsFinitePositive(rowHeight) ? rowHeight : RowHeightEstimate;
+            gap = GetSafeGap(gap);
+            int totalRows = (itemCount - 1) / cols + 1;
+            double stride = rowHeight + gap;
+            if (!double.IsFinite(stride)) stride = double.MaxValue;
+
+            double extentHeight = (totalRows - 1d) * stride + rowHeight;
+            return double.IsFinite(extentHeight) ? extentHeight : double.MaxValue;
+        }
+
+        private static double ClampOffset(double offset, double extentHeight, double viewportHeight)
+        {
+            if (!double.IsFinite(offset)) offset = 0;
+            if (!double.IsFinite(extentHeight) || extentHeight < 0) extentHeight = 0;
+            if (!IsFinitePositive(viewportHeight)) viewportHeight = 0;
+            return Math.Clamp(offset, 0, Math.Max(0, extentHeight - viewportHeight));
+        }
+
+        internal static VisibleRange CalculateVisibleRange(
+            int itemCount,
+            int cols,
+            double offset,
+            double viewportHeight,
+            double rowHeight,
+            double gap)
+        {
+            if (itemCount <= 0 || cols <= 0)
+                return new VisibleRange(0, 0, -1, 0);
+
+            rowHeight = IsFinitePositive(rowHeight) ? rowHeight : RowHeightEstimate;
+            gap = GetSafeGap(gap);
+            viewportHeight = IsFinitePositive(viewportHeight) ? viewportHeight : RowHeightEstimate;
+            double stride = rowHeight + gap;
+            if (!double.IsFinite(stride)) stride = double.MaxValue;
+
+            int totalRows = (itemCount - 1) / cols + 1;
+            double extentHeight = GetExtentHeight(itemCount, cols, rowHeight, gap);
+            offset = ClampOffset(offset, extentHeight, viewportHeight);
+
+            double topRowValue = Math.Floor(offset / stride);
+            int topRow = !double.IsFinite(topRowValue)
+                ? totalRows - 1
+                : (int)Math.Min(totalRows - 1d, Math.Max(0, topRowValue));
+
+            double visibleRowsValue = Math.Ceiling(viewportHeight / stride);
+            int visibleRows = !double.IsFinite(visibleRowsValue) || visibleRowsValue >= totalRows
+                ? totalRows
+                : Math.Max(1, (int)visibleRowsValue);
+
+            int firstRow = Math.Max(0, topRow - 2);
+            long lastVisibleRow = Math.Min(totalRows - 1L, (long)topRow + visibleRows - 1);
+            int lastRow = (int)Math.Min(totalRows - 1L, lastVisibleRow + 2);
+            int firstIndex = (int)Math.Min(itemCount - 1L, (long)firstRow * cols);
+            int lastIndex = (int)Math.Min(itemCount - 1L, ((long)lastRow + 1) * cols - 1);
+
+            return new VisibleRange(visibleRows, firstIndex, lastIndex, offset);
+        }
+
         private void Solve(double width)
         {
-            var w = width > 0 && !double.IsNaN(width) && !double.IsInfinity(width) ? width : Math.Max(1, MinItemWidth);
-            var gap = Math.Max(0, Gap);
-            var min = Math.Clamp(MinItemWidth, 1d, w);
-            var max = Math.Max(min, MaxItemWidth);
-            var cols = (int)Math.Floor((w + gap) / (min + gap));
+            var w = Math.Max(1, IsFinitePositive(width) ? width : IsFinitePositive(MinItemWidth) ? MinItemWidth : 140);
+            var gap = Math.Min(GetSafeGap(Gap), w);
+            var minWidth = IsFinitePositive(MinItemWidth) ? MinItemWidth : 140;
+            var maxWidth = IsFinitePositive(MaxItemWidth) ? MaxItemWidth : minWidth;
+            var min = Math.Clamp(minWidth, 1d, w);
+            var max = Math.Max(min, maxWidth);
+            var denominator = min + gap;
+            var numerator = w + gap;
+            var ratio = double.IsFinite(denominator) && denominator > 0
+                ? numerator / denominator
+                : 1;
+            var cols = !double.IsFinite(ratio) || ratio >= int.MaxValue
+                ? int.MaxValue
+                : (int)Math.Floor(ratio);
             if (cols < 1) cols = 1;
             var slot = Math.Min(max, (w - gap * (cols - 1)) / cols);
             var used = slot * cols + gap * (cols - 1);
@@ -80,7 +187,13 @@ namespace MusicPlayer.Views
 
         public void SetVerticalOffset(double offset)
         {
-            offset = Math.Max(0, Math.Min(offset, Math.Max(0, ExtentHeight - ViewportHeight)));
+            offset = ClampOffset(offset, ExtentHeight, ViewportHeight);
+            if (_scrollOwner == null && _fallbackScrollViewer != null)
+            {
+                _fallbackScrollViewer.ScrollToVerticalOffset(offset);
+                return;
+            }
+
             if (Math.Abs(offset - _offset.Y) > 0.001)
             {
                 _offset.Y = offset;
@@ -115,9 +228,10 @@ namespace MusicPlayer.Views
             if (index < 0) return Rect.Empty;
             int cols = _cols > 0 ? _cols : 1;
             int row = index / cols;
-            double stride = (_rowHeight > 0 ? _rowHeight : RowHeightEstimate) + Math.Max(0, Gap);
+            double rowHeight = IsFinitePositive(_rowHeight) ? _rowHeight : RowHeightEstimate;
+            double stride = rowHeight + GetSafeGap(Gap);
             double itemTop = row * stride;
-            double itemBottom = itemTop + (_rowHeight > 0 ? _rowHeight : RowHeightEstimate);
+            double itemBottom = itemTop + rowHeight;
             if (itemTop < VerticalOffset)
                 SetVerticalOffset(itemTop);
             else if (itemBottom > VerticalOffset + ViewportHeight)
@@ -131,22 +245,29 @@ namespace MusicPlayer.Views
             if (owner == null)
                 return base.MeasureOverride(availableSize);
 
-            Solve(availableSize.Width);
+            EnsureFallbackScrollViewer();
+            double width = ResolveWidth(availableSize.Width);
+            double viewportHeight = ResolveViewportHeight(
+                availableSize.Height,
+                (_scrollOwner ?? _fallbackScrollViewer)?.ActualHeight ?? 0,
+                (_scrollOwner ?? _fallbackScrollViewer) is ScrollViewer scrollViewer
+                    ? scrollViewer.Padding.Top + scrollViewer.Padding.Bottom
+                    : 0);
+            Solve(width);
             double slot = _slot;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : RowHeightEstimate;
-            double stride = rowHeight + Math.Max(0, Gap);
+            double rowHeight = IsFinitePositive(_rowHeight) ? _rowHeight : RowHeightEstimate;
             int cols = _cols;
             int itemCount = owner.Items.Count;
 
-            // visible row range with cache
-            int firstRow = itemCount > 0 ? (int)Math.Floor(VerticalOffset / stride) - 2 : 0;
-            if (firstRow < 0) firstRow = 0;
-            int visibleRows = itemCount > 0 ? (int)Math.Ceiling(Math.Max(1, ViewportHeight) / stride) + 4 : 0;
-            int lastRow = firstRow + (visibleRows > 0 ? visibleRows : 1);
-            int firstIndex = firstRow * cols;
-            int lastIndex = itemCount > 0 ? Math.Min(itemCount - 1, (lastRow + 1) * cols - 1) : -1;
-            if (firstIndex < 0) firstIndex = 0;
-            if (lastIndex < firstIndex) lastIndex = firstIndex - 1;
+            double generationOffset = ResolveGenerationOffset(
+                _scrollOwner != null,
+                _offset.Y,
+                _fallbackScrollViewer?.VerticalOffset ?? 0);
+            VisibleRange visibleRange = CalculateVisibleRange(itemCount, cols, generationOffset, viewportHeight, rowHeight, Gap);
+            if (_scrollOwner != null)
+                _offset.Y = visibleRange.Offset;
+            int firstIndex = visibleRange.FirstIndex;
+            int lastIndex = visibleRange.LastIndex;
 
             IItemContainerGenerator generator = ItemContainerGenerator;
 
@@ -154,7 +275,11 @@ namespace MusicPlayer.Views
             if (itemCount > 0 && lastIndex >= firstIndex)
             {
                 GeneratorPosition startPos = generator.GeneratorPositionFromIndex(firstIndex);
-                int childIndex = startPos.Offset == 0 ? startPos.Index + 1 : startPos.Index;
+                // WPF GeneratorPosition semantics (mirrors VirtualizingStackPanel.IndexToGeneratorPositionForStart):
+                // Offset == 0 means item firstIndex is already realized at realized-ordinal startPos.Index.
+                // Offset != 0 means firstIndex is not realized; Index is the realized item (or fictitious
+                // start = -1) preceding it, so its child ordinal is Index + 1 (0 when Index == -1).
+                int childIndex = startPos.Offset == 0 ? startPos.Index : startPos.Index + 1;
                 using (generator.StartAt(startPos, GeneratorDirection.Forward, true))
                 {
                     for (int i = firstIndex; i <= lastIndex; i++)
@@ -172,7 +297,7 @@ namespace MusicPlayer.Views
                         }
                         container.Measure(new Size(slot, double.PositiveInfinity));
                         var h = container.DesiredSize.Height;
-                        if (h > _rowHeight && h > 0) _rowHeight = h;
+                        if (IsFinitePositive(h) && h > _rowHeight) _rowHeight = h;
                         childIndex++;
                     }
                 }
@@ -195,21 +320,42 @@ namespace MusicPlayer.Views
             }
 
             // Recompute extent with updated row height
-            Solve(availableSize.Width);
-            rowHeight = _rowHeight > 0 ? _rowHeight : RowHeightEstimate;
-            stride = rowHeight + Math.Max(0, Gap);
-            int totalRows = cols > 0 ? (itemCount + cols - 1) / cols : 0;
-            _extent = new Size(availableSize.Width,
-                totalRows > 0 ? (totalRows - 1) * stride + rowHeight : 0);
-            _viewport = availableSize;
-            if (_offset.Y > Math.Max(0, ExtentHeight - ViewportHeight))
-                _offset.Y = Math.Max(0, ExtentHeight - ViewportHeight);
+            Solve(width);
+            rowHeight = IsFinitePositive(_rowHeight) ? _rowHeight : RowHeightEstimate;
+            _extent = new Size(width, GetExtentHeight(itemCount, cols, rowHeight, Gap));
+            _viewport = new Size(width, viewportHeight);
+            if (_scrollOwner != null)
+            {
+                double clampedOffset = ClampOffset(_offset.Y, ExtentHeight, ViewportHeight);
+                if (Math.Abs(clampedOffset - _offset.Y) > 0.001)
+                {
+                    _offset.Y = clampedOffset;
+                    InvalidateMeasure();
+                }
+            }
 
             _scrollOwner?.InvalidateScrollInfo();
-            if (ScrollOwner == null) _scrollOwner = FindScrollOwner();
-            _scrollOwner?.InvalidateScrollInfo();
 
-            return new Size(availableSize.Width, _extent.Height);
+            return new Size(width, _extent.Height);
+        }
+
+        private void EnsureFallbackScrollViewer()
+        {
+            ScrollViewer? fallback = _scrollOwner == null ? FindScrollOwner() : null;
+            if (ReferenceEquals(fallback, _fallbackScrollViewer)) return;
+
+            if (_fallbackScrollViewer != null)
+                _fallbackScrollViewer.ScrollChanged -= OnFallbackScrollChanged;
+
+            _fallbackScrollViewer = fallback;
+            if (_fallbackScrollViewer != null)
+                _fallbackScrollViewer.ScrollChanged += OnFallbackScrollChanged;
+        }
+
+        private void OnFallbackScrollChanged(object sender, ScrollChangedEventArgs args)
+        {
+            if (_scrollOwner == null && Math.Abs(args.VerticalChange) > 0.001)
+                InvalidateMeasure();
         }
 
         private ScrollViewer? FindScrollOwner()
@@ -225,12 +371,13 @@ namespace MusicPlayer.Views
 
         protected override Size ArrangeOverride(Size finalSize)
         {
+            EnsureFallbackScrollViewer();
             Solve(finalSize.Width);
             var owner = Owner;
             if (owner == null) return finalSize;
 
             double slot = _slot;
-            double rowHeight = _rowHeight > 0 ? _rowHeight : RowHeightEstimate;
+            double rowHeight = IsFinitePositive(_rowHeight) ? _rowHeight : RowHeightEstimate;
             int cols = _cols;
             IItemContainerGenerator generator = ItemContainerGenerator;
 
@@ -241,18 +388,29 @@ namespace MusicPlayer.Views
                 int row = index / cols;
                 int col = index % cols;
                 double x = col * (_slot + _gapH);
-                double y = row * (rowHeight + Math.Max(0, Gap)) - VerticalOffset;
+                double offset = _scrollOwner == null ? 0 : _offset.Y;
+                double y = row * (rowHeight + GetSafeGap(Gap)) - offset;
                 child.Arrange(new Rect(x, y, slot, rowHeight));
             }
 
-            _viewport = finalSize;
+            double viewportWidth = ResolveWidth(finalSize.Width);
+            double viewportHeight = ResolveViewportHeight(
+                finalSize.Height,
+                (_scrollOwner ?? _fallbackScrollViewer)?.ActualHeight ?? 0,
+                (_scrollOwner ?? _fallbackScrollViewer) is ScrollViewer scrollViewer
+                    ? scrollViewer.Padding.Top + scrollViewer.Padding.Bottom
+                    : 0);
+            _viewport = new Size(viewportWidth, viewportHeight);
             return finalSize;
         }
 
         protected override void OnItemsChanged(object sender, ItemsChangedEventArgs args)
         {
             base.OnItemsChanged(sender, args);
-            _rowHeight = 0;
+            if (args.Action is NotifyCollectionChangedAction.Remove
+                or NotifyCollectionChangedAction.Replace
+                or NotifyCollectionChangedAction.Reset)
+                _rowHeight = 0;
             InvalidateMeasure();
         }
     }
