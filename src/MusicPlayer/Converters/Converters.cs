@@ -457,22 +457,16 @@ public class ArtistImageConverter : IValueConverter
                 if (!isHighRes && AlbumArtLoader.ScrollingActive)
                     return DefaultArtistImage ?? string.Empty as object;
 
-                try
+                var quality = isHighRes ? MusicPlayer.Services.ArtworkQuality.Full : MusicPlayer.Services.ArtworkQuality.Cards;
+                var cachedOrReq = MusicPlayer.Services.ArtworkPipeline.Instance.GetOrRequest(path, quality, MusicPlayer.Services.ArtworkPriority.ImmediateVisible);
+                if (cachedOrReq != null && cachedOrReq != MusicPlayer.Services.ArtworkPipeline.Instance.GetDefaultArtwork())
                 {
-                    var bi = new System.Windows.Media.Imaging.BitmapImage();
-                    bi.BeginInit();
-                    bi.UriSource = new System.Uri(path, System.UriKind.Absolute);
-                    bi.DecodePixelWidth = isHighRes ? 400 : 180;
-                    bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-                    bi.EndInit();
-                    bi.Freeze();
                     if (isHighRes)
-                        HighResCache[artistName] = bi;
+                        HighResCache[artistName] = cachedOrReq;
                     else
-                        vm.ArtistImageCache[artistName] = bi;
-                    return bi;
+                        vm.ArtistImageCache[artistName] = cachedOrReq;
+                    return cachedOrReq;
                 }
-                catch { }
             }
 
             if (isHighRes && vm.ArtistImageCache.TryGetValue(artistName, out var fallbackImg))

@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MusicPlayer.Database;
 using MusicPlayer.Models;
+using MusicPlayer.Services;
 using MusicPlayer.Utilities;
 using Microsoft.Extensions.Logging;
 
@@ -381,87 +382,30 @@ public class AlbumArtLoader
         _db = db;
         _logger = logger;
         AppPaths.EnsureDirectories();
-        PurgeOldDiskCache();
+        Instance = this;
+        ArtworkPipeline.Instance.ArtworkBatchReady += paths =>
+        {
+            MediumArtBatchReady?.Invoke(paths);
+        };
     }
 
     public static AlbumArtLoader Instance { get; internal set; } = null!;
-
-    private static void PurgeOldDiskCache()
-    {
-        try
-        {
-            var dir = AppPaths.AlbumArtCachePath;
-            if (!Directory.Exists(dir)) { Directory.CreateDirectory(dir); return; }
-            var flag = Path.Combine(dir, ".v3");
-            if (File.Exists(flag)) return;
-            Directory.Delete(dir, true);
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(flag, "ok");
-        }
-        catch { }
-    }
 
     public ImageSource? LoadAlbumArt(string? filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath))
             return GetDefaultAlbumArt();
 
-        var uiProbe = GetActiveUiImageProbe();
-        bool cacheHit;
-        ImageSource? cached;
-        using (MeasureUiImage(AlbumArtUiMetric.MemoryLookup))
-            cacheHit = _cache.TryGetValue(filePath, out cached) && cached != null;
-
-        uiProbe?.RecordMemoryResult(cacheHit);
-        if (cacheHit)
-            return cached;
-
-        // While scrolling is active, return placeholder immediately — never block the UI thread on disk IO during scroll!
-        if (_scrollingActive)
-        {
-            uiProbe?.RecordScrollSkip();
-            return GetDefaultAlbumArt();
-        }
-
-        using var diskPathMeasurement = MeasureUiImage(AlbumArtUiMetric.DiskPath);
-        try
-        {
-            var hash = GetMd5Hash(filePath);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-
-            var existing = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existing != null)
-            {
-                ImageSource? img;
-                using (MeasureUiImage(AlbumArtUiMetric.Decode))
-                    img = LoadThumbnailFromFile(existing);
-                uiProbe?.RecordDecodeResult(img != null);
-                if (img != null)
-                {
-                    uiProbe?.RecordDiskResult(true);
-                    _cache[filePath] = img;
-                    TrimCache();
-                    return img;
-                }
-            }
-
-            // If not found in disk cache, NEVER block the UI thread parsing with TagLib!
-            // Queue a background parse and return default placeholder immediately.
-            EnqueueFullArtParse(filePath);
-        }
-        catch { }
-
-        uiProbe?.RecordDiskResult(false);
-        return GetDefaultAlbumArt();
+        return ArtworkPipeline.Instance.GetOrRequest(filePath, ArtworkQuality.List, ArtworkPriority.ImmediateVisible);
     }
 
     public ImageSource? LoadAlbumArt(MusicTrack? track)
     {
         if (track == null) return GetDefaultAlbumArt();
-        if (!string.IsNullOrEmpty(track.AlbumArtPath))
-            return LoadAlbumArt(track.AlbumArtPath);
-        return LoadAlbumArt(track.FilePath);
+        var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
+        if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
+
+        return ArtworkPipeline.Instance.GetOrRequest(path, ArtworkQuality.List, ArtworkPriority.ImmediateVisible, track);
     }
 
     /// <summary>
@@ -533,36 +477,13 @@ public class AlbumArtLoader
         var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
         if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
 
-        if (_fullQualityCache.TryGetValue(path, out var cached) && cached != null)
-            return cached;
-
-        var fullArt = DecodeFirstValidPicture(track);
-        if (fullArt != null)
-        {
-            _fullQualityCache[path] = fullArt;
-            TrimCache();
-            return fullArt;
-        }
-
-        return GetDefaultAlbumArt();
+        return ArtworkPipeline.Instance.GetOrRequest(path, ArtworkQuality.Full, ArtworkPriority.ImmediateVisible, track);
     }
 
     public ImageSource? LoadFullAlbumArt(string? filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
-        if (_fullQualityCache.TryGetValue(filePath, out var cached) && cached != null)
-            return cached;
-
-        var dummyTrack = new MusicTrack { FilePath = filePath };
-        var fullArt = DecodeFirstValidPicture(dummyTrack);
-        if (fullArt != null)
-        {
-            _fullQualityCache[filePath] = fullArt;
-            TrimCache();
-            return fullArt;
-        }
-
-        return GetDefaultAlbumArt();
+        return ArtworkPipeline.Instance.GetOrRequest(filePath, ArtworkQuality.Full, ArtworkPriority.ImmediateVisible);
     }
 
     // ── MiniPlayer Quality (160px) ────────────────────────────────────────────
@@ -572,118 +493,25 @@ public class AlbumArtLoader
         var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
         if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
 
-        if (_miniCache.TryGetValue(path, out var cached) && cached != null && cached != _defaultArt)
-            return cached;
-
-        try
-        {
-            var hash = GetMd5Hash(path);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                var img = LoadSizedImageFromFile(existingPath, MiniDecodeSize);
-                if (img != null)
-                {
-                    _miniCache[path] = img;
-                    TrimCache();
-                    return img;
-                }
-            }
-        }
-        catch { }
-
-        var miniArt = DecodeSizedValidPicture(track, MiniDecodeSize);
-        if (miniArt != null)
-        {
-            _miniCache[path] = miniArt;
-            TrimCache();
-            return miniArt;
-        }
-
-        return GetDefaultAlbumArt();
+        return ArtworkPipeline.Instance.GetOrRequest(path, ArtworkQuality.Mini, ArtworkPriority.ImmediateVisible, track);
     }
 
     public ImageSource? LoadMiniAlbumArt(string? filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
-        if (_miniCache.TryGetValue(filePath, out var cached) && cached != null && cached != _defaultArt)
-            return cached;
-
-        try
-        {
-            var hash = GetMd5Hash(filePath);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                var img = LoadSizedImageFromFile(existingPath, MiniDecodeSize);
-                if (img != null)
-                {
-                    _miniCache[filePath] = img;
-                    TrimCache();
-                    return img;
-                }
-            }
-        }
-        catch { }
-
-        var dummyTrack = new MusicTrack { FilePath = filePath };
-        var miniArt = DecodeSizedValidPicture(dummyTrack, MiniDecodeSize);
-        if (miniArt != null)
-        {
-            _miniCache[filePath] = miniArt;
-            TrimCache();
-            return miniArt;
-        }
-
-        return GetDefaultAlbumArt();
+        return ArtworkPipeline.Instance.GetOrRequest(filePath, ArtworkQuality.Mini, ArtworkPriority.ImmediateVisible);
     }
 
     public bool HasMediumArt(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
-        return _cardsCache.TryGetValue(path, out var img) && img != null && img != _defaultArt;
+        return ArtworkPipeline.Instance.GetCached(path, ArtworkQuality.Cards) != null;
     }
-
-    public static long MediumDecodesTotal;
-    public static long MediumDecodesOnUIThread;
-    public static long MediumDeduplicatedCount;
 
     public void EnqueueMediumArt(string path, MusicTrack? track = null, MusicPlayer.Services.WorkPriority priority = MusicPlayer.Services.WorkPriority.ImmediateVisible)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
-        if (_cardsCache.ContainsKey(path)) return;
-        if (!_pendingMediumParses.TryAdd(path, 1))
-        {
-            Interlocked.Increment(ref MediumDeduplicatedCount);
-            return;
-        }
-
-        _ = MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
-            "cards:" + path,
-            priority,
-            ct =>
-            {
-                try
-                {
-                    if (ct.IsCancellationRequested) return Task.CompletedTask;
-                    if (_cardsCache.ContainsKey(path)) return Task.CompletedTask;
-                    if (System.Windows.Application.Current?.Dispatcher?.CheckAccess() == true)
-                    {
-                        Interlocked.Increment(ref MediumDecodesOnUIThread);
-                    }
-                    Interlocked.Increment(ref MediumDecodesTotal);
-                    ProcessMediumArt(path, track);
-                }
-                finally
-                {
-                    _pendingMediumParses.TryRemove(path, out _);
-                }
-                return Task.CompletedTask;
-            });
+        ArtworkPipeline.Instance.Enqueue(path, ArtworkQuality.Cards, ArtworkPriority.ImmediateVisible, track);
     }
 
     // ── Cards Quality (240px) — Album and Artist Cards ───────────────────────
@@ -692,40 +520,17 @@ public class AlbumArtLoader
 
     public ImageSource? LoadMediumAlbumArt(MusicTrack? track)
     {
-        using var perfCall = new PerfMeasurement(isDecode: false);
         if (track == null) return GetDefaultAlbumArt();
         var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
         if (string.IsNullOrEmpty(path)) return GetDefaultAlbumArt();
 
-        if (_cardsCache.TryGetValue(path, out var cached) && cached != null && cached != _defaultArt)
-        {
-            RecordMediumCacheHit();
-            return cached;
-        }
-
-        RecordMediumCacheMiss();
-
-        // UI-Thread Protection: Zero disk I/O and zero JPEG decodes on UI thread.
-        // Return frozen default placeholder immediately; central coordinator handles decode.
-        EnqueueMediumArt(path, track, MusicPlayer.Services.WorkPriority.ImmediateVisible);
-        return GetDefaultAlbumArt();
+        return ArtworkPipeline.Instance.GetOrRequest(path, ArtworkQuality.Cards, ArtworkPriority.ImmediateVisible, track);
     }
 
     public ImageSource? LoadMediumAlbumArt(string? filePath)
     {
-        using var perfCall = new PerfMeasurement(isDecode: false);
         if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
-
-        if (_cardsCache.TryGetValue(filePath, out var cached) && cached != null && cached != _defaultArt)
-        {
-            RecordMediumCacheHit();
-            return cached;
-        }
-
-        RecordMediumCacheMiss();
-
-        EnqueueMediumArt(filePath, null, MusicPlayer.Services.WorkPriority.ImmediateVisible);
-        return GetDefaultAlbumArt();
+        return ArtworkPipeline.Instance.GetOrRequest(filePath, ArtworkQuality.Cards, ArtworkPriority.ImmediateVisible);
     }
 
     private ImageSource? LoadFullAlbumArtCore(MusicTrack track)
@@ -1107,53 +912,22 @@ public class AlbumArtLoader
         IEnumerable<MusicTrack> tracks,
         CancellationToken cancellationToken = default)
     {
-        return Task.Run(async () =>
+        var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
+        if (list.Count == 0 || cancellationToken.IsCancellationRequested) return Task.CompletedTask;
+
+        var tasks = new List<Task>();
+        foreach (var track in list)
         {
-            var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
-            if (list.Count == 0 || cancellationToken.IsCancellationRequested) return;
+            if (cancellationToken.IsCancellationRequested) break;
+            tasks.Add(ArtworkPipeline.Instance.GetAsync(track.FilePath, ArtworkQuality.List, ArtworkPriority.StartupViewport, track, cancellationToken));
+        }
 
-            var tasks = new List<Task>();
-            foreach (var track in list)
-            {
-                if (cancellationToken.IsCancellationRequested) break;
-                if (_cache.ContainsKey(track.FilePath)) continue;
-                if (!_pendingParses.TryAdd(track.FilePath, 1)) continue;
-
-                tasks.Add(MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
-                    "track:" + track.FilePath,
-                    MusicPlayer.Services.WorkPriority.Viewport,
-                    ct =>
-                    {
-                        try
-                        {
-                            if (ct.IsCancellationRequested || cancellationToken.IsCancellationRequested) return Task.CompletedTask;
-                            if (_cache.ContainsKey(track.FilePath)) return Task.CompletedTask;
-                            var art = LoadAlbumArtCore(track.FilePath);
-                            if (art != null && art != _defaultArt)
-                                _cache[track.FilePath] = art;
-                        }
-                        catch { }
-                        finally
-                        {
-                            _pendingParses.TryRemove(track.FilePath, out _);
-                        }
-                        return Task.CompletedTask;
-                    },
-                    cancellationToken));
-            }
-
-            if (tasks.Count > 0)
-            {
-                await Task.WhenAll(tasks);
-            }
-        }, cancellationToken);
+        return Task.WhenAll(tasks);
     }
 
     /// <summary>
-    /// Preloads 240px Cards-quality album artwork into <c>_cardsCache</c> for the given tracks.
-    /// Uses the disk cache when available; falls back to TagLib embedded pictures.
-    /// Bounded by BackgroundWorkCoordinator to prevent CPU spikes.
-    /// Safe to call on any thread. Does not pollute the 80px thumbnail cache.
+    /// Preloads 240px Cards-quality album artwork for the given tracks.
+    /// Routed via ArtworkPipeline for bounded scheduling and zero memory leaks.
     /// </summary>
     public Task PreloadCardsArtwork(
         IEnumerable<MusicTrack> tracks,
@@ -1161,48 +935,22 @@ public class AlbumArtLoader
         CancellationToken cancellationToken = default,
         bool isPriority = false)
     {
-        return Task.Run(async () =>
+        var list = tracks.Where(t => t != null).ToList();
+        if (list.Count == 0 || cancellationToken.IsCancellationRequested) return Task.CompletedTask;
+
+        var priority = isPriority ? ArtworkPriority.StartupViewport : ArtworkPriority.BackgroundLibrary;
+        var tasks = new List<Task>();
+
+        foreach (var track in list)
         {
-            var list = tracks.Where(t => t != null).ToList();
-            if (list.Count == 0 || cancellationToken.IsCancellationRequested) return;
+            if (cancellationToken.IsCancellationRequested) break;
+            var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
+            if (string.IsNullOrEmpty(path)) continue;
 
-            var priority = isPriority ? MusicPlayer.Services.WorkPriority.Viewport : MusicPlayer.Services.WorkPriority.BackgroundLibrary;
-            var tasks = new List<Task>();
+            tasks.Add(ArtworkPipeline.Instance.GetAsync(path, ArtworkQuality.Cards, priority, track, cancellationToken));
+        }
 
-            foreach (var track in list)
-            {
-                if (cancellationToken.IsCancellationRequested) break;
-                var path = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
-                if (string.IsNullOrEmpty(path)) continue;
-                if (_cardsCache.ContainsKey(path)) continue;
-                if (!_pendingMediumParses.TryAdd(path, 1)) continue;
-
-                tasks.Add(MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
-                    "cards:" + path,
-                    priority,
-                    ct =>
-                    {
-                        try
-                        {
-                            if (ct.IsCancellationRequested || cancellationToken.IsCancellationRequested) return Task.CompletedTask;
-                            if (_cardsCache.ContainsKey(path)) return Task.CompletedTask;
-                            ProcessMediumArt(path, track);
-                        }
-                        catch { }
-                        finally
-                        {
-                            _pendingMediumParses.TryRemove(path, out _);
-                        }
-                        return Task.CompletedTask;
-                    },
-                    cancellationToken));
-            }
-
-            if (tasks.Count > 0)
-            {
-                await Task.WhenAll(tasks);
-            }
-        }, cancellationToken);
+        return Task.WhenAll(tasks);
     }
 
     public Task PreloadCardsArtwork(
@@ -1215,32 +963,22 @@ public class AlbumArtLoader
         CancellationToken cancellationToken = default)
         => PreloadCardsArtwork(tracks, cancellationToken);
 
-    // Background warm-up: loads disk cache in parallel, then extracts missing with TagLib.
+    // Background warm-up routed via ArtworkPipeline at Maintenance priority.
     public Task WarmUpArtCacheAsync(
         IEnumerable<MusicTrack> tracks,
         CancellationToken cancellationToken = default)
     {
-        return Task.Run(async () =>
+        var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
+        if (list.Count == 0 || cancellationToken.IsCancellationRequested) return Task.CompletedTask;
+
+        var tasks = new List<Task>();
+        foreach (var track in list)
         {
-            var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
-            if (list.Count == 0) return;
+            if (cancellationToken.IsCancellationRequested) break;
+            tasks.Add(ArtworkPipeline.Instance.GetAsync(track.FilePath, ArtworkQuality.List, ArtworkPriority.Maintenance, track, cancellationToken));
+        }
 
-            // Phase 1: fast parallel memory load of already-cached disk thumbnails (80px)
-            await PreloadTrackArtwork(list, cancellationToken);
-
-            // Phase 2: any tracks without a disk thumbnail can be extracted via TagLib in the background
-            foreach (var track in list)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (_cache.ContainsKey(track.FilePath)) continue;
-                if (MusicPlayer.Views.SmoothScrollHelper.IsInteractingNow(1200))
-                {
-                    await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-                        quietMs: 1500, minAgeMs: 0, maxWaitMs: 30000, cancellationToken);
-                }
-                try { WarmUpArtCore(track.FilePath); } catch { }
-            }
-        }, cancellationToken);
+        return Task.WhenAll(tasks);
     }
 
     private ImageSource? LoadAlbumArtCore(string filePath)

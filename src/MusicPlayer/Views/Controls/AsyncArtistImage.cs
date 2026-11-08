@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using MusicPlayer.Services;
 using MusicPlayer.ViewModels;
 
 namespace MusicPlayer.Views.Controls;
@@ -82,38 +83,27 @@ public sealed class AsyncArtistImage : Image
             return;
         }
 
-        // 2. If path is available on disk, decode asynchronously once
+        // 2. If path is available on disk, decode asynchronously once via ArtworkPipeline
         if (vm.ArtistImages.TryGetValue(artist, out var path) && !string.IsNullOrWhiteSpace(path))
         {
-            if (!_inFlightLoads.TryAdd(artist, 0)) return;
-
             int version = Interlocked.Increment(ref _requestVersion);
-            Task.Run(() =>
-            {
-                try
+            _ = ArtworkPipeline.Instance.GetAsync(path, ArtworkQuality.Cards, ArtworkPriority.ImmediateVisible)
+                .ContinueWith(t =>
                 {
-                    if (File.Exists(path))
+                    if (t.IsCompletedSuccessfully && t.Result != null)
                     {
-                        var image = Decode(path);
-                        if (image != null)
+                        var image = t.Result;
+                        vm.ArtistImageCache[artist] = image;
+                        Dispatcher.BeginInvoke(new Action(() =>
                         {
-                            vm.ArtistImageCache[artist] = image;
-                            Dispatcher.BeginInvoke(new Action(() =>
+                            if (version == Volatile.Read(ref _requestVersion) &&
+                                string.Equals(ArtistName?.Trim(), artist, StringComparison.OrdinalIgnoreCase))
                             {
-                                if (version == Volatile.Read(ref _requestVersion) &&
-                                    string.Equals(ArtistName?.Trim(), artist, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    Source = image;
-                                }
-                            }), System.Windows.Threading.DispatcherPriority.Background);
-                        }
+                                Source = image;
+                            }
+                        }), System.Windows.Threading.DispatcherPriority.Background);
                     }
-                }
-                finally
-                {
-                    _inFlightLoads.TryRemove(artist, out _);
-                }
-            });
+                }, TaskScheduler.Default);
             return;
         }
 
