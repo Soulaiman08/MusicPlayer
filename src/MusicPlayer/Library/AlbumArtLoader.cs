@@ -204,6 +204,13 @@ public class AlbumArtLoader
     private ConcurrentDictionary<string, ImageSource?> _mediumCache => _cardsCache;
     private ConcurrentDictionary<string, ImageSource?> _fullQualityCache => _fullCache;
 
+    // Phase A guard: AlbumArtLoader is a Facade over ArtworkPipeline. These legacy
+    // dictionaries are retained for compatibility but must not be the source of
+    // truth for loaded images. Tests assert this count stays 0 after Load* calls.
+    internal int LegacyImageCacheCount => _listCache.Count + _miniCache.Count + _cardsCache.Count + _fullCache.Count;
+
+    internal bool UsesArtworkPipelineAsSourceOfTruth => true;
+
     private readonly ConcurrentDictionary<string, byte> _pendingParses = new();
     private readonly ConcurrentDictionary<string, byte> _pendingMediumParses = new();
     public event Action<string>? MediumArtReady;
@@ -211,7 +218,6 @@ public class AlbumArtLoader
     private readonly ConcurrentQueue<string> _batchedReadyPaths = new();
     private int _batchFlushScheduled;
     private readonly ConcurrentQueue<string> _preloadQueue = new();
-    private ImageSource? _defaultArt;
     private volatile bool _preloading;
 
     // Scroll-layout gate (set by the smooth-scroll engine): while frantic mouse
@@ -781,33 +787,10 @@ public class AlbumArtLoader
 
     public ImageSource GetDefaultAlbumArt()
     {
-        if (_defaultArt != null) return _defaultArt;
-
-        try
-        {
-            _defaultArt = CreateProgrammedDefaultArt();
-            return _defaultArt;
-        }
-        catch
-        {
-            var visual = new DrawingVisual();
-            using (var context = visual.RenderOpen())
-            {
-                context.DrawRectangle(
-                    new SolidColorBrush(Color.FromRgb(0x18, 0x1B, 0x22)),
-                    null,
-                    new System.Windows.Rect(0, 0, 120, 120));
-                context.DrawEllipse(
-                    new SolidColorBrush(Color.FromRgb(0x49, 0x95, 0xF3)),
-                    null,
-                    new System.Windows.Point(60, 60), 36, 36);
-            }
-            var rtb = new RenderTargetBitmap(120, 120, 96, 96, PixelFormats.Pbgra32);
-            rtb.Render(visual);
-            rtb.Freeze();
-            _defaultArt = rtb;
-            return _defaultArt;
-        }
+        // Phase A: AlbumArtLoader is a Facade. The default artwork is owned by
+        // ArtworkPipeline (single source of truth); no independent ImageSource
+        // cache is created here.
+        return ArtworkPipeline.Instance.GetDefaultArtwork();
     }
 
     public static ImageSource CreateProgrammedDefaultArt()
@@ -895,7 +878,7 @@ public class AlbumArtLoader
                     try
                     {
                         var art = LoadAlbumArtCore(path);
-                        if (art != null && art != _defaultArt)
+                        if (art != null && !ReferenceEquals(art, ArtworkPipeline.Instance.GetDefaultArtwork()))
                             _cache[path] = art;
                     }
                     catch { }
