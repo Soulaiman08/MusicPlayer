@@ -31,9 +31,40 @@ namespace MusicPlayer.Tests
         }
 
         [Fact]
-        public void Facade_UsesArtworkPipelineAsSourceOfTruth()
+        public void LoadAlbumArt_DelegatesToPipelineResult()
         {
-            Assert.True(_loader.UsesArtworkPipelineAsSourceOfTruth);
+            var imageFile = Path.Combine(_tempDir, "delegate.png");
+            File.WriteAllBytes(imageFile, Create1x1Png());
+
+            var fromFacade = _loader.LoadAlbumArt(imageFile);
+
+            Assert.NotNull(fromFacade);
+            Assert.Equal(0, _loader.LegacyImageCacheCount);
+
+            var cached = ArtworkPipeline.Instance.GetCached(imageFile, ArtworkQuality.List);
+            if (cached != null)
+            {
+                // If the async request already completed, the facade result may be
+                // the default placeholder or the cached image; both are pipeline-owned.
+                Assert.True(
+                    ReferenceEquals(fromFacade, cached) ||
+                    ReferenceEquals(fromFacade, ArtworkPipeline.Instance.GetDefaultArtwork()));
+            }
+            else
+            {
+                Assert.True(ReferenceEquals(fromFacade, ArtworkPipeline.Instance.GetDefaultArtwork()));
+            }
+        }
+
+        [Fact]
+        public void PreloadArtwork_DoesNotPopulateLegacyCaches()
+        {
+            var imageFile = Path.Combine(_tempDir, "preload.png");
+            File.WriteAllBytes(imageFile, Create1x1Png());
+
+            _loader.PreloadArtwork(new[] { imageFile });
+
+            Assert.Equal(0, _loader.LegacyImageCacheCount);
         }
 
         [Theory]

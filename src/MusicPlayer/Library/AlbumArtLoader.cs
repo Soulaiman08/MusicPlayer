@@ -549,32 +549,8 @@ public class AlbumArtLoader
     // virtualizer without any cross-thread marshalling cost.
     private void EnqueueFullArtParse(string path)
     {
-        if (_pendingParses.ContainsKey(path)) return;
-        _pendingParses[path] = 0;
-
-        _ = MusicPlayer.Services.BackgroundWorkCoordinator.Instance.EnqueueCpuWorkAsync(
-            "full:" + path,
-            MusicPlayer.Services.WorkPriority.ImmediateVisible,
-            ct =>
-            {
-                try
-                {
-                    if (ct.IsCancellationRequested) return Task.CompletedTask;
-                    if (_fullQualityCache.TryGetValue(path, out var done) && done != null)
-                        return Task.CompletedTask;
-
-                    var dummyTrack = new MusicTrack { FilePath = path };
-                    var img = DecodeFirstValidPicture(dummyTrack);
-                    if (img != null)
-                        _fullQualityCache[path] = img;
-                }
-                catch { }
-                finally
-                {
-                    _pendingParses.TryRemove(path, out _);
-                }
-                return Task.CompletedTask;
-            });
+        // Phase A: legacy full-quality cache is no longer populated.
+        // Kept as a no-op for binary/source compatibility.
     }
 
     private void NotifyMediumArtReady(string path)
@@ -619,41 +595,8 @@ public class AlbumArtLoader
 
     private void ProcessMediumArt(string path, MusicTrack? track)
     {
-        if (_mediumCache.TryGetValue(path, out var cached) && cached != null)
-        {
-            NotifyMediumArtReady(path);
-            return;
-        }
-
-        try
-        {
-            var hash = GetMd5Hash(path);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                var img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
-                if (img != null)
-                {
-                    _mediumCache[path] = img;
-                    TrimCache();
-                    NotifyMediumArtReady(path);
-                    return;
-                }
-            }
-        }
-        catch { }
-
-        var sourceTrack = track ?? new MusicTrack { FilePath = path };
-        ImageSource? mediumArt = null;
-        try { mediumArt = DecodeMediumValidPicture(sourceTrack); } catch { }
-        if (mediumArt != null)
-        {
-            _mediumCache[path] = mediumArt;
-            TrimCache();
-            NotifyMediumArtReady(path);
-        }
+        // Phase A: legacy medium/cards cache is no longer populated.
+        // Kept as a no-op for compatibility.
     }
 
     private ImageSource? DecodeFirstValidPicture(MusicTrack track)
@@ -873,13 +816,16 @@ public class AlbumArtLoader
             {
                 foreach (var path in filePaths)
                 {
-                    if (_cache.ContainsKey(path)) continue;
+                    if (string.IsNullOrWhiteSpace(path)) continue;
                     if (_scrollingActive) return; // defer CPU work until layout settles
                     try
                     {
-                        var art = LoadAlbumArtCore(path);
-                        if (art != null && !ReferenceEquals(art, ArtworkPipeline.Instance.GetDefaultArtwork()))
-                            _cache[path] = art;
+                        // Phase A: warming is routed through ArtworkPipeline (SSOT).
+                        // Legacy _cache is no longer populated by this Facade.
+                        if (ArtworkPipeline.Instance.GetCached(path, ArtworkQuality.List) == null)
+                        {
+                            ArtworkPipeline.Instance.Enqueue(path, ArtworkQuality.List, ArtworkPriority.Maintenance);
+                        }
                     }
                     catch { }
                 }
@@ -991,56 +937,8 @@ public class AlbumArtLoader
     // or any UI-thread path.
     private ImageSource? WarmUpArtCore(string filePath)
     {
-        try
-        {
-            // ── CPU saver: in-memory hit → zero file read, zero TagLib loop ──
-            if (_cache.TryGetValue(filePath, out var cached) && cached != null)
-                return cached;
-
-            var hash = GetMd5Hash(filePath);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-            var metaPath        = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.meta");
-            long sourceTicks = 0;
-            try { if (File.Exists(filePath)) sourceTicks = File.GetLastWriteTimeUtc(filePath).Ticks; } catch { }
-
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null && !InvalidateStaleCache(filePath, existingPath, metaPath))
-            {
-                var img = LoadThumbnailFromFile(existingPath);
-                if (img != null)
-                {
-                    _cache[filePath] = img;
-                    return img;
-                }
-            }
-
-            // If the thumbnail is not in disk cache yet, and scrolling is active, defer heavy extraction
-            if (_scrollingActive)
-                return GetDefaultAlbumArt();
-
-            if (File.Exists(filePath))
-            {
-                using var tagFile = TagLib.File.Create(filePath);
-
-                // See LoadFullAlbumArtCore: skip non-image frames (e.g. C2PA
-                // argument manifests) and decode every frame until the real
-                // cover is found.
-                foreach (var picture in tagFile.Tag.Pictures)
-                {
-                    if (picture.Data.Data == null || picture.Data.Data.Length == 0) continue;
-                    var thumb = SaveThumbnail(picture.Data.Data, cachedImagePath, sourceTicks);
-                    if (thumb != null)
-                    {
-                        _cache[filePath] = thumb;
-                        return thumb;
-                    }
-                }
-            }
-        }
-        catch { }
-
-        return GetDefaultAlbumArt();
+        // Phase A: legacy warm-up cache is no longer populated.
+        return ArtworkPipeline.Instance.GetDefaultArtwork();
     }
 
     // Thread-safe cover caching: writes raw bytes directly without any
