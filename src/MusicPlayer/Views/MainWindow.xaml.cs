@@ -2830,9 +2830,19 @@ InitializeComponent();
             }
         }
 
-        if (AlbumArtLoader.Instance != null && !AlbumArtLoader.Instance.HasMediumArt(path))
+        if (AlbumArtLoader.Instance != null)
         {
-            AlbumArtLoader.Instance.EnqueueMediumArt(path, (dataContext ?? img.DataContext) as MusicPlayer.Models.MusicTrack);
+            if (AlbumArtLoader.Instance.HasMediumArt(path) || 
+                MusicPlayer.Services.ArtworkPipeline.Instance.GetCached(path, MusicPlayer.Services.ArtworkQuality.Mini) != null ||
+                MusicPlayer.Services.ArtworkPipeline.Instance.GetCached(path, MusicPlayer.Services.ArtworkQuality.List) != null)
+            {
+                var be = System.Windows.Data.BindingOperations.GetBindingExpression(img, System.Windows.Controls.Image.SourceProperty);
+                be?.UpdateTarget();
+            }
+            else
+            {
+                AlbumArtLoader.Instance.EnqueueMediumArt(path, (dataContext ?? img.DataContext) as MusicPlayer.Models.MusicTrack);
+            }
         }
     }
 

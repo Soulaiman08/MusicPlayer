@@ -4627,8 +4627,7 @@ public partial class MainViewModel : ViewModelBase
 				}
 			});
 		}
-		// Row-thumbnail warmup runs immediately in background so the entire library is cached in RAM.
-		StartTrackedBackgroundTask("WarmUpAndRefresh", ct => WarmUpAndRefreshAsync(sortedTracks, ct));
+		// On-demand artwork loading during scrolling replaces background full-library memory warmup.
 		StartTrackedBackgroundTask("WallpaperWarmupLoop", async ct =>
 		{
 			while (!ct.IsCancellationRequested)
@@ -4724,6 +4723,9 @@ public partial class MainViewModel : ViewModelBase
 					BackgroundShutdownTimeout);
 				pendingOperations.AddRange(_backgroundTaskRegistry.GetPendingTaskNames());
 			}
+
+			// Stop and drain all ArtworkPipeline workers and cancel pending requests
+			await MusicPlayer.Services.ArtworkPipeline.Instance.StopAsync().ConfigureAwait(false);
 
 			Task<AudioShutdownResult> audioShutdown = _playback.Engine.ShutdownAsync();
 			Task completed = await Task.WhenAny(audioShutdown, Task.Delay(AudioShutdownWaitTimeout))

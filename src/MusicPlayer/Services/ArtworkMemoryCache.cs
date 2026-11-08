@@ -32,6 +32,14 @@ namespace MusicPlayer.Services
             private CacheNode? _tail;
             private readonly object _lock = new();
 
+            public long CurrentBytes
+            {
+                get
+                {
+                    lock (_lock) return _currentBytes;
+                }
+            }
+
             public TierPartition(long maxBytes)
             {
                 _maxBytes = maxBytes;
@@ -151,10 +159,24 @@ namespace MusicPlayer.Services
         // Mini:  10 MB (~100 items @ 160x160x4)
         // Cards: 40 MB (~180 items @ 240x240x4)
         // Full:  30 MB (~3-5 original full-resolution covers)
-        private readonly TierPartition _listTier = new(16 * 1024 * 1024);
-        private readonly TierPartition _miniTier = new(10 * 1024 * 1024);
-        private readonly TierPartition _cardsTier = new(40 * 1024 * 1024);
-        private readonly TierPartition _fullTier = new(30 * 1024 * 1024);
+        private readonly TierPartition _listTier;
+        private readonly TierPartition _miniTier;
+        private readonly TierPartition _cardsTier;
+        private readonly TierPartition _fullTier;
+
+        public long TotalBytes => _listTier.CurrentBytes + _miniTier.CurrentBytes + _cardsTier.CurrentBytes + _fullTier.CurrentBytes;
+
+        public ArtworkMemoryCache(
+            double listBudgetMb = 16.0,
+            double miniBudgetMb = 10.0,
+            double cardsBudgetMb = 40.0,
+            double fullBudgetMb = 30.0)
+        {
+            _listTier = new TierPartition((long)(listBudgetMb * 1024 * 1024));
+            _miniTier = new TierPartition((long)(miniBudgetMb * 1024 * 1024));
+            _cardsTier = new TierPartition((long)(cardsBudgetMb * 1024 * 1024));
+            _fullTier = new TierPartition((long)(fullBudgetMb * 1024 * 1024));
+        }
 
         // Negative cache: paths/keys proven to contain no artwork.
         // Stores source file modification ticks to automatically invalidate if the file is replaced.

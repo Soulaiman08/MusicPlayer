@@ -1139,7 +1139,7 @@
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="6" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" Loaded="AlbumArtImage_Loaded" Unloaded="AlbumArtImage_Unloaded" DataContextChanged="AlbumArtImage_DataContextChanged" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" Foreground="#FFFFFFFF" FontSize="12.5" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
@@ -1185,7 +1185,7 @@
                                   <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Border Width="84" Height="84" CornerRadius="7" ClipToBounds="True" Background="#20FFFFFF" VerticalAlignment="Center">
-                                  <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="LowQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                  <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}, ConverterParameter=mini}" Loaded="AlbumArtImage_Loaded" Unloaded="AlbumArtImage_Unloaded" DataContextChanged="AlbumArtImage_DataContextChanged" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="12,0,6,0" VerticalAlignment="Center">
                                   <TextBlock Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
@@ -2263,7 +2263,7 @@
                             <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" Loaded="AlbumArtImage_Loaded" Unloaded="AlbumArtImage_Unloaded" DataContextChanged="AlbumArtImage_DataContextChanged" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" Foreground="#FFFFFFFF" FontSize="12.5" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />

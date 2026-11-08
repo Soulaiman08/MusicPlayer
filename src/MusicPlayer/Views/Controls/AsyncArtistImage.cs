@@ -90,7 +90,7 @@ public sealed class AsyncArtistImage : Image
             _ = ArtworkPipeline.Instance.GetAsync(path, ArtworkQuality.Cards, ArtworkPriority.ImmediateVisible)
                 .ContinueWith(t =>
                 {
-                    if (t.IsCompletedSuccessfully && t.Result != null)
+                    if (t.IsCompletedSuccessfully && t.Result != null && t.Result != ArtworkPipeline.Instance.GetDefaultArtwork())
                     {
                         var image = t.Result;
                         vm.ArtistImageCache[artist] = image;
@@ -100,6 +100,16 @@ public sealed class AsyncArtistImage : Image
                                 string.Equals(ArtistName?.Trim(), artist, StringComparison.OrdinalIgnoreCase))
                             {
                                 Source = image;
+                            }
+                        }), System.Windows.Threading.DispatcherPriority.Background);
+                    }
+                    else
+                    {
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (version == Volatile.Read(ref _requestVersion))
+                            {
+                                Source = null;
                             }
                         }), System.Windows.Threading.DispatcherPriority.Background);
                     }
