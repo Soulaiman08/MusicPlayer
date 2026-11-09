@@ -1613,11 +1613,28 @@ public class AudioEngine : IDisposable
                     if (device != null)
                     {
                         Task<bool> retireTask = RetireDeviceAsync(device);
-                        if (await WaitForTaskAsync(retireTask, deadline).ConfigureAwait(false))
+                        bool retirementCompleted = retireTask.IsCompleted;
+                        if (!retirementCompleted)
+                        {
+                            TimeSpan retireRemaining = deadline - DateTime.UtcNow;
+                            if (retireRemaining > TimeSpan.Zero)
+                            {
+                                try
+                                {
+                                    retirementCompleted = retireTask.Wait(retireRemaining);
+                                }
+                                catch (AggregateException)
+                                {
+                                    retirementCompleted = true;
+                                }
+                            }
+                        }
+
+                        if (retirementCompleted)
                         {
                             try
                             {
-                                if (!retireTask.Result)
+                                if (!retireTask.GetAwaiter().GetResult())
                                 {
                                     deviceConfirmed = false;
                                     RecordUnconfirmedDevice(device, "shutdown");

@@ -98,7 +98,6 @@ public class DatabaseService
             _db.CreateTable<QueueItem>();
             _db.CreateTable<HiddenFolder>();
             _db.CreateTable<Setting>();
-            _db.CreateTable<AlbumArtCache>();
             _db.CreateTable<LyricBinding>();
             _db.CreateTable<ManagedMusicFolder>();
 
@@ -729,19 +728,6 @@ public class DatabaseService
     {
         var setting = _db.Table<Setting>().FirstOrDefault(s => s.Key == key);
         return setting?.Value ?? defaultValue;
-    }
-
-    // Album art cache
-    public AlbumArtCache? GetAlbumArtCache(string trackPath)
-    {
-        using var _ = LockIfNeeded();
-        return _db.Table<AlbumArtCache>().FirstOrDefault(a => a.TrackPath == trackPath);
-    }
-
-    public void SaveAlbumArtCache(AlbumArtCache cache)
-    {
-        using var _ = LockIfNeeded();
-        _db.InsertOrReplace(cache);
     }
 
     // Lyrics

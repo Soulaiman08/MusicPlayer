@@ -40,13 +40,13 @@ public partial class MainViewModel : ViewModelBase
 
 	private readonly SettingsService _settings;
 
-	private readonly NavigationService _nav;
-
 	private readonly MusicScanner _scanner;
 
 	private readonly AlbumArtLoader _albumArt;
 
 	private readonly ArtistImageService _artistImages;
+
+	private readonly LyricsFileService _lyricsFiles;
 
 	private readonly ILogger<MainViewModel> _logger;
 
@@ -1759,7 +1759,7 @@ public partial class MainViewModel : ViewModelBase
 	public IRelayCommand ResetThemeEditCommand => _resetThemeEditCommand ??= new RelayCommand(ResetThemeEdit);
 
 	private RelayCommand? _saveThemeEditCommand;
-	public IRelayCommand SaveThemeEditCommand => _saveThemeEditCommand ??= new RelayCommand(SaveThemeEdit);
+	public IRelayCommand SaveThemeEditCommand => _saveThemeEditCommand ??= new RelayCommand(() => _ = SaveThemeEditAsync());
 
 	private RelayCommand? _cancelThemeEditCommand;
 	public IRelayCommand CancelThemeEditCommand => _cancelThemeEditCommand ??= new RelayCommand(CancelThemeEdit);
@@ -4255,15 +4255,15 @@ public partial class MainViewModel : ViewModelBase
 		};
 	}
 
-	public MainViewModel(PlaybackService playback, DatabaseService db, SettingsService settings, NavigationService nav, MusicScanner scanner, AlbumArtLoader albumArt, ArtistImageService artistImages, ILogger<MainViewModel> logger, WindowsIntegrationService? winIntegration = null)
+	public MainViewModel(PlaybackService playback, DatabaseService db, SettingsService settings, MusicScanner scanner, AlbumArtLoader albumArt, ArtistImageService artistImages, LyricsFileService lyricsFiles, ILogger<MainViewModel> logger, WindowsIntegrationService? winIntegration = null)
 	{
 		_playback = playback;
 		_db = db;
 		_settings = settings;
-		_nav = nav;
 		_scanner = scanner;
 		_albumArt = albumArt;
 		_artistImages = artistImages;
+		_lyricsFiles = lyricsFiles;
 		_logger = logger;
 		_winIntegration = winIntegration;
 		_backgroundTaskRegistry = new BackgroundTaskRegistry(logger);
@@ -6238,154 +6238,165 @@ public partial class MainViewModel : ViewModelBase
 		_playback.Engine.ReplaySong = _settings.ReplaySong;
 	}
 
-	public async void LoadLibrary()
-	{
-		using var operation = _uiOps.TryBegin(nameof(LoadLibrary));
-		if (operation == null) return;
-		try
-		{
-			List<MusicTrack> tracks;
-			(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount) counts;
-			(tracks, counts) = await Task.Run(() => (_db.GetManagedFolderTracksSorted((LibrarySortOrder == "date_added") ? "date_added" : ((LibrarySortOrder == "duration") ? "duration" : ((LibrarySortOrder == "size") ? "size" : ((LibrarySortOrder == "year") ? "year" : "title"))), (LibrarySortOrder == "date_added") ? (!IsLibrarySortDescending) : IsLibrarySortDescending).Take(5000).ToList(), _db.GetAllCounts()));
-			await DispatchAsync(delegate
-			{
-				Tracks.ReplaceAll(tracks);
-				if (HomeCards.Count >= 6)
-				{
-					HomeCards[0].Count = counts.TrackCount.ToString();
-					HomeCards[1].Count = counts.FolderCount.ToString();
-					HomeCards[2].Count = counts.FavoriteCount.ToString();
-					HomeCards[3].Count = counts.RecentPlayCount.ToString();
-					HomeCards[4].Count = counts.RecentAddCount.ToString();
-					HomeCards[5].Count = counts.MostPlayedCount.ToString();
-				}
-			});
-			await _albumArt.WarmUpArtCacheAsync(tracks, _uiOps.Token);
-			await DispatchAsync(delegate
-			{
-				OnPropertyChanged("DisplayedTracks");
-			});
-		}
-		catch
-		{
-		}
-	}
+public void LoadLibrary() => _ = LoadLibraryAsync();
 
-	public void LoadLibraryFull()
+public async Task LoadLibraryAsync()
+{
+	using var operation = _uiOps.TryBegin(nameof(LoadLibrary));
+	if (operation == null) return;
+	try
 	{
-		LoadLibrary();
-		LoadAlbums();
-		_preloadedArtistResult = null;
-		LoadArtists();
-		LoadGenres();
-		LoadFolders();
-		LoadPlaylists();
-	}
-
-	public async void UpdateHomeCardCounts()
-	{
-		using var operation = _uiOps.TryBegin(nameof(UpdateHomeCardCounts));
-		if (operation == null) return;
-		try
+		List<MusicTrack> tracks;
+		(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount) counts;
+		(tracks, counts) = await Task.Run(() => (_db.GetManagedFolderTracksSorted((LibrarySortOrder == "date_added") ? "date_added" : ((LibrarySortOrder == "duration") ? "duration" : ((LibrarySortOrder == "size") ? "size" : ((LibrarySortOrder == "year") ? "year" : "title"))), (LibrarySortOrder == "date_added") ? (!IsLibrarySortDescending) : IsLibrarySortDescending).Take(5000).ToList(), _db.GetAllCounts()));
+		await DispatchAsync(delegate
 		{
-			if (HomeCards.Count < 6)
+			Tracks.ReplaceAll(tracks);
+			if (HomeCards.Count >= 6)
 			{
-				_logger.LogWarning("UpdateHomeCardCounts: HomeCards.Count={Count}, skipping", HomeCards.Count);
-				return;
+				HomeCards[0].Count = counts.TrackCount.ToString();
+				HomeCards[1].Count = counts.FolderCount.ToString();
+				HomeCards[2].Count = counts.FavoriteCount.ToString();
+				HomeCards[3].Count = counts.RecentPlayCount.ToString();
+				HomeCards[4].Count = counts.RecentAddCount.ToString();
+				HomeCards[5].Count = counts.MostPlayedCount.ToString();
 			}
-			(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount) counts = await Task.Run(() => _db.GetAllCounts());
-			_logger.LogInformation("UpdateHomeCardCounts: Tracks={TrackCount}, Folders={FolderCount}, Favorites={FavoriteCount}, RecentPlay={RecentPlayCount}, RecentAdd={RecentAddCount}, MostPlayed={MostPlayedCount}", counts.TrackCount, counts.FolderCount, counts.FavoriteCount, counts.RecentPlayCount, counts.RecentAddCount, counts.MostPlayedCount);
-			await DispatchAsync(delegate
-			{
-				if (HomeCards.Count >= 6)
-				{
-					HomeCards[0].Count = counts.TrackCount.ToString();
-					HomeCards[1].Count = counts.FolderCount.ToString();
-					HomeCards[2].Count = counts.FavoriteCount.ToString();
-					HomeCards[3].Count = counts.RecentPlayCount.ToString();
-					HomeCards[4].Count = counts.RecentAddCount.ToString();
-					HomeCards[5].Count = counts.MostPlayedCount.ToString();
-				}
-			});
-		}
-		catch (Exception ex)
+		});
+		await _albumArt.WarmUpArtCacheAsync(tracks, _uiOps.Token);
+		await DispatchAsync(delegate
 		{
-			_logger.LogError(ex, "UpdateHomeCardCounts failed");
-		}
+			OnPropertyChanged("DisplayedTracks");
+		});
 	}
-
-	private async void LoadAlbums()
+	catch (Exception ex)
 	{
-		using var operation = _uiOps.TryBegin(nameof(LoadAlbums));
-		if (operation == null) return;
-		try
-		{
-			var swTotal = System.Diagnostics.Stopwatch.StartNew();
-			var swFetch = System.Diagnostics.Stopwatch.StartNew();
-			List<MusicTrack> items = await Task.Run(() => (from g in _db.GetAllTracks()
-					.GroupBy<MusicTrack, string>(t => string.IsNullOrWhiteSpace(t.Album) ? "Unknown Album" : t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
-				select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
-				orderby t.Album
-				select t).ToList());
-			long fetchMs = swFetch.ElapsedMilliseconds;
-			string sortOrder = LibrarySortOrder;
-			bool sortDescending = IsLibrarySortDescending;
-			var swSort = System.Diagnostics.Stopwatch.StartNew();
-			List<MusicTrack> sortedAlbums = items.Count >= 2
-				? await Task.Run(() => SortItems(items, false, sortOrder, sortDescending).ToList())
-				: items;
-			long sortMs = swSort.ElapsedMilliseconds;
-			var swPublish = System.Diagnostics.Stopwatch.StartNew();
-			await ReplaceAllChunkedAsync(Albums, sortedAlbums);
-			long publishMs = swPublish.ElapsedMilliseconds;
-			PerfTabData("albums", Albums.Count);
-			if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
-				LogHelper.LogInfo($"TAB-DATA albums fetchMs={fetchMs} sortMs={sortMs} publishMs={publishMs} totalMs={swTotal.ElapsedMilliseconds} count={sortedAlbums.Count}");
-	}
-	catch
-	{
+		_logger.LogError(ex, "LoadLibrary failed");
 	}
 }
 
-private async void LoadArtists()
+public void LoadLibraryFull()
+{
+	_ = LoadLibraryAsync();
+	_ = LoadAlbumsAsync();
+	_preloadedArtistResult = null;
+	_ = LoadArtistsAsync();
+	_ = LoadGenresAsync();
+	_ = LoadFoldersAsync();
+	_ = LoadPlaylistsAsync();
+}
+
+public void UpdateHomeCardCounts() => _ = UpdateHomeCardCountsAsync();
+
+public async Task UpdateHomeCardCountsAsync()
+{
+	using var operation = _uiOps.TryBegin(nameof(UpdateHomeCardCounts));
+	if (operation == null) return;
+	try
 	{
-		using var operation = _uiOps.TryBegin(nameof(LoadArtists));
-		if (operation == null) return;
-		try
+		if (HomeCards.Count < 6)
 		{
-			(List<MusicTrack>, List<KeyValuePair<string, string>>) tuple = _preloadedArtistResult ?? (await BuildArtistItemsAsync());
-			(List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages) result = tuple;
-			_preloadedArtistResult = null;
-			await DispatchAsync(delegate
+			_logger.LogWarning("UpdateHomeCardCounts: HomeCards.Count={Count}, skipping", HomeCards.Count);
+			return;
+		}
+		(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount) counts = await Task.Run(() => _db.GetAllCounts());
+		_logger.LogInformation("UpdateHomeCardCounts: Tracks={TrackCount}, Folders={FolderCount}, Favorites={FavoriteCount}, RecentPlay={RecentPlayCount}, RecentAdd={RecentAddCount}, MostPlayed={MostPlayedCount}", counts.TrackCount, counts.FolderCount, counts.FavoriteCount, counts.RecentPlayCount, counts.RecentAddCount, counts.MostPlayedCount);
+		await DispatchAsync(delegate
+		{
+			if (HomeCards.Count >= 6)
 			{
-				foreach (KeyValuePair<string, string> item in result.CachedImages)
-				{
-					ArtistImages[item.Key] = item.Value;
-				}
-				OnPropertyChanged("ArtistImages");
-			});
-			// Sort BEFORE inserting (single pass) and fill progressively so the
-			// WrapPanel never realizes all artist tiles inside one frame.
-			string sortOrder = LibrarySortOrder;
-			bool sortDescending = IsLibrarySortDescending;
-			var swSort = System.Diagnostics.Stopwatch.StartNew();
-			List<MusicTrack> sortedArtists = await Task.Run(() => result.Items.Count >= 2
-				? SortItems(result.Items, isArtistCollection: true, sortOrder, sortDescending).ToList()
-				: result.Items);
-			long sortMs = swSort.ElapsedMilliseconds;
-			var swFill = System.Diagnostics.Stopwatch.StartNew();
-			await ReplaceAllChunkedAsync(Artists, sortedArtists);
-			long fillMs = swFill.ElapsedMilliseconds;
-			PerfTabData("artists", Artists.Count);
-			var swKick = System.Diagnostics.Stopwatch.StartNew();
-			StartTrackedBackgroundTask("FetchMissingArtistImages", ct => FetchMissingArtistImagesAsync(result.Items, ct));
-			if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
-				LogHelper.LogInfo($"TAB-ARTISTS sortMs={sortMs} fillMs={fillMs} fetchKickMs={swKick.ElapsedMilliseconds}");
+				HomeCards[0].Count = counts.TrackCount.ToString();
+				HomeCards[1].Count = counts.FolderCount.ToString();
+				HomeCards[2].Count = counts.FavoriteCount.ToString();
+				HomeCards[3].Count = counts.RecentPlayCount.ToString();
+				HomeCards[4].Count = counts.RecentAddCount.ToString();
+				HomeCards[5].Count = counts.MostPlayedCount.ToString();
+			}
+		});
 		}
-		catch
-		{
-		}
+	catch (Exception ex)
+	{
+		_logger.LogError(ex, "UpdateHomeCardCounts failed");
 	}
+}
+
+private void LoadAlbums() => _ = LoadAlbumsAsync();
+
+private async Task LoadAlbumsAsync()
+{
+	using var operation = _uiOps.TryBegin(nameof(LoadAlbums));
+	if (operation == null) return;
+	try
+	{
+		var swTotal = System.Diagnostics.Stopwatch.StartNew();
+		var swFetch = System.Diagnostics.Stopwatch.StartNew();
+		List<MusicTrack> items = await Task.Run(() => (from g in _db.GetAllTracks()
+				.GroupBy<MusicTrack, string>(t => string.IsNullOrWhiteSpace(t.Album) ? "Unknown Album" : t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
+			select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
+			orderby t.Album
+			select t).ToList());
+		long fetchMs = swFetch.ElapsedMilliseconds;
+		string sortOrder = LibrarySortOrder;
+		bool sortDescending = IsLibrarySortDescending;
+		var swSort = System.Diagnostics.Stopwatch.StartNew();
+		List<MusicTrack> sortedAlbums = items.Count >= 2
+			? await Task.Run(() => SortItems(items, false, sortOrder, sortDescending).ToList())
+			: items;
+		long sortMs = swSort.ElapsedMilliseconds;
+		var swPublish = System.Diagnostics.Stopwatch.StartNew();
+		await ReplaceAllChunkedAsync(Albums, sortedAlbums);
+		long publishMs = swPublish.ElapsedMilliseconds;
+		PerfTabData("albums", Albums.Count);
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
+			LogHelper.LogInfo($"TAB-DATA albums fetchMs={fetchMs} sortMs={sortMs} publishMs={publishMs} totalMs={swTotal.ElapsedMilliseconds} count={sortedAlbums.Count}");
+	}
+	catch (Exception ex)
+	{
+		_logger.LogError(ex, "LoadAlbums failed");
+	}
+}
+
+private void LoadArtists() => _ = LoadArtistsAsync();
+
+private async Task LoadArtistsAsync()
+{
+	using var operation = _uiOps.TryBegin(nameof(LoadArtists));
+	if (operation == null) return;
+	try
+	{
+		(List<MusicTrack>, List<KeyValuePair<string, string>>) tuple = _preloadedArtistResult ?? (await BuildArtistItemsAsync());
+		(List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages) result = tuple;
+		_preloadedArtistResult = null;
+		await DispatchAsync(delegate
+		{
+			foreach (KeyValuePair<string, string> item in result.CachedImages)
+			{
+				ArtistImages[item.Key] = item.Value;
+			}
+			OnPropertyChanged("ArtistImages");
+		});
+		// Sort BEFORE inserting (single pass) and fill progressively so the
+		// WrapPanel never realizes all artist tiles inside one frame.
+		string sortOrder = LibrarySortOrder;
+		bool sortDescending = IsLibrarySortDescending;
+		var swSort = System.Diagnostics.Stopwatch.StartNew();
+		List<MusicTrack> sortedArtists = await Task.Run(() => result.Items.Count >= 2
+			? SortItems(result.Items, isArtistCollection: true, sortOrder, sortDescending).ToList()
+			: result.Items);
+		long sortMs = swSort.ElapsedMilliseconds;
+		var swFill = System.Diagnostics.Stopwatch.StartNew();
+		await ReplaceAllChunkedAsync(Artists, sortedArtists);
+		long fillMs = swFill.ElapsedMilliseconds;
+		PerfTabData("artists", Artists.Count);
+		var swKick = System.Diagnostics.Stopwatch.StartNew();
+		StartTrackedBackgroundTask("FetchMissingArtistImages", ct => FetchMissingArtistImagesAsync(result.Items, ct));
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
+			LogHelper.LogInfo($"TAB-ARTISTS sortMs={sortMs} fillMs={fillMs} fetchKickMs={swKick.ElapsedMilliseconds}");
+	}
+	catch (Exception ex)
+	{
+		_logger.LogError(ex, "LoadArtists failed");
+	}
+}
 
 	private Task<(List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages)> BuildArtistItemsAsync()
 	{
@@ -6417,36 +6428,6 @@ private async void LoadArtists()
 			}
 			return (Items: list, CachedImages: list2);
 		});
-	}
-
-	private void PreloadArtistImages(List<KeyValuePair<string, string>> cachedImages)
-	{
-		try
-		{
-			foreach (KeyValuePair<string, string> cachedImage in cachedImages)
-			{
-				if (!string.IsNullOrWhiteSpace(cachedImage.Key) && !string.IsNullOrWhiteSpace(cachedImage.Value) && !ArtistImageCache.ContainsKey(cachedImage.Key))
-				{
-					try
-					{
-						BitmapImage bitmapImage = new BitmapImage();
-						bitmapImage.BeginInit();
-						bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-						bitmapImage.DecodePixelWidth = 256;
-						bitmapImage.UriSource = new Uri(cachedImage.Value, UriKind.Absolute);
-						bitmapImage.EndInit();
-						((Freezable)bitmapImage).Freeze();
-						ArtistImageCache[cachedImage.Key] = bitmapImage;
-					}
-					catch
-					{
-					}
-				}
-			}
-		}
-		catch
-		{
-		}
 	}
 
 	private async Task FetchMissingArtistImagesAsync(List<MusicTrack> items, CancellationToken cancellationToken = default)
@@ -6545,7 +6526,9 @@ private async void LoadArtists()
 		}
 	}
 
-	private async void LoadGenres()
+	private void LoadGenres() => _ = LoadGenresAsync();
+
+	private async Task LoadGenresAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadGenres));
 		if (operation == null) return;
@@ -6564,18 +6547,21 @@ private async void LoadArtists()
 			List<MusicTrack> items = genres.Count >= 2
 				? await Task.Run(() => SortItems(genres, false, sortOrder, sortDescending).ToList())
 				: genres;
-		await DispatchAsync(delegate
+			await DispatchAsync(delegate
+			{
+				Genres.ReplaceAll(items);
+			});
+			PerfTabData("genres", Genres.Count);
+		}
+		catch (Exception ex)
 		{
-			Genres.ReplaceAll(items);
-		});
-		PerfTabData("genres", Genres.Count);
+			_logger.LogError(ex, "LoadGenres failed");
+		}
 	}
-	catch
-	{
-	}
-}
 
-private async void LoadFolders()
+	private void LoadFolders() => _ = LoadFoldersAsync();
+
+	private async Task LoadFoldersAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadFolders));
 		if (operation == null) return;
@@ -6600,19 +6586,22 @@ private async void LoadFolders()
 				}
 				return list;
 			});
-		await DispatchAsync(delegate
+			await DispatchAsync(delegate
+			{
+				Folders.ReplaceAll(folderItems);
+				SortFolders();
+			});
+			PerfTabData("folders", Folders.Count);
+		}
+		catch (Exception ex)
 		{
-			Folders.ReplaceAll(folderItems);
-			SortFolders();
-		});
-		PerfTabData("folders", Folders.Count);
+			_logger.LogError(ex, "LoadFolders failed");
+		}
 	}
-	catch
-	{
-	}
-}
 
-	private async void LoadFolderDetail(string folderPath)
+	private void LoadFolderDetail(string folderPath) => _ = LoadFolderDetailAsync(folderPath);
+
+	private async Task LoadFolderDetailAsync(string folderPath)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadFolderDetail));
 		if (operation == null) return;
@@ -6631,12 +6620,15 @@ private async void LoadFolders()
 				FolderDetailTracks.ReplaceAll(tracks);
 			});
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadFolderDetail failed");
 		}
 	}
 
-	private async void LoadArtistDetail(string artistName)
+	private void LoadArtistDetail(string artistName) => _ = LoadArtistDetailAsync(artistName);
+
+	private async Task LoadArtistDetailAsync(string artistName)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadArtistDetail));
 		if (operation == null) return;
@@ -6706,8 +6698,9 @@ private async void LoadFolders()
 				});
 			}
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadArtistDetail failed");
 		}
 	}
 
@@ -6720,7 +6713,9 @@ private async void LoadFolders()
 		GenreDetailTracks.ReplaceAll(tracks);
 	}
 
-	private async void LoadAlbumDetail(string albumName, string artistName, MusicTrack? artSource = null)
+	private void LoadAlbumDetail(string albumName, string artistName, MusicTrack? artSource = null) => _ = LoadAlbumDetailAsync(albumName, artistName, artSource);
+
+	private async Task LoadAlbumDetailAsync(string albumName, string artistName, MusicTrack? artSource = null)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadAlbumDetail));
 		if (operation == null) return;
@@ -6795,12 +6790,15 @@ private async void LoadFolders()
 				OnPropertyChanged("AlbumDetailTrackCount");
 			});
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadAlbumDetail failed");
 		}
 	}
 
-	private async void LoadPlaylistDetail(int playlistId, string playlistName)
+	private void LoadPlaylistDetail(int playlistId, string playlistName) => _ = LoadPlaylistDetailAsync(playlistId, playlistName);
+
+	private async Task LoadPlaylistDetailAsync(int playlistId, string playlistName)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadPlaylistDetail));
 		if (operation == null) return;
@@ -6811,17 +6809,18 @@ private async void LoadFolders()
 			{
 				CurrentPlaylistId = playlistId;
 				CurrentPlaylistName = playlistName;
-			PlaylistDetailTrackCount = tracks.Count;
-			for (int i = 0; i < tracks.Count; i++)
-				tracks[i].TrackNumber = i + 1;
-			PlaylistDetailTracks.ReplaceAll(tracks);
-			OnPropertyChanged("CurrentPlaylistName");
-			OnPropertyChanged("PlaylistDetailTrackCount");
-			RefreshPlaylistDetailMeta();
+				PlaylistDetailTrackCount = tracks.Count;
+				for (int i = 0; i < tracks.Count; i++)
+					tracks[i].TrackNumber = i + 1;
+				PlaylistDetailTracks.ReplaceAll(tracks);
+				OnPropertyChanged("CurrentPlaylistName");
+				OnPropertyChanged("PlaylistDetailTrackCount");
+				RefreshPlaylistDetailMeta();
 			});
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadPlaylistDetail failed");
 		}
 	}
 
@@ -6834,7 +6833,9 @@ private async void LoadFolders()
 		OnPropertyChanged("CanNavigateBack");
 	}
 
-	private async void LoadPlaylists()
+	private void LoadPlaylists() => _ = LoadPlaylistsAsync();
+
+	private async Task LoadPlaylistsAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadPlaylists));
 		if (operation == null) return;
@@ -6859,12 +6860,15 @@ private async void LoadFolders()
 				Playlists.ReplaceAll(items);
 			});
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadPlaylists failed");
 		}
 	}
 
-	private async void LoadFavoriteTracks()
+	private void LoadFavoriteTracks() => _ = LoadFavoriteTracksAsync();
+
+	private async Task LoadFavoriteTracksAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadFavoriteTracks));
 		if (operation == null) return;
@@ -6876,12 +6880,15 @@ private async void LoadFolders()
 				FavoriteTracks.ReplaceAll(tracks);
 			});
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadFavoriteTracks failed");
 		}
 	}
 
-	private async void LoadRecentPlayTracks()
+	private void LoadRecentPlayTracks() => _ = LoadRecentPlayTracksAsync();
+
+	private async Task LoadRecentPlayTracksAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadRecentPlayTracks));
 		if (operation == null) return;
@@ -6893,12 +6900,15 @@ private async void LoadFolders()
 				RecentPlayTracks.ReplaceAll(tracks);
 			});
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadRecentPlayTracks failed");
 		}
 	}
 
-	private async void LoadRecentAddTracks()
+	private void LoadRecentAddTracks() => _ = LoadRecentAddTracksAsync();
+
+	private async Task LoadRecentAddTracksAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadRecentAddTracks));
 		if (operation == null) return;
@@ -6910,12 +6920,15 @@ private async void LoadFolders()
 				RecentAddTracks.ReplaceAll(tracks);
 			});
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadRecentAddTracks failed");
 		}
 	}
 
-	private async void LoadMostPlayedTracks()
+	private void LoadMostPlayedTracks() => _ = LoadMostPlayedTracksAsync();
+
+	private async Task LoadMostPlayedTracksAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadMostPlayedTracks));
 		if (operation == null) return;
@@ -6927,8 +6940,9 @@ private async void LoadFolders()
 				MostPlayedTracks.ReplaceAll(tracks);
 			});
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogError(ex, "LoadMostPlayedTracks failed");
 		}
 	}
 
@@ -7706,33 +7720,16 @@ private async void LoadFolders()
 	}
 	private void OpenLrcBrowser()
 	{
-		string[] array = _settings.ScanFolders.Split(';', StringSplitOptions.RemoveEmptyEntries);
-		if (array.Length == 0)
-		{
-			array = new string[1] { Environment.GetFolderPath(Environment.SpecialFolder.MyMusic) };
-		}
 		_lrcFolderData.Clear();
 		_lrcAllFiles.Clear();
 		List<string> list = new List<string> { "ALL" };
-		string[] array2 = array;
-		foreach (string text in array2)
+		foreach ((string folder, string[] files) in _lyricsFiles.FindFilesByFolder(
+			_settings.ScanFolders,
+			Environment.GetFolderPath(Environment.SpecialFolder.MyMusic)))
 		{
-			if (!Directory.Exists(text))
-			{
-				continue;
-			}
-			List<string> list2 = Directory.GetFiles(text, "*.lrc", SearchOption.AllDirectories).Take(200).ToList();
-			if (list2.Count > 0)
-			{
-				string text2 = Path.GetFileName(text);
-				if (string.IsNullOrEmpty(text2))
-				{
-					text2 = text;
-				}
-				_lrcFolderData.Add((text2, list2.ToArray()));
-				list.Add(text2);
-				_lrcAllFiles.AddRange(list2);
-			}
+			_lrcFolderData.Add((folder, files));
+			list.Add(folder);
+			_lrcAllFiles.AddRange(files);
 		}
 		LrcFolderNames.ReplaceAll(list);
 		SelectedLrcFolder = "ALL";
@@ -7749,30 +7746,31 @@ private async void LoadFolders()
 			return;
 		}
 		_lrcEditPath = Path.ChangeExtension(CurrentTrack.FilePath, ".lrc");
-		if (System.IO.File.Exists(_lrcEditPath))
+		try
 		{
-			LrcEditText = System.IO.File.ReadAllText(_lrcEditPath);
-			_lrcEditAutoCreated = false;
+			(string text, bool created) = _lyricsFiles.OpenForEditing(_lrcEditPath);
+			LrcEditText = text;
+			_lrcEditAutoCreated = created;
 		}
-		else
+		catch (IOException ex)
 		{
+			_logger.LogWarning(ex, "Unable to open lyrics file for {TrackPath}", CurrentTrack.FilePath);
 			LrcEditText = string.Empty;
-			_lrcEditAutoCreated = true;
-			try
-			{
-				System.IO.File.WriteAllText(_lrcEditPath, string.Empty);
-			}
-			catch
-			{
-			}
+			_lrcEditAutoCreated = false;
+			ShowStatusBar("Unable to open lyrics file", 3000);
+		}
+		catch (UnauthorizedAccessException ex)
+		{
+			_logger.LogWarning(ex, "Unable to open lyrics file for {TrackPath}", CurrentTrack.FilePath);
+			LrcEditText = string.Empty;
+			_lrcEditAutoCreated = false;
+			ShowStatusBar("Unable to open lyrics file", 3000);
 		}
 		Navigate("lrc_editor");
 	}
 	private void SaveLrcEdit()
 	{
-		if ((from l in LrcEditText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-			where l.Trim().Length > 0
-			select l).ToList().Count == 0)
+		if (_lyricsFiles.IsEmpty(LrcEditText))
 		{
 			LrcEditShowValidation = true;
 			return;
@@ -7782,11 +7780,20 @@ private async void LoadFolders()
 		{
 			if (!string.IsNullOrEmpty(_lrcEditPath))
 			{
-				System.IO.File.WriteAllText(_lrcEditPath, LrcEditText);
+				_lyricsFiles.Save(_lrcEditPath, LrcEditText);
 			}
 		}
-		catch
+		catch (IOException ex)
 		{
+			_logger.LogWarning(ex, "Unable to save lyrics file {LyricsPath}", _lrcEditPath);
+			ShowStatusBar("Unable to save lyrics file", 3000);
+			return;
+		}
+		catch (UnauthorizedAccessException ex)
+		{
+			_logger.LogWarning(ex, "Unable to save lyrics file {LyricsPath}", _lrcEditPath);
+			ShowStatusBar("Unable to save lyrics file", 3000);
+			return;
 		}
 		LoadLyrics(CurrentTrack);
 		GoBackCommand.Execute(null);
@@ -7794,19 +7801,21 @@ private async void LoadFolders()
 
 	internal void CleanupLrcEditIfEmpty()
 	{
-		if (_lrcEditAutoCreated && !string.IsNullOrEmpty(_lrcEditPath) && (from l in LrcEditText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-			where l.Trim().Length > 0
-			select l).ToList().Count == 0)
+		if (_lrcEditAutoCreated && !string.IsNullOrEmpty(_lrcEditPath))
 		{
 			try
 			{
-				if (System.IO.File.Exists(_lrcEditPath))
-				{
-					System.IO.File.Delete(_lrcEditPath);
-				}
+				_lyricsFiles.DeleteEmptyDraft(_lrcEditPath, LrcEditText, wasCreatedByEditor: true);
 			}
-			catch
+			catch (IOException ex)
 			{
+				_logger.LogWarning(ex, "Unable to delete empty lyrics draft {LyricsPath}", _lrcEditPath);
+				ShowStatusBar("Unable to remove empty lyrics draft", 3000);
+			}
+			catch (UnauthorizedAccessException ex)
+			{
+				_logger.LogWarning(ex, "Unable to delete empty lyrics draft {LyricsPath}", _lrcEditPath);
+				ShowStatusBar("Unable to remove empty lyrics draft", 3000);
 			}
 		}
 		_lrcEditAutoCreated = false;
@@ -8264,7 +8273,9 @@ private async void LoadFolders()
 		ThemeEditAlpha = 51.0;
 	}
 
-	private async void SaveThemeEdit()
+	private void SaveThemeEdit() => _ = SaveThemeEditAsync();
+
+	private async Task SaveThemeEditAsync()
 	{
 		long gen = 0;
 		System.Threading.Tasks.TaskCompletionSource<bool>? tcs = null;

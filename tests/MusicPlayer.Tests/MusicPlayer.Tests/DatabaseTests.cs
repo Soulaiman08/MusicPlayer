@@ -60,7 +60,7 @@ namespace MusicPlayer.Tests
         }
 
         [Fact]
-        public void Transaction_WrongThreadCommit_Throws()
+        public async Task Transaction_WrongThreadCommit_Throws()
         {
             _db.BeginTransaction();
             Exception? ex = null;
@@ -69,13 +69,13 @@ namespace MusicPlayer.Tests
                 try { _db.Commit(); }
                 catch (Exception e) { ex = e; }
             });
-            t.Wait();
+            await t;
             try { _db.Rollback(); } catch { }
             Assert.NotNull(ex);
         }
 
         [Fact]
-        public void ConcurrentReadsAndWrites_NoCrash()
+        public async Task ConcurrentReadsAndWrites_NoCrash()
         {
             for (int i = 0; i < 50; i++)
                 _db.InsertTrack(new MusicPlayer.Models.MusicTrack { FilePath = @"C:\m\" + i + ".mp3", Title = "T" + i });
@@ -93,7 +93,7 @@ namespace MusicPlayer.Tests
                         _db.InsertTrack(new MusicPlayer.Models.MusicTrack { FilePath = @"C:\m\w" + Guid.NewGuid() + ".mp3", Title = "W" });
                 }));
             }
-            Task.WaitAll(tasks.ToArray());
+            await Task.WhenAll(tasks);
             Assert.True(_db.GetTrackCount() > 0);
         }
 

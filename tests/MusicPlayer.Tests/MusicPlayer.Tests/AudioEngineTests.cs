@@ -609,6 +609,7 @@ namespace MusicPlayer.Tests
                 Assert.Equal(AudioShutdownOutcome.Quarantined, result.Outcome);
                 Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3),
                     "Shutdown must return at its deadline instead of waiting forever.");
+                Assert.DoesNotContain("Object synchronization method", result.QuarantineReason ?? string.Empty);
                 Assert.False(reader.IsDisposed);
                 Assert.Equal(1, device.StopCalls);
                 Assert.True(result.QuarantinedReaders > 0);

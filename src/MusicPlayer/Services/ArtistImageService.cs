@@ -15,6 +15,8 @@ public sealed class ArtistImageService : IDisposable
     private readonly ILogger _logger;
     private readonly string _cacheDir;
     private readonly ConcurrentDictionary<string, string> _memoryCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _pendingRequests = new(StringComparer.OrdinalIgnoreCase);
+    private readonly CancellationTokenSource _lifetimeCts = new();
     private bool _disposed;
 
     // Music-related keywords used to validate Wikipedia results
@@ -88,29 +90,77 @@ public sealed class ArtistImageService : IDisposable
             return path;
         }
 
+        return await GetOrFetchArtistImageAsync(
+            key,
+            artist,
+            () => FetchAndCacheArtistImageAsync(artist, key, path),
+            ct).ConfigureAwait(false);
+    }
+
+    internal async Task<string?> GetOrFetchArtistImageAsync(
+        string key,
+        string artist,
+        Func<Task<string?>> fetchAsync,
+        CancellationToken cancellationToken = default)
+    {
+        Lazy<Task<string?>>? pending = null;
+        pending = new Lazy<Task<string?>>(
+            () => RunSharedImageRequestAsync(key, artist, pending!, fetchAsync),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+
+        Task<string?> sharedRequest = _pendingRequests.GetOrAdd(key, pending).Value;
         try
         {
-            var imageUrl = await SearchArtistImageAsync(artist, ct);
-            if (string.IsNullOrEmpty(imageUrl)) return null;
-
-            var data = await _http.GetByteArrayAsync(imageUrl, ct);
-            if (data.Length < 2000) return null; // reject tiny/blank responses
-
-            // ✅ Process through FaceCropHelper: smart square crop centered on face
-            data = await FaceCropHelper.ProcessArtistImageAsync(data);
-            if (data.Length < 100) return null;
-
-            await File.WriteAllBytesAsync(path, data, ct);
-            _memoryCache[key] = path;
-            _logger.LogInformation("Cached artist image: {Artist} -> {Path}", artist, path);
-            return path;
+            return await sharedRequest.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { return null; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    private async Task<string?> RunSharedImageRequestAsync(
+        string key,
+        string artist,
+        Lazy<Task<string?>> pending,
+        Func<Task<string?>> fetchAsync)
+    {
+        try
+        {
+            return await fetchAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            return null;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to fetch image for artist: {Artist}", artist);
             return null;
         }
+        finally
+        {
+            ((ICollection<KeyValuePair<string, Lazy<Task<string?>>>>)_pendingRequests)
+                .Remove(new KeyValuePair<string, Lazy<Task<string?>>>(key, pending));
+        }
+    }
+
+    private async Task<string?> FetchAndCacheArtistImageAsync(string artist, string key, string path)
+    {
+        var cancellationToken = _lifetimeCts.Token;
+        var imageUrl = await SearchArtistImageAsync(artist, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(imageUrl)) return null;
+
+        var data = await _http.GetByteArrayAsync(imageUrl, cancellationToken).ConfigureAwait(false);
+        if (data.Length < 2000) return null;
+
+        data = await FaceCropHelper.ProcessArtistImageAsync(data).ConfigureAwait(false);
+        if (data.Length < 100) return null;
+
+        await File.WriteAllBytesAsync(path, data, cancellationToken).ConfigureAwait(false);
+        _memoryCache[key] = path;
+        _logger.LogInformation("Cached artist image: {Artist} -> {Path}", artist, path);
+        return path;
     }
 
     /// <summary>
@@ -799,6 +849,8 @@ public sealed class ArtistImageService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _lifetimeCts.Cancel();
         _http.Dispose();
+        _lifetimeCts.Dispose();
     }
 }

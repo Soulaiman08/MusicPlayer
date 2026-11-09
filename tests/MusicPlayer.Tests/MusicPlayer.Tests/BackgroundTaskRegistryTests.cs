@@ -39,6 +39,39 @@ namespace MusicPlayer.Tests
         }
 
         [Fact]
+        public async Task TryStart_RemovesNamesForCompletedTasks()
+        {
+            var registry = new BackgroundTaskRegistry();
+            var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Assert.True(registry.TryStart("completed", _ =>
+            {
+                firstStarted.TrySetResult();
+                return Task.CompletedTask;
+            }));
+
+            await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            for (int i = 0; i < 100 && registry.GetPendingTaskNames().Count != 0; i++)
+            {
+                await Task.Delay(10);
+            }
+            Assert.Empty(registry.GetPendingTaskNames());
+
+            var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Assert.True(registry.TryStart("active", async _ =>
+            {
+                secondStarted.TrySetResult();
+                await release.Task;
+            }));
+            await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(1, registry.RegisteredTaskNameCount);
+
+            release.TrySetResult();
+            await registry.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        [Fact]
         public async Task StopAsync_WaitsForAllTasks()
         {
             var registry = new BackgroundTaskRegistry();

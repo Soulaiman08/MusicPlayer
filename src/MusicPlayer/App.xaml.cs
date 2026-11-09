@@ -13,6 +13,7 @@ using MusicPlayer.Database;
 using MusicPlayer.Services;
 using MusicPlayer.Audio;
 using MusicPlayer.Library;
+using MusicPlayer.Lyrics;
 using MusicPlayer.Models;
 using MusicPlayer.ViewModels;
 using MusicPlayer.Views;
@@ -359,7 +360,6 @@ public partial class App : Application
                 provider.GetRequiredService<PlaybackService>();
                 provider.GetRequiredService<MusicScanner>();
                 provider.GetRequiredService<AlbumArtLoader>();
-                provider.GetRequiredService<NavigationService>();
                 provider.GetRequiredService<WindowsIntegrationService>();
                 provider.GetRequiredService<SystemTrayService>();
                 provider.GetRequiredService<SettingsService>();
@@ -498,15 +498,15 @@ public partial class App : Application
             new MusicScanner(sp.GetRequiredService<DatabaseService>(), sp.GetRequiredService<ILogger<MusicScanner>>()));
         
         services.AddSingleton<AlbumArtLoader>(sp =>
-            new AlbumArtLoader(sp.GetRequiredService<DatabaseService>(), sp.GetRequiredService<ILogger<AlbumArtLoader>>()));
+            new AlbumArtLoader(sp.GetRequiredService<ILogger<AlbumArtLoader>>()));
         
         services.AddSingleton<SettingsService>();
-        services.AddSingleton<NavigationService>();
         services.AddSingleton<PlaybackService>();
         services.AddSingleton<MusicPlayerServiceHost>();
         services.AddSingleton<WindowsIntegrationService>();
         services.AddSingleton<SystemTrayService>();
         services.AddSingleton<ArtistImageService>();
+        services.AddSingleton<LyricsFileService>();
         services.AddSingleton<MainViewModel>();
         
         services.AddSingleton<MainWindow>();

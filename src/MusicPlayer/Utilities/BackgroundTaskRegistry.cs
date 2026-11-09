@@ -64,6 +64,11 @@ public sealed class BackgroundTaskRegistry
         get { lock (_gate) return _tasks.Count; }
     }
 
+    internal int RegisteredTaskNameCount
+    {
+        get { lock (_gate) return _taskNames.Count; }
+    }
+
     /// <summary>
     /// Registers and starts a task. Returns false when shutdown has already
     /// begun; in that case the operation is never invoked.
@@ -103,11 +108,11 @@ public sealed class BackgroundTaskRegistry
                 }
             }, CancellationToken.None);
 
-            _tasks.RemoveAll(x => x.IsCompleted);
             foreach (var completed in _tasks.Where(t => t.IsCompleted).ToList())
             {
                 _taskNames.Remove(completed);
             }
+            _tasks.RemoveAll(x => x.IsCompleted);
             _tasks.Add(task);
             _taskNames[task] = name;
             startGate.SetResult();

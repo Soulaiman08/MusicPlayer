@@ -9,7 +9,6 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using MusicPlayer.Database;
 using MusicPlayer.Models;
 using MusicPlayer.Utilities;
 using Microsoft.Extensions.Logging;
@@ -190,13 +189,12 @@ internal sealed class AlbumArtUiProbe
 
 public class AlbumArtLoader
 {
-    private readonly DatabaseService _db;
     private readonly ILogger<AlbumArtLoader>? _logger;
     private readonly ConcurrentDictionary<string, ImageSource?> _cache = new();
     private readonly ConcurrentDictionary<string, ImageSource?> _mediumCache = new(); // mini-player quality
     private readonly ConcurrentDictionary<string, ImageSource?> _fullQualityCache = new();
-    private readonly ConcurrentDictionary<string, byte> _pendingParses = new();
-    private readonly ConcurrentDictionary<string, byte> _pendingMediumParses = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task<ImageSource?>>> _pendingParses = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task<ImageSource?>>> _pendingMediumParses = new();
     private readonly ConcurrentQueue<string> _preloadQueue = new();
     private ImageSource? _defaultArt;
     private volatile bool _preloading;
@@ -355,12 +353,19 @@ public class AlbumArtLoader
     // thread pool with parallel decodes.
     private static readonly SemaphoreSlim _decodeGate = new(2, 2);
 
-    public AlbumArtLoader(DatabaseService db, ILogger<AlbumArtLoader>? logger = null)
+    public AlbumArtLoader(ILogger<AlbumArtLoader>? logger = null)
+        : this(logger, initializeDiskCache: true)
     {
-        _db = db;
+    }
+
+    internal AlbumArtLoader(ILogger<AlbumArtLoader>? logger, bool initializeDiskCache)
+    {
         _logger = logger;
-        AppPaths.EnsureDirectories();
-        PurgeOldDiskCache();
+        if (initializeDiskCache)
+        {
+            AppPaths.EnsureDirectories();
+            PurgeOldDiskCache();
+        }
     }
 
     public static AlbumArtLoader Instance { get; internal set; } = null!;
@@ -680,72 +685,102 @@ public class AlbumArtLoader
     // virtualizer without any cross-thread marshalling cost.
     private void EnqueueFullArtParse(string path)
     {
-        if (_pendingParses.ContainsKey(path)) return;
-        _pendingParses[path] = 0;
-
-        Task.Run(async () =>
+        _ = EnqueueFullArtParse(path, () =>
         {
+            var dummyTrack = new MusicTrack { FilePath = path };
+            return Task.FromResult(DecodeFirstValidPicture(dummyTrack));
+        });
+    }
+
+    internal Task<ImageSource?> EnqueueFullArtParse(string path, Func<Task<ImageSource?>> decodeAsync)
+    {
+        Lazy<Task<ImageSource?>>? pending = null;
+        pending = new Lazy<Task<ImageSource?>>(
+            () => Task.Run(() => RunFullArtParseAsync(path, pending!, decodeAsync)),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        return _pendingParses.GetOrAdd(path, pending).Value;
+    }
+
+    private async Task<ImageSource?> RunFullArtParseAsync(
+        string path,
+        Lazy<Task<ImageSource?>> pending,
+        Func<Task<ImageSource?>> decodeAsync)
+    {
+        try
+        {
+            await _decodeGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                await _decodeGate.WaitAsync();
-                try
+                if (_fullQualityCache.TryGetValue(path, out var done) && done != null)
+                    return done;
+                if (_cache.TryGetValue(path, out var thumb) && thumb != null)
                 {
-                    // Re-check memory first — the thumbnail may have been filled in
-                    // by the warm-up while this task was queued.
-                    if (_fullQualityCache.TryGetValue(path, out var done) && done != null)
-                        return;
-                    if (_cache.TryGetValue(path, out var thumb) && thumb != null)
-                    {
-                        _fullQualityCache.TryAdd(path, thumb);
-                        return;
-                    }
-
-                    var dummyTrack = new MusicTrack { FilePath = path };
-                    var img = DecodeFirstValidPicture(dummyTrack);
-                    if (img != null)
-                        _fullQualityCache[path] = img;
+                    _fullQualityCache.TryAdd(path, thumb);
+                    return thumb;
                 }
-                finally { _decodeGate.Release(); }
+
+                var img = await decodeAsync().ConfigureAwait(false);
+                if (img != null)
+                    _fullQualityCache[path] = img;
+                return img;
             }
-            catch { }
-            finally
-            {
-                _pendingParses.TryRemove(path, out _);
-            }
-        });
+            finally { _decodeGate.Release(); }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Album-art decode failed for {Path}", path);
+            return null;
+        }
+        finally
+        {
+            ((ICollection<KeyValuePair<string, Lazy<Task<ImageSource?>>>>)_pendingParses)
+                .Remove(new KeyValuePair<string, Lazy<Task<ImageSource?>>>(path, pending));
+        }
     }
 
     private void EnqueueMediumArtParse(string path, MusicTrack? track)
     {
-        if (_pendingMediumParses.ContainsKey(path)) return;
-        _pendingMediumParses[path] = 0;
+        Lazy<Task<ImageSource?>>? pending = null;
+        pending = new Lazy<Task<ImageSource?>>(
+            () => Task.Run(() => RunMediumArtParseAsync(path, track, pending!)),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        _ = _pendingMediumParses.GetOrAdd(path, pending).Value;
+    }
 
-        Task.Run(async () =>
+    private async Task<ImageSource?> RunMediumArtParseAsync(
+        string path,
+        MusicTrack? track,
+        Lazy<Task<ImageSource?>> pending)
+    {
+        try
         {
+            await _decodeGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                await _decodeGate.WaitAsync();
-                try
-                {
-                    if (_mediumCache.TryGetValue(path, out var done) && done != null)
-                        return;
+                if (_mediumCache.TryGetValue(path, out var done) && done != null)
+                    return done;
 
-                    var sourceTrack = track ?? new MusicTrack { FilePath = path };
-                    var img = DecodeMediumValidPicture(sourceTrack);
-                    if (img != null)
-                    {
-                        _mediumCache[path] = img;
-                        _cache.TryAdd(path, img);
-                    }
+                var sourceTrack = track ?? new MusicTrack { FilePath = path };
+                var img = DecodeMediumValidPicture(sourceTrack);
+                if (img != null)
+                {
+                    _mediumCache[path] = img;
+                    _cache.TryAdd(path, img);
                 }
-                finally { _decodeGate.Release(); }
+                return img;
             }
-            catch { }
-            finally
-            {
-                _pendingMediumParses.TryRemove(path, out _);
-            }
-        });
+            finally { _decodeGate.Release(); }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Medium album-art decode failed for {Path}", path);
+            return null;
+        }
+        finally
+        {
+            ((ICollection<KeyValuePair<string, Lazy<Task<ImageSource?>>>>)_pendingMediumParses)
+                .Remove(new KeyValuePair<string, Lazy<Task<ImageSource?>>>(path, pending));
+        }
     }
 
     private ImageSource? DecodeFirstValidPicture(MusicTrack track)

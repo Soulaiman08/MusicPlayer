@@ -9,13 +9,14 @@ namespace MusicPlayer.Tests
     public class UiOperationTrackerTests
     {
         [Fact]
-        public async Task TryBegin_ReturnsScope_WhileRunning()
+        public Task TryBegin_ReturnsScope_WhileRunning()
         {
             var tracker = new UiOperationTracker();
             using var scope = tracker.TryBegin("load");
             Assert.NotNull(scope);
             Assert.Equal(1, tracker.ActiveCount);
             Assert.False(tracker.IsStopping);
+            return Task.CompletedTask;
         }
 
         [Fact]
