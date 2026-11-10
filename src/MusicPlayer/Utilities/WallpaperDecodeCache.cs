@@ -114,7 +114,7 @@ public static class WallpaperDecodeCache
                     return Decode(src, decodeWidth);
                 }, cancellationToken);
 
-                if (decoded != null)
+                if (decoded != null && !cancellationToken.IsCancellationRequested)
                     Store(key, decoded);
             }
             catch (OperationCanceledException)

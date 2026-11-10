@@ -1,4 +1,6 @@
 using System.Windows.Media;
+using System.Globalization;
+using MusicPlayer.Converters;
 using Microsoft.Extensions.Logging.Abstractions;
 using MusicPlayer.Library;
 using MusicPlayer.Services;
@@ -10,7 +12,7 @@ public class ImageRequestTests
     [Fact]
     public async Task AlbumArtRequestsForSamePathShareOneDecodeAndResult()
     {
-        var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        using var loader = new AlbumArtLoader(null, initializeDiskCache: false);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var expected = new DrawingImage(new DrawingGroup());
@@ -41,7 +43,7 @@ public class ImageRequestTests
     [Fact]
     public async Task FailedAlbumArtDecodeIsRemovedAndCanBeRetried()
     {
-        var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        using var loader = new AlbumArtLoader(null, initializeDiskCache: false);
         int decodeCount = 0;
 
         ImageSource? failed = await loader.EnqueueFullArtParse(
@@ -64,6 +66,102 @@ public class ImageRequestTests
         Assert.Null(failed);
         Assert.Same(expected, retried);
         Assert.Equal(2, decodeCount);
+    }
+
+    [Fact]
+    public async Task MediumAlbumArtRequestsForSamePathShareOneDecode()
+    {
+        using var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expected = new DrawingImage(new DrawingGroup());
+        int decodeCount = 0;
+
+        async Task<ImageSource?> DecodeAsync(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref decodeCount);
+            started.TrySetResult();
+            await release.Task.WaitAsync(cancellationToken);
+            return expected;
+        }
+
+        Task<ImageSource?>[] requests = Enumerable.Range(0, 32)
+            .Select(_ => loader.EnqueueMediumArtParseForTest("same-medium-track", DecodeAsync))
+            .ToArray();
+
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, Volatile.Read(ref decodeCount));
+        release.TrySetResult();
+
+        ImageSource?[] results = await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.All(results, result => Assert.Same(expected, result));
+        Assert.Equal(1, decodeCount);
+    }
+
+    [Fact]
+    public async Task MediumAlbumArtReturnsMemoryCachedImageImmediately()
+    {
+        using var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        var expected = new DrawingImage(new DrawingGroup());
+        await loader.EnqueueMediumArtParseForTest(
+            "cached-medium-track",
+            _ => Task.FromResult<ImageSource?>(expected));
+
+        Assert.Same(expected, loader.LoadMediumAlbumArt("cached-medium-track"));
+    }
+
+    [Fact]
+    public void MediumAlbumArtConverterReturnsProgressiveSourceDuringScrolling()
+    {
+        AlbumArtLoader? previous = AlbumArtLoader.Instance;
+        using var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        AlbumArtLoader.Instance = loader;
+        AlbumArtLoader.SetScrollingActive(true);
+        try
+        {
+            object? result = new AlbumArtConverter().Convert(
+                Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".mp3"),
+                typeof(ImageSource),
+                "medium",
+                CultureInfo.InvariantCulture);
+
+            Assert.IsType<DrawingImage>(result);
+        }
+        finally
+        {
+            AlbumArtLoader.SetScrollingActive(false);
+            AlbumArtLoader.Instance = previous!;
+        }
+    }
+
+    [Fact]
+    public async Task AlbumArtLoaderDisposeCancelsOwnedParsesAndRejectsNewRequests()
+    {
+        var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int decodeCount = 0;
+
+        Task<ImageSource?> request = loader.EnqueueMediumArtParseForTest(
+            "dispose-medium-track",
+            async cancellationToken =>
+            {
+                Interlocked.Increment(ref decodeCount);
+                started.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return null;
+            });
+
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        loader.Dispose();
+        loader.Dispose();
+
+        Assert.Null(await request.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Null(await loader.EnqueueFullArtParse("after-dispose", () =>
+        {
+            Interlocked.Increment(ref decodeCount);
+            return Task.FromResult<ImageSource?>(null);
+        }));
+        Assert.Equal(1, decodeCount);
     }
 
     [Fact]

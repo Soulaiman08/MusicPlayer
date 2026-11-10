@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using MusicPlayer.Models;
 using MusicPlayer.Utilities;
 using Microsoft.Extensions.Logging;
+using System.Windows.Threading;
 
 namespace MusicPlayer.Library;
 
@@ -187,17 +188,75 @@ internal sealed class AlbumArtUiProbe
     }
 }
 
-public class AlbumArtLoader
+public class AlbumArtLoader : IDisposable
 {
+    private sealed class ProgressiveArtImage
+    {
+        private readonly DrawingGroup _drawing;
+        private readonly Dispatcher _dispatcher;
+
+        public ProgressiveArtImage(ImageSource placeholder, Dispatcher dispatcher)
+        {
+            _dispatcher = dispatcher;
+            _drawing = new DrawingGroup();
+            _drawing.Children.Add(new ImageDrawing(placeholder, GetImageBounds(placeholder)));
+            Image = new DrawingImage(_drawing);
+        }
+
+        public DrawingImage Image { get; }
+        public Dispatcher Dispatcher => _dispatcher;
+
+        public void SetSource(ImageSource source)
+        {
+            if (!_dispatcher.CheckAccess())
+            {
+                throw new InvalidOperationException("Progressive artwork must be updated on its owning dispatcher.");
+            }
+
+            _drawing.Children.Clear();
+            _drawing.Children.Add(new ImageDrawing(source, GetImageBounds(source)));
+        }
+
+        private static System.Windows.Rect GetImageBounds(ImageSource source)
+        {
+            if (source is BitmapSource bitmap)
+            {
+                return new System.Windows.Rect(0, 0, Math.Max(1, bitmap.PixelWidth), Math.Max(1, bitmap.PixelHeight));
+            }
+
+            if (source is DrawingImage drawingImage && drawingImage.Drawing is { } drawing &&
+                !drawing.Bounds.IsEmpty)
+            {
+                return drawing.Bounds;
+            }
+
+            return new System.Windows.Rect(0, 0, 64, 64);
+        }
+    }
+
+    private sealed record DeferredMediumRequest(MusicTrack? Track);
+
     private readonly ILogger<AlbumArtLoader>? _logger;
     private readonly ConcurrentDictionary<string, ImageSource?> _cache = new();
     private readonly ConcurrentDictionary<string, ImageSource?> _mediumCache = new(); // mini-player quality
     private readonly ConcurrentDictionary<string, ImageSource?> _fullQualityCache = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<ImageSource?>>> _pendingParses = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<ImageSource?>>> _pendingMediumParses = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task<ImageSource?>>> _pendingThumbnailParses = new();
+    private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingFullImages = new();
+    private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingMediumImages = new();
+    private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingThumbnailImages = new();
+    private readonly ConcurrentDictionary<string, DeferredMediumRequest> _deferredMediumRequests = new();
+    private readonly ConcurrentDictionary<string, byte> _deferredThumbnailRequests = new();
+    private readonly ConcurrentDictionary<string, byte> _deferredFullRequests = new();
+    private readonly object _lifetimeGate = new();
+    private readonly object _deferredStartGate = new();
+    private readonly HashSet<Task> _ownedTasks = new();
+    private readonly CancellationTokenSource _lifetimeCts = new();
     private readonly ConcurrentQueue<string> _preloadQueue = new();
     private ImageSource? _defaultArt;
     private volatile bool _preloading;
+    private volatile bool _disposed;
 
     // Scroll-layout gate (set by the smooth-scroll engine): while frantic mouse
     // wheel activity is animating the list rows, any cache-miss returns the
@@ -338,7 +397,15 @@ public class AlbumArtLoader
 
     public static bool ScrollingActive => _scrollingActive;
 
-    public static void SetScrollingActive(bool active) => _scrollingActive = active;
+    public static void SetScrollingActive(bool active)
+    {
+        bool wasScrolling = _scrollingActive;
+        _scrollingActive = active;
+        if (wasScrolling && !active && Instance != null)
+        {
+            Instance.StartDeferredArtRequests();
+        }
+    }
 
     private const int MaxCacheSize = 2500;
     private const int DecodePixelSize = 80;   // list thumbnails: 2× the ~40px display slot
@@ -346,6 +413,8 @@ public class AlbumArtLoader
     private const int ThumbEncodeSize = 512;
     private const int MaxThumbFileBytes = 1024 * 1024;
     private const int MaxMediumCacheSize = 500; // Increased to 500 so albums view does not aggressively evict
+    private const int MaxDeferredMediumRequests = 200;
+    private const int MaxOwnedParseTasks = 128;
 
     // Caps simultaneous background TagLib decodes so the post-scroll catch-up
     // backlog (measured: dozens of parses flushing at once after a wheel burst
@@ -369,6 +438,133 @@ public class AlbumArtLoader
     }
 
     public static AlbumArtLoader Instance { get; internal set; } = null!;
+
+    public void Dispose()
+    {
+        Task[] ownedTasks;
+        lock (_lifetimeGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            ownedTasks = _ownedTasks.ToArray();
+            _pendingFullImages.Clear();
+            _pendingMediumImages.Clear();
+            _pendingThumbnailImages.Clear();
+            _deferredMediumRequests.Clear();
+            _deferredThumbnailRequests.Clear();
+            _deferredFullRequests.Clear();
+        }
+        if (ReferenceEquals(Instance, this)) Instance = null!;
+
+        try
+        {
+            _lifetimeCts.Cancel();
+        }
+        catch (AggregateException ex)
+        {
+            _logger?.LogWarning(ex, "Album-art cancellation callbacks failed during disposal");
+        }
+
+        Task allTasks = Task.WhenAll(ownedTasks);
+        try
+        {
+            if (allTasks.Wait(TimeSpan.FromSeconds(3)))
+            {
+                _lifetimeCts.Dispose();
+                return;
+            }
+        }
+        catch (AggregateException ex)
+        {
+            _logger?.LogWarning(ex, "Album-art work failed during disposal");
+            _lifetimeCts.Dispose();
+            return;
+        }
+
+        _logger?.LogWarning(
+            "Album-art work did not finish within the disposal deadline; background work remains tracked");
+        _ = allTasks.ContinueWith(
+            _ => _lifetimeCts.Dispose(),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private void TrackTaskLocked(Task task)
+    {
+        if (!_ownedTasks.Add(task)) return;
+        _ = task.ContinueWith(
+            completed =>
+            {
+                lock (_lifetimeGate)
+                {
+                    _ownedTasks.Remove(completed);
+                }
+                if (!_disposed)
+                {
+                    try
+                    {
+                        StartDeferredArtRequests();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex, "Unable to resume deferred artwork requests");
+                    }
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
+    }
+
+    private ProgressiveArtImage GetOrCreateProgressiveImage(
+        ConcurrentDictionary<string, ProgressiveArtImage> presentations,
+        string path,
+        ImageSource placeholder)
+    {
+        Dispatcher dispatcher = System.Windows.Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+        return presentations.GetOrAdd(path, _ => new ProgressiveArtImage(placeholder, dispatcher));
+    }
+
+    private void CompleteProgressiveImage(
+        ConcurrentDictionary<string, ProgressiveArtImage> presentations,
+        string path,
+        ImageSource? image)
+    {
+        if (!presentations.TryRemove(path, out ProgressiveArtImage? presentation) ||
+            presentation == null || image == null || _lifetimeCts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        Dispatcher dispatcher = presentation.Dispatcher;
+        if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+
+        try
+        {
+            dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_lifetimeCts.IsCancellationRequested ||
+                    dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+                {
+                    return;
+                }
+
+                try
+                {
+                    presentation.SetSource(image);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Unable to update progressive artwork for {Path}", path);
+                }
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Unable to dispatch artwork update for {Path}", path);
+        }
+    }
 
     private static void PurgeOldDiskCache()
     {
@@ -400,44 +596,30 @@ public class AlbumArtLoader
         if (cacheHit)
             return cached;
 
-        // While scrolling is active, return placeholder immediately — never block the UI thread on disk IO during scroll!
+        uiProbe?.RecordDiskResult(false);
+        if (_disposed) return GetDefaultAlbumArt();
+
+        if (_scrollingActive &&
+            _deferredThumbnailRequests.Count >= MaxDeferredMediumRequests &&
+            !_deferredThumbnailRequests.ContainsKey(filePath))
+        {
+            EvictDeferredRequest(_deferredThumbnailRequests);
+        }
+
+        var progressive = GetOrCreateProgressiveImage(
+            _pendingThumbnailImages,
+            filePath,
+            GetDefaultAlbumArt());
         if (_scrollingActive)
         {
             uiProbe?.RecordScrollSkip();
-            return GetDefaultAlbumArt();
+            AddDeferredThumbnailRequest(filePath);
         }
-
-        using var diskPathMeasurement = MeasureUiImage(AlbumArtUiMetric.DiskPath);
-        try
+        else
         {
-            var hash = GetMd5Hash(filePath);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-
-            var existing = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existing != null)
-            {
-                ImageSource? img;
-                using (MeasureUiImage(AlbumArtUiMetric.Decode))
-                    img = LoadThumbnailFromFile(existing);
-                uiProbe?.RecordDecodeResult(img != null);
-                if (img != null)
-                {
-                    uiProbe?.RecordDiskResult(true);
-                    _cache[filePath] = img;
-                    TrimCache();
-                    return img;
-                }
-            }
-
-            // If not found in disk cache, NEVER block the UI thread parsing with TagLib!
-            // Queue a background parse and return default placeholder immediately.
-            EnqueueFullArtParse(filePath);
+            EnqueueThumbnailArtParse(filePath);
         }
-        catch { }
-
-        uiProbe?.RecordDiskResult(false);
-        return GetDefaultAlbumArt();
+        return progressive.Image;
     }
 
     public ImageSource? LoadAlbumArt(MusicTrack? track)
@@ -520,24 +702,13 @@ public class AlbumArtLoader
         if (_fullQualityCache.TryGetValue(path, out var cached) && cached != null)
             return cached;
 
-        var fullArt = DecodeFirstValidPicture(track);
-        if (fullArt != null)
-        {
-            _fullQualityCache[path] = fullArt;
-            TrimCache();
-            return fullArt;
-        }
-
-        // Fallback: standard thumbnail if no embedded or dedicated full-res art exists
-        var normalArt = LoadAlbumArt(track);
-        if (normalArt != null && normalArt != _defaultArt)
-        {
-            _fullQualityCache[path] = normalArt;
-            TrimCache();
-            return normalArt;
-        }
-
-        return GetDefaultAlbumArt();
+        if (_disposed) return GetDefaultAlbumArt();
+        ImageSource placeholder = _cache.TryGetValue(path, out var thumb) && thumb != null
+            ? thumb
+            : GetDefaultAlbumArt();
+        var progressive = GetOrCreateProgressiveImage(_pendingFullImages, path, placeholder);
+        EnqueueFullArtParse(path);
+        return progressive.Image;
     }
 
     // ── Medium quality (380px) — Mini Player ──────────────────────────────────
@@ -555,30 +726,6 @@ public class AlbumArtLoader
         }
         RecordMediumCacheMiss();
 
-        // 1. Try disk cache first at MediumDecodeSize (220px)
-        try
-        {
-            var hash = GetMd5Hash(path);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                ImageSource? img;
-                using (new PerfMeasurement(isDecode: true))
-                    img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
-                if (img != null)
-                {
-                    RecordMediumDiskHit();
-                    _mediumCache[path] = img;
-                    TrimCache();
-                    return img;
-                }
-            }
-        }
-        catch { }
-
         // If thumbnail cache already has it in memory, use that instantly
         if (_cache.TryGetValue(path, out var thumb) && thumb != null && thumb != _defaultArt)
         {
@@ -587,14 +734,7 @@ public class AlbumArtLoader
             return thumb;
         }
 
-        if (_scrollingActive)
-            return GetDefaultAlbumArt();
-
-        // Never block the caller with TagLib/File IO. Defer the decode to a bounded
-        // background worker and show the placeholder now.
-        EnqueueMediumArtParse(path, track);
-        return GetDefaultAlbumArt();
-
+        return RequestMediumAlbumArt(path, track);
     }
 
     public ImageSource? LoadMediumAlbumArt(string? filePath)
@@ -609,30 +749,6 @@ public class AlbumArtLoader
         }
         RecordMediumCacheMiss();
 
-        // Try loading from disk cache at medium decode size
-        try
-        {
-            var hash = GetMd5Hash(filePath);
-            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
-            var cachedPngPath   = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
-
-            var existingPath = File.Exists(cachedImagePath) ? cachedImagePath : (File.Exists(cachedPngPath) ? cachedPngPath : null);
-            if (existingPath != null)
-            {
-                ImageSource? img;
-                using (new PerfMeasurement(isDecode: true))
-                    img = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
-                if (img != null)
-                {
-                    RecordMediumDiskHit();
-                    _mediumCache[filePath] = img;
-                    TrimCache();
-                    return img;
-                }
-            }
-        }
-        catch { }
-
         // If thumbnail cache already has it in memory, use that instantly
         if (_cache.TryGetValue(filePath, out var thumb) && thumb != null && thumb != _defaultArt)
         {
@@ -641,12 +757,7 @@ public class AlbumArtLoader
             return thumb;
         }
 
-        if (_scrollingActive)
-            return GetDefaultAlbumArt();
-
-        EnqueueMediumArtParse(filePath, null);
-        return GetDefaultAlbumArt();
-
+        return RequestMediumAlbumArt(filePath, null);
     }
 
     public ImageSource? LoadFullAlbumArt(string? filePath)
@@ -655,24 +766,139 @@ public class AlbumArtLoader
         if (_fullQualityCache.TryGetValue(filePath, out var cached) && cached != null)
             return cached;
 
-        var dummyTrack = new MusicTrack { FilePath = filePath };
-        var fullArt = DecodeFirstValidPicture(dummyTrack);
-        if (fullArt != null)
+        if (_disposed) return GetDefaultAlbumArt();
+        ImageSource placeholder = _cache.TryGetValue(filePath, out var thumb) && thumb != null
+            ? thumb
+            : GetDefaultAlbumArt();
+        var progressive = GetOrCreateProgressiveImage(_pendingFullImages, filePath, placeholder);
+        EnqueueFullArtParse(filePath);
+        return progressive.Image;
+    }
+
+    public ImageSource? TryGetCachedAlbumArt(MusicTrack? track)
+    {
+        if (track == null) return null;
+        string fullPath = track.FilePath;
+        if (string.IsNullOrWhiteSpace(fullPath)) return null;
+        string mediumPath = !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : fullPath;
+        if (_fullQualityCache.TryGetValue(fullPath, out var full) && full != null) return full;
+        if (_mediumCache.TryGetValue(mediumPath, out var medium) && medium != null) return medium;
+        if (_cache.TryGetValue(mediumPath, out var art) && art != null && art != _defaultArt) return art;
+        if (_cache.TryGetValue(fullPath, out art) && art != null && art != _defaultArt) return art;
+        return null;
+    }
+
+    private ImageSource? RequestMediumAlbumArt(string path, MusicTrack? track)
+    {
+        if (_disposed) return GetDefaultAlbumArt();
+        if (_scrollingActive &&
+            _deferredMediumRequests.Count >= MaxDeferredMediumRequests &&
+            !_deferredMediumRequests.ContainsKey(path))
         {
-            _fullQualityCache[filePath] = fullArt;
-            TrimCache();
-            return fullArt;
+            EvictDeferredRequest(_deferredMediumRequests);
         }
 
-        var normalArt = LoadAlbumArt(filePath);
-        if (normalArt != null && normalArt != _defaultArt)
+        ImageSource placeholder = _cache.TryGetValue(path, out var thumbnail) && thumbnail != null
+            ? thumbnail
+            : GetDefaultAlbumArt();
+        var progressive = GetOrCreateProgressiveImage(_pendingMediumImages, path, placeholder);
+        if (_scrollingActive)
         {
-            _fullQualityCache[filePath] = normalArt;
-            TrimCache();
-            return normalArt;
+            if (_deferredMediumRequests.Count < MaxDeferredMediumRequests)
+            {
+                _deferredMediumRequests.TryAdd(path, new DeferredMediumRequest(track));
+            }
+            else
+            {
+                AddDeferredMediumRequest(path, track);
+            }
+        }
+        else
+        {
+            EnqueueMediumArtParse(path, track);
         }
 
-        return GetDefaultAlbumArt();
+        return progressive.Image;
+    }
+
+    private void AddDeferredMediumRequest(string path, MusicTrack? track)
+    {
+        if (_deferredMediumRequests.ContainsKey(path)) return;
+        if (_deferredMediumRequests.Count >= MaxDeferredMediumRequests)
+        {
+            EvictDeferredRequest(_deferredMediumRequests);
+        }
+        _deferredMediumRequests.TryAdd(path, new DeferredMediumRequest(track));
+    }
+
+    private void AddDeferredThumbnailRequest(string path)
+    {
+        if (_deferredThumbnailRequests.ContainsKey(path)) return;
+        if (_deferredThumbnailRequests.Count >= MaxDeferredMediumRequests)
+        {
+            EvictDeferredRequest(_deferredThumbnailRequests);
+        }
+        _deferredThumbnailRequests.TryAdd(path, 0);
+    }
+
+    private void AddDeferredFullRequest(string path)
+    {
+        if (_deferredFullRequests.ContainsKey(path)) return;
+        if (_deferredFullRequests.Count >= MaxDeferredMediumRequests)
+        {
+            EvictDeferredRequest(_deferredFullRequests);
+        }
+        _deferredFullRequests.TryAdd(path, 0);
+    }
+
+    private static void EvictDeferredRequest<TValue>(ConcurrentDictionary<string, TValue> requests)
+    {
+        string? path = requests.Keys.FirstOrDefault();
+        if (path != null)
+        {
+            requests.TryRemove(path, out _);
+        }
+    }
+
+    private void StartDeferredArtRequests()
+    {
+        if (_disposed) return;
+        lock (_deferredStartGate)
+        {
+            while (true)
+            {
+                lock (_lifetimeGate)
+                {
+                    if (_disposed || _ownedTasks.Count >= MaxOwnedParseTasks) return;
+
+                    string? fullPath = _deferredFullRequests.Keys.FirstOrDefault();
+                    if (fullPath != null && _deferredFullRequests.TryRemove(fullPath, out _))
+                    {
+                        EnqueueFullArtParse(fullPath);
+                        continue;
+                    }
+
+                    if (_scrollingActive) return;
+
+                    var medium = _deferredMediumRequests.FirstOrDefault();
+                    if (medium.Value != null &&
+                        _deferredMediumRequests.TryRemove(medium.Key, out var deferred))
+                    {
+                        EnqueueMediumArtParse(medium.Key, deferred.Track);
+                        continue;
+                    }
+
+                    string? thumbnailPath = _deferredThumbnailRequests.Keys.FirstOrDefault();
+                    if (thumbnailPath != null && _deferredThumbnailRequests.TryRemove(thumbnailPath, out _))
+                    {
+                        EnqueueThumbnailArtParse(thumbnailPath);
+                        continue;
+                    }
+
+                    return;
+                }
+            }
+        }
     }
 
     private ImageSource? LoadFullAlbumArtCore(MusicTrack track)
@@ -685,46 +911,77 @@ public class AlbumArtLoader
     // virtualizer without any cross-thread marshalling cost.
     private void EnqueueFullArtParse(string path)
     {
-        _ = EnqueueFullArtParse(path, () =>
+        _ = EnqueueFullArtParse(path, _ =>
         {
             var dummyTrack = new MusicTrack { FilePath = path };
             return Task.FromResult(DecodeFirstValidPicture(dummyTrack));
         });
     }
 
-    internal Task<ImageSource?> EnqueueFullArtParse(string path, Func<Task<ImageSource?>> decodeAsync)
+    internal Task<ImageSource?> EnqueueFullArtParse(string path, Func<Task<ImageSource?>> decodeAsync) =>
+        EnqueueFullArtParse(path, _ => decodeAsync());
+
+    internal Task<ImageSource?> EnqueueFullArtParse(
+        string path,
+        Func<CancellationToken, Task<ImageSource?>> decodeAsync)
     {
-        Lazy<Task<ImageSource?>>? pending = null;
-        pending = new Lazy<Task<ImageSource?>>(
-            () => Task.Run(() => RunFullArtParseAsync(path, pending!, decodeAsync)),
-            LazyThreadSafetyMode.ExecutionAndPublication);
-        return _pendingParses.GetOrAdd(path, pending).Value;
+        lock (_lifetimeGate)
+        {
+            if (_disposed) return Task.FromResult<ImageSource?>(null);
+            if (!_pendingParses.ContainsKey(path) && _ownedTasks.Count >= MaxOwnedParseTasks)
+            {
+                AddDeferredFullRequest(path);
+                return Task.FromResult<ImageSource?>(null);
+            }
+
+            Lazy<Task<ImageSource?>>? pending = null;
+            pending = new Lazy<Task<ImageSource?>>(
+                () => Task.Run(() => RunFullArtParseAsync(path, pending!, decodeAsync, _lifetimeCts.Token)),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+            Task<ImageSource?> task = _pendingParses.GetOrAdd(path, pending).Value;
+            TrackTaskLocked(task);
+            return task;
+        }
     }
 
     private async Task<ImageSource?> RunFullArtParseAsync(
         string path,
         Lazy<Task<ImageSource?>> pending,
-        Func<Task<ImageSource?>> decodeAsync)
+        Func<CancellationToken, Task<ImageSource?>> decodeAsync,
+        CancellationToken cancellationToken)
     {
+        ImageSource? image = null;
+        bool gateAcquired = false;
         try
         {
-            await _decodeGate.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                if (_fullQualityCache.TryGetValue(path, out var done) && done != null)
-                    return done;
-                if (_cache.TryGetValue(path, out var thumb) && thumb != null)
-                {
-                    _fullQualityCache.TryAdd(path, thumb);
-                    return thumb;
-                }
+            await _decodeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            gateAcquired = true;
+            cancellationToken.ThrowIfCancellationRequested();
 
-                var img = await decodeAsync().ConfigureAwait(false);
-                if (img != null)
-                    _fullQualityCache[path] = img;
-                return img;
+            if (_fullQualityCache.TryGetValue(path, out var done) && done != null)
+            {
+                image = done;
             }
-            finally { _decodeGate.Release(); }
+            else
+            {
+                image = await decodeAsync(cancellationToken).ConfigureAwait(false);
+                if (image == null && _cache.TryGetValue(path, out var thumb) && thumb != null)
+                {
+                    image = thumb;
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (image != null)
+            {
+                _fullQualityCache[path] = image;
+                TrimCache();
+            }
+            return image;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return null;
         }
         catch (Exception ex)
         {
@@ -733,43 +990,185 @@ public class AlbumArtLoader
         }
         finally
         {
+            if (gateAcquired) _decodeGate.Release();
+            CompleteProgressiveImage(_pendingFullImages, path, image);
             ((ICollection<KeyValuePair<string, Lazy<Task<ImageSource?>>>>)_pendingParses)
                 .Remove(new KeyValuePair<string, Lazy<Task<ImageSource?>>>(path, pending));
         }
     }
 
-    private void EnqueueMediumArtParse(string path, MusicTrack? track)
+    private Task<ImageSource?> EnqueueThumbnailArtParse(string path)
     {
-        Lazy<Task<ImageSource?>>? pending = null;
-        pending = new Lazy<Task<ImageSource?>>(
-            () => Task.Run(() => RunMediumArtParseAsync(path, track, pending!)),
-            LazyThreadSafetyMode.ExecutionAndPublication);
-        _ = _pendingMediumParses.GetOrAdd(path, pending).Value;
+        lock (_lifetimeGate)
+        {
+            if (_disposed) return Task.FromResult<ImageSource?>(null);
+            if (!_pendingThumbnailParses.ContainsKey(path) && _ownedTasks.Count >= MaxOwnedParseTasks)
+            {
+                AddDeferredThumbnailRequest(path);
+                return Task.FromResult<ImageSource?>(null);
+            }
+
+            Lazy<Task<ImageSource?>>? pending = null;
+            pending = new Lazy<Task<ImageSource?>>(
+                () => Task.Run(() => RunThumbnailArtParseAsync(path, pending!, _lifetimeCts.Token)),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+            Task<ImageSource?> task = _pendingThumbnailParses.GetOrAdd(path, pending).Value;
+            TrackTaskLocked(task);
+            return task;
+        }
+    }
+
+    private async Task<ImageSource?> RunThumbnailArtParseAsync(
+        string path,
+        Lazy<Task<ImageSource?>> pending,
+        CancellationToken cancellationToken)
+    {
+        ImageSource? image = null;
+        bool gateAcquired = false;
+        bool deferred = false;
+        try
+        {
+            await _decodeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            gateAcquired = true;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_scrollingActive)
+            {
+                AddDeferredThumbnailRequest(path);
+                deferred = true;
+                return null;
+            }
+
+            if (_cache.TryGetValue(path, out var cached) && cached != null && cached != _defaultArt)
+            {
+                image = cached;
+            }
+            else
+            {
+                image = WarmUpArtCore(path);
+                if (image == _defaultArt)
+                {
+                    if (_scrollingActive)
+                    {
+                        AddDeferredThumbnailRequest(path);
+                        deferred = true;
+                        return null;
+                    }
+                    image = null;
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (image != null)
+            {
+                _cache[path] = image;
+                TrimCache();
+            }
+            return image;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Thumbnail artwork load failed for {Path}", path);
+            return null;
+        }
+        finally
+        {
+            if (gateAcquired) _decodeGate.Release();
+            if (!deferred)
+            {
+                CompleteProgressiveImage(_pendingThumbnailImages, path, image);
+            }
+            ((ICollection<KeyValuePair<string, Lazy<Task<ImageSource?>>>>)_pendingThumbnailParses)
+                .Remove(new KeyValuePair<string, Lazy<Task<ImageSource?>>>(path, pending));
+        }
+    }
+
+    private Task<ImageSource?> EnqueueMediumArtParse(string path, MusicTrack? track)
+    {
+        Func<CancellationToken, Task<ImageSource?>> decodeAsync = token =>
+        {
+            var sourceTrack = track ?? new MusicTrack { FilePath = path };
+            return Task.FromResult(DecodeMediumArtwork(path, sourceTrack, token));
+        };
+        return EnqueueMediumArtParseCore(path, track, decodeAsync);
+    }
+
+    internal Task<ImageSource?> EnqueueMediumArtParseForTest(
+        string path,
+        Func<CancellationToken, Task<ImageSource?>> decodeAsync) =>
+        EnqueueMediumArtParseCore(path, null, decodeAsync);
+
+    private Task<ImageSource?> EnqueueMediumArtParseCore(
+        string path,
+        MusicTrack? track,
+        Func<CancellationToken, Task<ImageSource?>> decodeAsync)
+    {
+        lock (_lifetimeGate)
+        {
+            if (_disposed) return Task.FromResult<ImageSource?>(null);
+            if (!_pendingMediumParses.ContainsKey(path) && _ownedTasks.Count >= MaxOwnedParseTasks)
+            {
+                AddDeferredMediumRequest(path, track);
+                return Task.FromResult<ImageSource?>(null);
+            }
+
+            Lazy<Task<ImageSource?>>? pending = null;
+            pending = new Lazy<Task<ImageSource?>>(
+                () => Task.Run(() => RunMediumArtParseAsync(
+                    path, track, pending!, decodeAsync, _lifetimeCts.Token)),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+            Task<ImageSource?> task = _pendingMediumParses.GetOrAdd(path, pending).Value;
+            TrackTaskLocked(task);
+            return task;
+        }
     }
 
     private async Task<ImageSource?> RunMediumArtParseAsync(
         string path,
         MusicTrack? track,
-        Lazy<Task<ImageSource?>> pending)
+        Lazy<Task<ImageSource?>> pending,
+        Func<CancellationToken, Task<ImageSource?>> decodeAsync,
+        CancellationToken cancellationToken)
     {
+        ImageSource? image = null;
+        bool gateAcquired = false;
+        bool deferred = false;
         try
         {
-            await _decodeGate.WaitAsync().ConfigureAwait(false);
-            try
+            await _decodeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            gateAcquired = true;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_scrollingActive)
             {
-                if (_mediumCache.TryGetValue(path, out var done) && done != null)
-                    return done;
-
-                var sourceTrack = track ?? new MusicTrack { FilePath = path };
-                var img = DecodeMediumValidPicture(sourceTrack);
-                if (img != null)
-                {
-                    _mediumCache[path] = img;
-                    _cache.TryAdd(path, img);
-                }
-                return img;
+                AddDeferredMediumRequest(path, track);
+                deferred = true;
+                return null;
             }
-            finally { _decodeGate.Release(); }
+
+            if (_mediumCache.TryGetValue(path, out var done) && done != null)
+            {
+                image = done;
+            }
+            else
+            {
+                image = await decodeAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (image != null)
+            {
+                _mediumCache[path] = image;
+                _cache.TryAdd(path, image);
+                TrimCache();
+            }
+            return image;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return null;
         }
         catch (Exception ex)
         {
@@ -778,8 +1177,58 @@ public class AlbumArtLoader
         }
         finally
         {
+            if (gateAcquired) _decodeGate.Release();
+            if (!deferred)
+            {
+                CompleteProgressiveImage(_pendingMediumImages, path, image);
+            }
             ((ICollection<KeyValuePair<string, Lazy<Task<ImageSource?>>>>)_pendingMediumParses)
                 .Remove(new KeyValuePair<string, Lazy<Task<ImageSource?>>>(path, pending));
+        }
+    }
+
+    private ImageSource? DecodeMediumArtwork(string path, MusicTrack track, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            var hash = GetMd5Hash(path);
+            var cachedImagePath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.jpg");
+            var cachedPngPath = Path.Combine(AppPaths.AlbumArtCachePath, $"{hash}.png");
+            string? existingPath = File.Exists(cachedImagePath)
+                ? cachedImagePath
+                : File.Exists(cachedPngPath) ? cachedPngPath : null;
+            if (existingPath != null)
+            {
+                using var decodeMeasurement = new PerfMeasurement(isDecode: true);
+                ImageSource? cached = LoadSizedImageFromFile(existingPath, MediumDecodeSize);
+                if (cached != null)
+                {
+                    RecordMediumDiskHit();
+                    return cached;
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_cache.TryGetValue(path, out var thumbnail) && thumbnail != null && thumbnail != _defaultArt)
+            {
+                RecordMediumThumbnailHit();
+                return thumbnail;
+            }
+
+            using (new PerfMeasurement(isDecode: true))
+            {
+                return DecodeMediumValidPicture(track);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Unable to load cached medium artwork for {Path}", path);
+            return null;
         }
     }
 
@@ -990,31 +1439,39 @@ public class AlbumArtLoader
 
     public void PreloadArtwork(IEnumerable<string> filePaths)
     {
-        if (_preloading) return;
-        _preloading = true;
-
-        Task.Run(() =>
+        ArgumentNullException.ThrowIfNull(filePaths);
+        lock (_lifetimeGate)
         {
-            try
+            if (_disposed || _preloading) return;
+            _preloading = true;
+            Task task = Task.Run(() =>
             {
-                foreach (var path in filePaths)
+                try
                 {
-                    if (_cache.ContainsKey(path)) continue;
-                    if (_scrollingActive) return; // defer CPU work until layout settles
-                    try
+                    foreach (var path in filePaths)
                     {
+                        _lifetimeCts.Token.ThrowIfCancellationRequested();
+                        if (_cache.ContainsKey(path)) continue;
+                        if (_scrollingActive) return;
                         var art = LoadAlbumArtCore(path);
                         if (art != null && art != _defaultArt)
                             _cache[path] = art;
                     }
-                    catch { }
                 }
-            }
-            finally
-            {
-                _preloading = false;
-            }
-        });
+                catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+                {
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Album-art preload failed");
+                }
+                finally
+                {
+                    _preloading = false;
+                }
+            });
+            TrackTaskLocked(task);
+        }
     }
 
     public Task PreloadTrackArtwork(

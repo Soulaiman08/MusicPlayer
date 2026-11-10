@@ -3487,21 +3487,28 @@ InitializeComponent();
         var artEl = AlbumDetailArtBorder ?? FindAlbumDetailArt();
         if (artEl is Border artBorder && artBorder.Background is ImageBrush artBrush && artBrush.ImageSource != null)
             return artBrush.ImageSource;
+
         var loader = AlbumArtLoader.Instance;
-        if (loader != null && ViewModel != null &&
-            ViewModel.AlbumCoverTracks.TryGetValue((_artistTransitionArtistName ?? string.Empty).Trim(), out var cover) && cover != null)
+        MusicTrack? canonicalCover = null;
+        if (ViewModel != null)
         {
-            var full = loader.LoadFullAlbumArt(cover);
-            if (full != null) return full;
+            ViewModel.AlbumCoverTracks.TryGetValue(
+                (_artistTransitionArtistName ?? string.Empty).Trim(),
+                out canonicalCover);
         }
-        var converter = new Converters.AlbumArtConverter();
-        if (_albumTransitionTrack != null)
+
+        MusicTrack? transitionTrack = canonicalCover ?? _albumTransitionTrack;
+        if (loader != null && transitionTrack != null)
         {
-            var fromTrack = converter.Convert(_albumTransitionTrack, typeof(object), "full", System.Globalization.CultureInfo.InvariantCulture) as ImageSource;
-            if (fromTrack != null) return fromTrack;
+            ImageSource? ready = loader.TryGetCachedAlbumArt(transitionTrack);
+            if (ready != null) return ready;
+
+            // This call is memory-only on the critical path and schedules any
+            // missing full-quality decode without delaying the reverse flight.
+            return loader.LoadFullAlbumArt(transitionTrack) ?? loader.GetDefaultAlbumArt();
         }
-        return (_albumTransitionTrack != null ? loader?.LoadFullAlbumArt(_albumTransitionTrack) : null)
-            ?? loader?.GetDefaultAlbumArt();
+
+        return loader?.GetDefaultAlbumArt();
     }
 
     private void AlbumDetailBack_Click(object sender, RoutedEventArgs e)

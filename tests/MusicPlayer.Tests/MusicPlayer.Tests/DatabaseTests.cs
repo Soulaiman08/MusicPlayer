@@ -64,13 +64,16 @@ namespace MusicPlayer.Tests
         {
             _db.BeginTransaction();
             Exception? ex = null;
+            using var wrongThreadFinished = new ManualResetEventSlim();
             var t = Task.Run(() =>
             {
                 try { _db.Commit(); }
                 catch (Exception e) { ex = e; }
+                finally { wrongThreadFinished.Set(); }
             });
-            await t;
+            Assert.True(wrongThreadFinished.Wait(TimeSpan.FromSeconds(5)));
             try { _db.Rollback(); } catch { }
+            await t;
             Assert.NotNull(ex);
         }
 
@@ -95,6 +98,35 @@ namespace MusicPlayer.Tests
             }
             await Task.WhenAll(tasks);
             Assert.True(_db.GetTrackCount() > 0);
+        }
+
+        [Fact]
+        public async Task Dispose_WaitsForInFlightTransaction_ThenRejectsNewOperations()
+        {
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var release = new ManualResetEventSlim();
+            Task operation = Task.Run(() => _db.ExecuteInTransaction(() =>
+            {
+                entered.TrySetResult();
+                release.Wait();
+                _db.InsertTrack(new MusicPlayer.Models.MusicTrack
+                {
+                    FilePath = @"C:\m\during-dispose.mp3",
+                    Title = "During dispose"
+                });
+            }));
+
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Task dispose = Task.Run(_db.Dispose);
+            await Task.Delay(50);
+            Assert.False(dispose.IsCompleted);
+
+            release.Set();
+            await operation.WaitAsync(TimeSpan.FromSeconds(5));
+            await dispose.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Throws<ObjectDisposedException>(() => _db.GetAllTracks());
+            _db.Dispose();
         }
 
         [Fact]

@@ -27,6 +27,8 @@ public partial class App : Application
     private MusicPlayerServiceHost? _serviceHost;
     private MainViewModel? _mainViewModel;
     private Mutex? _singleInstanceMutex;
+    private readonly CancellationTokenSource _wallpaperPreloadCts = new();
+    private Task? _wallpaperPreloadTask;
 
     [DllImport("kernel32.dll")]
     private static extern uint SetThreadExecutionState(uint esFlags);
@@ -386,9 +388,15 @@ public partial class App : Application
                         : (System.IO.File.Exists(saved) ? saved
                         : MusicPlayer.Models.WallpaperCatalog.FindById(MusicPlayer.Models.WallpaperCatalog.DefaultId)?.ResourceUri);
                     if (!string.IsNullOrEmpty(uri))
-                        _ = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(new[] { uri! }, 3840, System.Threading.CancellationToken.None);
+                        _wallpaperPreloadTask = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(
+                            new[] { uri! },
+                            3840,
+                            _wallpaperPreloadCts.Token);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    LogHelper.LogError("App startup: wallpaper preload failed", ex);
+                }
 
                 // Pre-warm TagLib's first native parse + the full-quality art decode on
                 // a background thread. Both are one-time per process and are otherwise
@@ -514,6 +522,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         AllowSleep();
+        StopWallpaperPreload();
         // ServiceProvider is the sole owner of singleton services (including
         // AudioEngine and DatabaseService). ServiceHost only coordinates; it must
         // not dispose services owned by the container.
@@ -555,6 +564,49 @@ public partial class App : Application
                     : $"Outcome={shutdownResult.Outcome}; Pending={string.Join(",", shutdownResult.PendingOperations)}; Retained={string.Join(",", shutdownResult.RetainedResources)}"));
         }
         base.OnExit(e);
+    }
+
+    private void StopWallpaperPreload()
+    {
+        try
+        {
+            _wallpaperPreloadCts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        Task? preload = _wallpaperPreloadTask;
+        if (preload == null)
+        {
+            _wallpaperPreloadCts.Dispose();
+            return;
+        }
+
+        try
+        {
+            if (preload.Wait(TimeSpan.FromSeconds(3)))
+            {
+                preload.GetAwaiter().GetResult();
+                _wallpaperPreloadCts.Dispose();
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("App.OnExit: wallpaper preload failed", ex);
+            _wallpaperPreloadCts.Dispose();
+            return;
+        }
+
+        LogHelper.LogError(
+            "App.OnExit: wallpaper preload did not stop before the shutdown deadline",
+            new TimeoutException());
+        _ = preload.ContinueWith(
+            _ => _wallpaperPreloadCts.Dispose(),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 }
 

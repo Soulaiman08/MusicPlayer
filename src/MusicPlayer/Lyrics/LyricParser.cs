@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MusicPlayer.Lyrics;
 
@@ -141,6 +143,41 @@ public class LyricParser
             }
         }
         
+        return null;
+    }
+
+    public static async Task<LyricParser?> FindLyricForTrackAsync(
+        string trackPath,
+        CancellationToken cancellationToken = default)
+    {
+        string? directory = Path.GetDirectoryName(trackPath);
+        string name = Path.GetFileNameWithoutExtension(trackPath);
+        if (string.IsNullOrEmpty(directory)) return null;
+
+        foreach (string extension in new[] { ".lrc", ".txt" })
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string lyricPath = Path.Combine(directory, name + extension);
+            string content;
+            try
+            {
+                content = await File.ReadAllTextAsync(lyricPath, cancellationToken).ConfigureAwait(false);
+            }
+            catch (FileNotFoundException)
+            {
+                continue;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return null;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var parser = new LyricParser();
+            parser.Parse(content);
+            return parser;
+        }
+
         return null;
     }
 }

@@ -16,37 +16,41 @@ public class DatabaseService
     private readonly object _sync = new();
     private int _txDepth;
     private int _txOwnerThreadId;
-    private volatile bool _disposedDb;
+    private int _disposedDb;
 
     private bool IsTransactionOwner => _txDepth > 0 && _txOwnerThreadId == Environment.CurrentManagedThreadId;
 
     private IDisposable LockIfNeeded()
     {
-        if (_disposedDb) throw new ObjectDisposedException(nameof(DatabaseService));
         if (IsTransactionOwner) return new NoOpScope();
+        if (Volatile.Read(ref _disposedDb) != 0) throw new ObjectDisposedException(nameof(DatabaseService));
         Monitor.Enter(_sync);
+        if (Volatile.Read(ref _disposedDb) != 0)
+        {
+            Monitor.Exit(_sync);
+            throw new ObjectDisposedException(nameof(DatabaseService));
+        }
         return new LockScope(this);
     }
 
     private void EnterTransaction()
     {
-        if (_disposedDb) throw new ObjectDisposedException(nameof(DatabaseService));
-        if (_txDepth == 0)
-        {
-            Monitor.Enter(_sync);
-            _txOwnerThreadId = Environment.CurrentManagedThreadId;
-            _txDepth = 1;
-        }
-        else if (_txOwnerThreadId == Environment.CurrentManagedThreadId)
+        if (IsTransactionOwner)
         {
             _txDepth++;
+            return;
         }
-        else
+
+        if (Volatile.Read(ref _disposedDb) != 0) throw new ObjectDisposedException(nameof(DatabaseService));
+        Monitor.Enter(_sync);
+        if (Volatile.Read(ref _disposedDb) != 0)
         {
-            Monitor.Enter(_sync);
-            _txOwnerThreadId = Environment.CurrentManagedThreadId;
-            _txDepth = 1;
+            Monitor.Exit(_sync);
+            throw new ObjectDisposedException(nameof(DatabaseService));
         }
+
+        _txOwnerThreadId = Environment.CurrentManagedThreadId;
+        _txDepth = 1;
     }
 
     private void ExitTransaction()
@@ -948,8 +952,7 @@ public class DatabaseService
 
     public void Dispose()
     {
-        if (_disposedDb) return;
-        _disposedDb = true;
+        if (Interlocked.Exchange(ref _disposedDb, 1) != 0) return;
         try
         {
             Monitor.Enter(_sync);

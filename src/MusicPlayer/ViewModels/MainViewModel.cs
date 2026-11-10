@@ -67,6 +67,10 @@ public partial class MainViewModel : ViewModelBase
 	internal TimeSpan AudioShutdownWaitTimeout { get; set; } = TimeSpan.FromSeconds(12);
 
 	private DispatcherTimer? _lyricAdvanceTimer;
+	private CancellationTokenSource? _lyricsLoadCts;
+	private CancellationTokenSource? _lyricsBrowserCts;
+	private long _lyricsLoadGeneration;
+	private long _lyricsBrowserGeneration;
 
 	private string _currentArtistName = string.Empty;
 
@@ -4445,6 +4449,7 @@ public partial class MainViewModel : ViewModelBase
 		// Reject new work as early as possible, before awaiting anything.
 		_uiOps.BeginShutdown();
 		_backgroundTaskRegistry.BeginShutdown();
+		CancelWallpaperPreload();
 		// Stop dispatcher-based delayed work on the calling (UI) thread before
 		// any awaited stage. Cancellation is requested first; disposal happens
 		// only after scoped tasks have finished.
@@ -4454,11 +4459,13 @@ public partial class MainViewModel : ViewModelBase
 		StopTransientTimers();
 		TryCancel(_sleepTimerCts);
 		TryCancel(_searchCts);
+		TryCancel(_lyricsLoadCts);
 
 		var pendingOperations = new List<string>();
 		var retainedResources = new List<string>();
 		bool uiStopped = true;
 		bool backgroundStopped = true;
+		bool wallpaperStopped = true;
 		bool audioTimedOut = false;
 		AudioShutdownResult? audioResult = null;
 		string? failureReason = null;
@@ -4489,6 +4496,15 @@ public partial class MainViewModel : ViewModelBase
 					"Background tasks did not finish within {Timeout}; continuing shutdown without assuming they stopped.",
 					BackgroundShutdownTimeout);
 				pendingOperations.AddRange(_backgroundTaskRegistry.GetPendingTaskNames());
+			}
+
+			wallpaperStopped = await StopWallpaperPreloadsAsync(TimeSpan.FromSeconds(5))
+				.ConfigureAwait(false);
+			if (!wallpaperStopped)
+			{
+				canDispose = false;
+				outcome = ShutdownOutcome.Pending;
+				pendingOperations.Add("WallpaperDecodeCache.Preload");
 			}
 
 			Task<AudioShutdownResult> audioShutdown = _playback.Engine.ShutdownAsync();
@@ -4547,7 +4563,7 @@ public partial class MainViewModel : ViewModelBase
 		{
 			outcome = ShutdownOutcome.Failed;
 		}
-		else if (!uiStopped || !backgroundStopped || audioTimedOut || pendingOperations.Count > 0)
+		else if (!uiStopped || !backgroundStopped || !wallpaperStopped || audioTimedOut || pendingOperations.Count > 0)
 		{
 			outcome = ShutdownOutcome.Pending;
 		}
@@ -6958,20 +6974,71 @@ private async Task LoadArtistsAsync()
 		CurrentLyricText = string.Empty;
 		CurrentLyricIndex = -1;
 		LyricsSourcePath = string.Empty;
+		TryCancel(_lyricsLoadCts);
+		_lyricsLoadCts = null;
+		long generation = Interlocked.Increment(ref _lyricsLoadGeneration);
 		if (track == null || string.IsNullOrEmpty(track.FilePath))
 		{
 			return;
 		}
-		LyricParser lyricParser = LyricParser.FindLyricForTrack(track.FilePath);
-		if (lyricParser == null)
+
+		var loadCts = new CancellationTokenSource();
+		_lyricsLoadCts = loadCts;
+		if (!_backgroundTaskRegistry.TryStart(
+			"LoadLyrics",
+			lifetimeToken => LoadLyricsAsync(track, generation, loadCts, lifetimeToken)))
 		{
-			return;
+			_lyricsLoadCts = null;
+			loadCts.Dispose();
 		}
-		foreach (LyricLine line in lyricParser.Lines)
+	}
+
+	private async Task LoadLyricsAsync(
+		MusicTrack track,
+		long generation,
+		CancellationTokenSource loadCts,
+		CancellationToken lifetimeToken)
+	{
+		using var linked = CancellationTokenSource.CreateLinkedTokenSource(loadCts.Token, lifetimeToken);
+		try
 		{
-			Lyrics.Add(line);
+			LyricParser? lyricParser = await LyricParser.FindLyricForTrackAsync(
+				track.FilePath,
+				linked.Token).ConfigureAwait(false);
+			linked.Token.ThrowIfCancellationRequested();
+			if (lyricParser == null) return;
+
+			await DispatchAsync(() =>
+			{
+				if (linked.IsCancellationRequested ||
+					generation != Interlocked.Read(ref _lyricsLoadGeneration) ||
+					!string.Equals(CurrentTrack?.FilePath, track.FilePath, StringComparison.OrdinalIgnoreCase))
+				{
+					return;
+				}
+
+				foreach (LyricLine line in lyricParser.Lines)
+				{
+					Lyrics.Add(line);
+				}
+				LyricsSourcePath = Path.ChangeExtension(track.FilePath, ".lrc");
+			}).ConfigureAwait(false);
 		}
-		LyricsSourcePath = Path.ChangeExtension(track.FilePath, ".lrc");
+		catch (OperationCanceledException) when (linked.IsCancellationRequested)
+		{
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Unable to load lyrics for {TrackPath}", track.FilePath);
+		}
+		finally
+		{
+			if (ReferenceEquals(_lyricsLoadCts, loadCts))
+			{
+				_lyricsLoadCts = null;
+			}
+			loadCts.Dispose();
+		}
 	}
 
 	private void UpdateLyricProgress(TimeSpan pos)
@@ -7720,21 +7787,69 @@ private async Task LoadArtistsAsync()
 	}
 	private void OpenLrcBrowser()
 	{
-		_lrcFolderData.Clear();
-		_lrcAllFiles.Clear();
-		List<string> list = new List<string> { "ALL" };
-		foreach ((string folder, string[] files) in _lyricsFiles.FindFilesByFolder(
-			_settings.ScanFolders,
-			Environment.GetFolderPath(Environment.SpecialFolder.MyMusic)))
+		long generation = Interlocked.Increment(ref _lyricsBrowserGeneration);
+		string configuredFolders = _settings.ScanFolders;
+		string fallbackFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+		TryCancel(_lyricsBrowserCts);
+		var browserCts = new CancellationTokenSource();
+		_lyricsBrowserCts = browserCts;
+		bool started = StartTrackedBackgroundTask("LyricsBrowserSearch", async lifetimeToken =>
 		{
-			_lrcFolderData.Add((folder, files));
-			list.Add(folder);
-			_lrcAllFiles.AddRange(files);
+			using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+				browserCts.Token,
+				lifetimeToken);
+			CancellationToken cancellationToken = linked.Token;
+			try
+			{
+				var groups = await _lyricsFiles.FindFilesByFolderAsync(
+					configuredFolders,
+					fallbackFolder,
+					cancellationToken).ConfigureAwait(false);
+				cancellationToken.ThrowIfCancellationRequested();
+				await DispatchAsync(() =>
+				{
+					if (cancellationToken.IsCancellationRequested ||
+						generation != Interlocked.Read(ref _lyricsBrowserGeneration))
+					{
+						return;
+					}
+
+					_lrcFolderData.Clear();
+					_lrcAllFiles.Clear();
+					var folders = new List<string> { "ALL" };
+					foreach ((string folder, string[] files) in groups)
+					{
+						_lrcFolderData.Add((folder, files));
+						folders.Add(folder);
+						_lrcAllFiles.AddRange(files);
+					}
+					LrcFolderNames.ReplaceAll(folders);
+					SelectedLrcFolder = "ALL";
+					LrcLocalFiles.ReplaceAll(_lrcAllFiles);
+					Navigate("lrc_browser");
+				}).ConfigureAwait(false);
+			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError(ex, "Unable to search local lyrics files");
+			}
+			finally
+			{
+				if (ReferenceEquals(_lyricsBrowserCts, browserCts))
+				{
+					_lyricsBrowserCts = null;
+				}
+				browserCts.Dispose();
+			}
+		});
+		if (!started)
+		{
+			_lyricsBrowserCts = null;
+			browserCts.Dispose();
 		}
-		LrcFolderNames.ReplaceAll(list);
-		SelectedLrcFolder = "ALL";
-		LrcLocalFiles.ReplaceAll(_lrcAllFiles);
-		Navigate("lrc_browser");
 	}
 	private void OpenLrcEdit()
 	{
@@ -8420,6 +8535,109 @@ private async Task LoadArtistsAsync()
 	}
 	private bool _isLoadingWallpapers;
 	private System.Threading.CancellationTokenSource? _wallpaperPreloadCts;
+	private readonly object _wallpaperPreloadGate = new();
+	private readonly List<Task> _wallpaperPreloadTasks = new();
+
+	private void StartWallpaperPreload(IEnumerable<string> sources)
+	{
+		if (_backgroundTaskRegistry.IsStopping)
+		{
+			return;
+		}
+
+		var cts = new CancellationTokenSource();
+		var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		Task task = RunWallpaperPreloadAsync(sources.ToArray(), cts, start.Task);
+		CancellationTokenSource? previous;
+		lock (_wallpaperPreloadGate)
+		{
+			previous = _wallpaperPreloadCts;
+			_wallpaperPreloadCts = cts;
+			_wallpaperPreloadTasks.RemoveAll(existing => existing.IsCompleted);
+			_wallpaperPreloadTasks.Add(task);
+		}
+
+		TryCancel(previous);
+		start.TrySetResult();
+	}
+
+	private async Task RunWallpaperPreloadAsync(
+		string[] sources,
+		CancellationTokenSource cts,
+		Task start)
+	{
+		try
+		{
+			await start.ConfigureAwait(false);
+			await MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(sources, 3840, cts.Token)
+				.ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cts.IsCancellationRequested)
+		{
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Wallpaper preload failed");
+		}
+		finally
+		{
+			lock (_wallpaperPreloadGate)
+			{
+				if (ReferenceEquals(_wallpaperPreloadCts, cts))
+				{
+					_wallpaperPreloadCts = null;
+				}
+			}
+			cts.Dispose();
+		}
+	}
+
+	private void CancelWallpaperPreload()
+	{
+		CancellationTokenSource? cts;
+		lock (_wallpaperPreloadGate)
+		{
+			cts = _wallpaperPreloadCts;
+			_wallpaperPreloadCts = null;
+		}
+		TryCancel(cts);
+	}
+
+	private async Task<bool> StopWallpaperPreloadsAsync(TimeSpan timeout)
+	{
+		CancelWallpaperPreload();
+		Task[] tasks;
+		lock (_wallpaperPreloadGate)
+		{
+			tasks = _wallpaperPreloadTasks.ToArray();
+		}
+
+		if (tasks.Length == 0) return true;
+		Task all = Task.WhenAll(tasks);
+		if (await Task.WhenAny(all, Task.Delay(timeout)).ConfigureAwait(false) != all)
+		{
+			_logger.LogError(
+				"Wallpaper preload tasks did not stop within {Timeout}",
+				timeout);
+			return false;
+		}
+
+		try
+		{
+			await all.ConfigureAwait(false);
+			lock (_wallpaperPreloadGate)
+			{
+				_wallpaperPreloadTasks.RemoveAll(existing => existing.IsCompleted);
+			}
+			return true;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Wallpaper preload shutdown failed");
+			return false;
+		}
+	}
+
 	/// <returns>true when wallpapers are loaded (or someone else is loading them);
 	/// false when aborted because the user interacted — the caller should retry later.</returns>
 	private async Task<bool> EnsureWallpapersLoadedAsync(bool forceReload = false, bool abortIfUserActive = false, CancellationToken cancellationToken = default)
@@ -8513,27 +8731,19 @@ private async Task LoadArtistsAsync()
 				}
 				FilterWallpapers();
 			});
-			// Start bounded full-resolution preload for the catalog (off-UI, memory-budgeted).
-			try
+			var allUris = result.items.Select(i => !string.IsNullOrEmpty(i.ResourceUri) ? i.ResourceUri : i.FilePath)
+				.Where(s => !string.IsNullOrWhiteSpace(s))
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToList();
+
+			// Prioritize currently selected wallpaper if present.
+			if (!string.IsNullOrEmpty(resolvedUri) && allUris.Contains(resolvedUri))
 			{
-				_wallpaperPreloadCts?.Cancel();
-				var cts = new System.Threading.CancellationTokenSource();
-				_wallpaperPreloadCts = cts;
-				var allUris = result.items.Select(i => !string.IsNullOrEmpty(i.ResourceUri) ? i.ResourceUri : i.FilePath)
-					.Where(s => !string.IsNullOrWhiteSpace(s))
-					.Distinct(StringComparer.OrdinalIgnoreCase)
-					.ToList();
-
-				// Prioritize currently selected wallpaper if present
-				if (!string.IsNullOrEmpty(resolvedUri) && allUris.Contains(resolvedUri))
-				{
-					allUris.Remove(resolvedUri);
-					allUris.Insert(0, resolvedUri);
-				}
-
-				_ = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(allUris, 3840, cts.Token);
+				allUris.Remove(resolvedUri);
+				allUris.Insert(0, resolvedUri);
 			}
-			catch { }
+
+			StartWallpaperPreload(allUris);
 			return true;
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -8695,9 +8905,11 @@ private async Task LoadArtistsAsync()
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]
 	private void OnCurrentViewChanged(string value)
 	{
+		Interlocked.Increment(ref _lyricsBrowserGeneration);
+		TryCancel(_lyricsBrowserCts);
 		if (!string.Equals(value, "theme", StringComparison.OrdinalIgnoreCase))
 		{
-			try { _wallpaperPreloadCts?.Cancel(); } catch { }
+			CancelWallpaperPreload();
 		}
 		bool preserveSearch = value is "songs" or "artists" or "albums" or "genres" or "folders" or "artist_detail" or "album_detail";
 		if (!preserveSearch)
