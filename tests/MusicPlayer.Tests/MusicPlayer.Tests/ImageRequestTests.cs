@@ -1,8 +1,11 @@
+using System.Collections.Concurrent;
+using System.Reflection;
 using System.Windows.Media;
 using System.Globalization;
 using MusicPlayer.Converters;
 using Microsoft.Extensions.Logging.Abstractions;
 using MusicPlayer.Library;
+using MusicPlayer.Models;
 using MusicPlayer.Services;
 
 namespace MusicPlayer.Tests;
@@ -66,6 +69,163 @@ public class ImageRequestTests
         Assert.Null(failed);
         Assert.Same(expected, retried);
         Assert.Equal(2, decodeCount);
+    }
+
+    [Fact]
+    public void AlbumArtSourceResolutionFallsBackToTrackFileWhenAlbumArtPathIsInvalid()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "AlbumArtFallback_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var trackFile = Path.Combine(tempDir, "track.mp3");
+        File.WriteAllText(trackFile, "track");
+
+        var track = new MusicTrack
+        {
+            FilePath = trackFile,
+            AlbumArtPath = Path.Combine(tempDir, "missing-cover.png")
+        };
+
+        var method = typeof(AlbumArtLoader).GetMethod(
+            "ResolveTrackArtPath",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        Assert.Equal(trackFile, method.Invoke(null, new object?[] { track }));
+    }
+
+    [Fact]
+    public void AlbumArtAssetServiceStoresDerivedAssetsBySourceIdentity()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "AlbumArtAssetService_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var coverPath = Path.Combine(tempDir, "cover.png");
+        var pngBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAF" +
+            "c2suAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJ0UkGAAAAA" +
+            "AQMBAAB0lqQAAAAAElFTkSuQmCC");
+        File.WriteAllBytes(coverPath, pngBytes);
+
+        var track = new MusicTrack
+        {
+            FilePath = Path.Combine(tempDir, "track.mp3"),
+            AlbumArtPath = coverPath,
+            Title = "Asset service test"
+        };
+
+        var service = new AlbumArtAssetService();
+        var asset = service.Resolve(track);
+
+        Assert.NotNull(asset);
+        Assert.Equal(AlbumArtSourceKind.External, asset.Identity.SourceKind);
+
+        var thumbnail = new DrawingImage(new DrawingGroup());
+        service.StoreDerived(asset, AlbumArtQuality.Thumbnail, thumbnail);
+
+        Assert.True(service.TryGetDerived(asset, AlbumArtQuality.Thumbnail, out var resolved));
+        Assert.Same(thumbnail, resolved);
+    }
+
+    [Fact]
+    public void MediumAlbumArtDoesNotTreatThumbnailAsMediumQuality()
+    {
+        using var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        var thumb = new DrawingImage(new DrawingGroup());
+        var cacheField = typeof(AlbumArtLoader).GetField("_cache", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(cacheField);
+        var cache = (ConcurrentDictionary<string, ImageSource?>)cacheField.GetValue(loader)!;
+        cache["mixed-quality-track"] = thumb;
+
+        var result = loader.LoadMediumAlbumArt("mixed-quality-track");
+
+        Assert.NotSame(thumb, result);
+    }
+
+    [Fact]
+    public async Task FullAlbumArtDoesNotStoreThumbnailAsFullQuality()
+    {
+        using var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        var thumb = new DrawingImage(new DrawingGroup());
+
+        var cacheField = typeof(AlbumArtLoader).GetField("_cache", BindingFlags.Instance | BindingFlags.NonPublic);
+        var fullCacheField = typeof(AlbumArtLoader).GetField("_fullQualityCache", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(cacheField);
+        Assert.NotNull(fullCacheField);
+
+        var cache = (ConcurrentDictionary<string, ImageSource?>)cacheField.GetValue(loader)!;
+        var fullCache = (ConcurrentDictionary<string, ImageSource?>)fullCacheField.GetValue(loader)!;
+        cache["full-quality-track"] = thumb;
+
+        var result = await loader.EnqueueFullArtParse("full-quality-track", _ => Task.FromResult<ImageSource?>(null));
+
+        Assert.Null(result);
+        Assert.False(fullCache.TryGetValue("full-quality-track", out var cached) && ReferenceEquals(cached, thumb));
+    }
+
+    [Fact]
+    public async Task FullAlbumArtStoresTrackDerivedAssetAfterDecode()
+    {
+        using var loader = new AlbumArtLoader(null, initializeDiskCache: false);
+        var tempDir = Path.Combine(Path.GetTempPath(), "AlbumArtDerivedAsset_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var coverPath = Path.Combine(tempDir, "derived-full-cover.png");
+        var pngBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAF" +
+            "c2suAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJ0UkGAAAAA" +
+            "AQMBAAB0lqQAAAAAElFTkSuQmCC");
+        File.WriteAllBytes(coverPath, pngBytes);
+
+        var track = new MusicTrack
+        {
+            FilePath = Path.Combine(tempDir, "derived-full-track.mp3"),
+            AlbumArtPath = coverPath,
+            Title = "Derived full track"
+        };
+        var expected = new DrawingImage(new DrawingGroup());
+
+        var assetServiceField = typeof(AlbumArtLoader).GetField("_assetService", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(assetServiceField);
+        var assetService = (AlbumArtAssetService)assetServiceField.GetValue(loader)!;
+
+        var result = await loader.EnqueueFullArtParse(coverPath, track, _ => Task.FromResult<ImageSource?>(expected));
+
+        Assert.Same(expected, result);
+        var asset = assetService.Resolve(track);
+        Assert.NotNull(asset);
+        Assert.True(assetService.TryGetDerived(asset, AlbumArtQuality.Full, out var stored));
+        Assert.Same(expected, stored);
+    }
+
+    [Fact]
+    public void AlbumArtAssetServiceCanInvalidateRemovedDerivedAssets()
+    {
+        var service = new AlbumArtAssetService();
+        var source = new OriginalAlbumArtAsset(
+            new AlbumArtSourceIdentity(
+                "C:/source/cover.png",
+                AlbumArtSourceKind.External,
+                "C:/source/cover.png",
+                42,
+                1,
+                "album-art-v1",
+                "fingerprint"),
+            new AlbumArtMetadata(
+                512,
+                512,
+                "Png",
+                42,
+                AlbumArtSourceKind.External,
+                "C:/source/cover.png",
+                1,
+                "fingerprint",
+                true,
+                true),
+            new byte[] { 1, 2, 3, 4 });
+
+        var thumbnail = new DrawingImage(new DrawingGroup());
+        service.StoreDerived(source, AlbumArtQuality.Thumbnail, thumbnail);
+        Assert.True(service.TryGetDerived(source, AlbumArtQuality.Thumbnail, out var cached));
+        Assert.Same(thumbnail, cached);
+
+        service.InvalidateDerived(source);
+        Assert.False(service.TryGetDerived(source, AlbumArtQuality.Thumbnail, out _));
     }
 
     [Fact]

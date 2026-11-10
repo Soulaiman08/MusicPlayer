@@ -360,7 +360,7 @@ public sealed class WindowsIntegrationService : IDisposable
             if (!string.IsNullOrWhiteSpace(track.AlbumArtPath) && File.Exists(track.AlbumArtPath))
                 artFile = track.AlbumArtPath;
             else
-                artFile = await Task.Run(() => AlbumArtLoader.Instance?.GetCachedArtFilePath(track.FilePath));
+                artFile = await Task.Run(() => AlbumArtLoader.Instance?.GetCachedArtFilePath(track));
             if (!string.IsNullOrWhiteSpace(artFile) && File.Exists(artFile))
             {
                 var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(artFile);

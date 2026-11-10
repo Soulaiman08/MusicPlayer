@@ -45,6 +45,10 @@
 
   <ItemGroup>
     <Resource Include="Wallpaper\**\*" />
+    <Content Include="Wallpaper\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>wallpaper\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Content>
   </ItemGroup>
 
 </Project>
