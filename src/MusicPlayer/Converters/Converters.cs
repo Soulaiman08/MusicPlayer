@@ -424,6 +424,8 @@ public class ArtistImageConverter : IValueConverter
         }
     }
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _inFlightDecodes = new(StringComparer.OrdinalIgnoreCase);
+
     private object ConvertCore(object? value, Type targetType, object parameter, CultureInfo culture)
     {
         if (value is not string artistName || string.IsNullOrWhiteSpace(artistName))
@@ -436,37 +438,56 @@ public class ArtistImageConverter : IValueConverter
         if (isHighRes && HighResCache.TryGetValue(artistName, out var cachedHighRes))
             return cachedHighRes;
 
+        var coord = ImageLoading.ImageLoadingCoordinator.Instance;
+        if (coord != null)
+        {
+            var mem = coord.TryGetArtistImage(artistName, isHighRes);
+            if (mem != null)
+            {
+                if (isHighRes) HighResCache[artistName] = mem;
+                return mem;
+            }
+        }
+
         if (GetViewModel() is { } vm)
         {
             if (!isHighRes && vm.ArtistImageCache.TryGetValue(artistName, out var img))
                 return img;
 
-            if (vm.ArtistImages.TryGetValue(artistName, out var path) && !string.IsNullOrWhiteSpace(path))
-            {
-                // While continuous scrolling is active, return placeholder immediately for regular list thumbnails
-                if (!isHighRes && AlbumArtLoader.ScrollingActive)
-                    return DefaultArtistImage ?? string.Empty as object;
-
-                try
-                {
-                    var bi = new System.Windows.Media.Imaging.BitmapImage();
-                    bi.BeginInit();
-                    bi.UriSource = new System.Uri(path, System.UriKind.Absolute);
-                    bi.DecodePixelWidth = isHighRes ? 400 : 180;
-                    bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-                    bi.EndInit();
-                    bi.Freeze();
-                    if (isHighRes)
-                        HighResCache[artistName] = bi;
-                    else
-                        vm.ArtistImageCache[artistName] = bi;
-                    return bi;
-                }
-                catch { }
-            }
-
             if (isHighRes && vm.ArtistImageCache.TryGetValue(artistName, out var fallbackImg))
                 return fallbackImg;
+
+            // Offload decode entirely from the UI thread
+            if (coord != null && _inFlightDecodes.TryAdd(artistName + (isHighRes ? ":full" : ":thumb"), 1))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var priority = isHighRes ? ImageLoading.ImagePriority.Playback : ImageLoading.ImagePriority.Visible;
+                        var result = await coord.LoadArtistImageAsync(artistName, isHighRes, priority).ConfigureAwait(false);
+                        if (result != null)
+                        {
+                            if (isHighRes)
+                                HighResCache[artistName] = result;
+                            else
+                                vm.ArtistImageCache[artistName] = result;
+
+                            // Notify on UI thread
+                            var disp = Application.Current?.Dispatcher;
+                            if (disp != null && !disp.HasShutdownStarted)
+                            {
+                                _ = disp.BeginInvoke(() => vm.NotifyArtistImagesChanged(), System.Windows.Threading.DispatcherPriority.Background);
+                            }
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        _inFlightDecodes.TryRemove(artistName + (isHighRes ? ":full" : ":thumb"), out _);
+                    }
+                });
+            }
         }
 
         return DefaultArtistImage ?? string.Empty as object;

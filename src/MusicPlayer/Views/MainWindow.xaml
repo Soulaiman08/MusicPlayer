@@ -4553,7 +4553,7 @@
               </Grid.RowDefinitions>
               <Border Name="PlayingPageArea" Grid.Row="0" ClipToBounds="True" Cursor="Hand" PreviewMouseLeftButtonDown="PlayingPageArea_PreviewMouseLeftButtonDown" PreviewMouseMove="PlayingPageArea_PreviewMouseMove" PreviewMouseLeftButtonUp="PlayingPageArea_PreviewMouseLeftButtonUp" PreviewMouseWheel="PlayingPageArea_PreviewMouseWheel">
                 <Grid Name="SlideHost">
-                  <Grid Name="AlbumArtPageGrid" CacheMode="BitmapCache">
+                  <Grid Name="AlbumArtPageGrid">
                     <UIElement.RenderTransform>
                       <TranslateTransform x:Name="AlbumArtTransform" X="0" />
                     </UIElement.RenderTransform>
@@ -4563,20 +4563,8 @@
                         <GradientStop Color="#FF0D0F13" Offset="1" />
                       </LinearGradientBrush>
                     </Panel.Background>
-                    <Border Margin="24,16" MaxWidth="560" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center">
-                      <Border.Background>
-                        <SolidColorBrush Color="#00000000" />
-                      </Border.Background>
-                      <Viewbox Stretch="Uniform">
-                        <Image CacheMode="BitmapCache" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" UseLayoutRounding="True" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}">
-                          <UIElement.Clip>
-                            <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="16">
-                              <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
-                              <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
-                            </MultiBinding>
-                          </UIElement.Clip>
-                        </Image>
-                      </Viewbox>
+                    <Border Margin="24,16" MaxWidth="560" MaxHeight="560" CornerRadius="16" ClipToBounds="True" HorizontalAlignment="Center" VerticalAlignment="Center">
+                      <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" UseLayoutRounding="True" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" />
                     </Border>
                   </Grid>
                   <Grid Name="LyricsPageGrid" CacheMode="BitmapCache" Visibility="Collapsed">
@@ -4674,15 +4662,8 @@
                   <Border.Effect>
                     <DropShadowEffect Color="#000000" BlurRadius="28" ShadowDepth="6" Opacity="0.5" Direction="270" />
                   </Border.Effect>
-                  <Image CacheMode="BitmapCache" RenderOptions.BitmapScalingMode="HighQuality" Stretch="UniformToFill"
-                         Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}">
-                    <UIElement.Clip>
-                      <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="14">
-                        <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />
-                        <Binding Path="ActualHeight" RelativeSource="{RelativeSource Self}" />
-                      </MultiBinding>
-                    </UIElement.Clip>
-                  </Image>
+                  <Image RenderOptions.BitmapScalingMode="HighQuality" Stretch="UniformToFill"
+                         Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" />
                 </Border>
 
                 <StackPanel VerticalAlignment="Bottom" Margin="24,0,24,24">

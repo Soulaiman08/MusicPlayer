@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using MusicPlayer.ImageLoading;
 
 namespace MusicPlayer.Services;
 
@@ -41,6 +42,12 @@ public sealed class ArtistImageService : IDisposable
 
     public string? GetCachedPath(string artist)
     {
+        if (ImageLoadingCoordinator.Instance?.ArtistImages != null)
+        {
+            var p = ImageLoadingCoordinator.Instance.ArtistImages.GetCachedPath(artist);
+            if (p != null) return p;
+        }
+
         if (string.IsNullOrWhiteSpace(artist)) return null;
 
         var lower = artist.Trim().ToLowerInvariant();
@@ -64,6 +71,12 @@ public sealed class ArtistImageService : IDisposable
 
     public async Task<string?> GetArtistImageAsync(string artist, CancellationToken ct = default)
     {
+        if (ImageLoadingCoordinator.Instance?.ArtistImages != null)
+        {
+            var p = await ImageLoadingCoordinator.Instance.ArtistImages.GetOrFetchArtistImagePathAsync(artist, ct).ConfigureAwait(false);
+            if (p != null) return p;
+        }
+
         if (string.IsNullOrWhiteSpace(artist)) return null;
 
         // Skip unknown/placeholder artist names
@@ -170,6 +183,12 @@ public sealed class ArtistImageService : IDisposable
     /// </summary>
     public async Task UpgradeExistingCacheAsync(CancellationToken ct = default)
     {
+        if (ImageLoadingCoordinator.Instance?.ArtistImages != null)
+        {
+            await ImageLoadingCoordinator.Instance.ArtistImages.UpgradeExistingCacheAsync(ct).ConfigureAwait(false);
+            return;
+        }
+
         try
         {
             var files = Directory.GetFiles(_cacheDir, "*.jpg");

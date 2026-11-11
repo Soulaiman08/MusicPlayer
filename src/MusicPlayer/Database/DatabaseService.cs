@@ -104,6 +104,7 @@ public class DatabaseService
             _db.CreateTable<Setting>();
             _db.CreateTable<LyricBinding>();
             _db.CreateTable<ManagedMusicFolder>();
+            _db.CreateTable<AlbumArtRecord>();
 
             _logger.LogInformation("Database initialized successfully at {Path}", _db.DatabasePath);
         }
@@ -809,9 +810,15 @@ public class DatabaseService
     {
         using var _ = LockIfNeeded();
         var key = album.Trim();
+        var managedPaths = _db.Table<ManagedMusicFolder>()
+            .Where(f => f.Enabled)
+            .Select(f => f.Path)
+            .ToList();
         var all = _db.Table<MusicTrack>().ToList();
         var tracks = all
-            .Where(t => !t.IsHidden && string.Equals(t.Album?.Trim(), key, StringComparison.OrdinalIgnoreCase))
+            .Where(t => !t.IsHidden &&
+                string.Equals(t.Album?.Trim(), key, StringComparison.OrdinalIgnoreCase) &&
+                (!string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp))))
             .OrderBy(t => t.TrackNumber)
             .ThenBy(t => t.Title ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(t => t.FilePath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
@@ -848,9 +855,15 @@ public class DatabaseService
     {
         using var _ = LockIfNeeded();
         var key = artist.Trim();
+        var managedPaths = _db.Table<ManagedMusicFolder>()
+            .Where(f => f.Enabled)
+            .Select(f => f.Path)
+            .ToList();
         return _db.Table<MusicTrack>()
             .ToList()
-            .Where(t => !t.IsHidden && string.Equals(t.Artist?.Trim(), key, StringComparison.OrdinalIgnoreCase))
+            .Where(t => !t.IsHidden &&
+                string.Equals(t.Artist?.Trim(), key, StringComparison.OrdinalIgnoreCase) &&
+                (!string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp))))
             .OrderBy(t => t.Album)
             .ThenBy(t => t.TrackNumber)
             .ToList();
@@ -898,8 +911,14 @@ public class DatabaseService
     public List<string> GetAllGenres()
     {
         using var _ = LockIfNeeded();
+        var managedPaths = _db.Table<ManagedMusicFolder>()
+            .Where(f => f.Enabled)
+            .Select(f => f.Path)
+            .ToList();
         return _db.Table<MusicTrack>()
-            .Where(t => !t.IsHidden && !string.IsNullOrEmpty(t.Genre))
+            .ToList()
+            .Where(t => !t.IsHidden && !string.IsNullOrEmpty(t.Genre) &&
+                (!string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp))))
             .Select(t => t.Genre)
             .Distinct()
             .OrderBy(g => g)
@@ -909,8 +928,15 @@ public class DatabaseService
     public List<MusicTrack> GetGenreTracks(string genre)
     {
         using var _ = LockIfNeeded();
+        var managedPaths = _db.Table<ManagedMusicFolder>()
+            .Where(f => f.Enabled)
+            .Select(f => f.Path)
+            .ToList();
         return _db.Table<MusicTrack>()
-            .Where(t => !t.IsHidden && t.Genre == genre)
+            .ToList()
+            .Where(t => !t.IsHidden &&
+                string.Equals(t.Genre, genre, StringComparison.OrdinalIgnoreCase) &&
+                (!string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp))))
             .OrderBy(t => t.Artist)
             .ThenBy(t => t.Album)
             .ToList();
@@ -948,6 +974,43 @@ public class DatabaseService
     private MusicTrack? GetTrackByPathLocked(string path)
     {
         return _db.Table<MusicTrack>().FirstOrDefault(t => t.FilePath == path);
+    }
+
+    // Album Art Records (Unified Image Loading System)
+    public AlbumArtRecord? GetAlbumArtRecord(string normalizedTrackPath)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedTrackPath)) return null;
+        using var _ = LockIfNeeded();
+        return _db.Table<AlbumArtRecord>().FirstOrDefault(r => r.NormalizedTrackPath == normalizedTrackPath);
+    }
+
+    public void UpsertAlbumArtRecord(AlbumArtRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (string.IsNullOrWhiteSpace(record.NormalizedTrackPath)) return;
+        using var _ = LockIfNeeded();
+        var existing = _db.Table<AlbumArtRecord>().FirstOrDefault(r => r.NormalizedTrackPath == record.NormalizedTrackPath);
+        if (existing == null)
+        {
+            _db.Insert(record);
+        }
+        else
+        {
+            _db.Update(record);
+        }
+    }
+
+    public void DeleteAlbumArtRecord(string normalizedTrackPath)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedTrackPath)) return;
+        using var _ = LockIfNeeded();
+        _db.Table<AlbumArtRecord>().Delete(r => r.NormalizedTrackPath == normalizedTrackPath);
+    }
+
+    public List<AlbumArtRecord> GetAllAlbumArtRecords()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<AlbumArtRecord>().ToList();
     }
 
     public void Dispose()

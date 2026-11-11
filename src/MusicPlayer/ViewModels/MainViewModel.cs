@@ -173,6 +173,12 @@ public partial class MainViewModel : ViewModelBase
 	private bool _isSyncingPitchText;
 
 	private string _currentTab = "songs";
+
+	// Tracks whether the data for the currently displayed tab/view has finished
+	// loading. A tab that has never completed a load is "Loading", so an empty
+	// collection during loading is NOT treated as a genuinely empty library.
+	private readonly TabLoadingStateTracker _tabLoading = new();
+
 	private bool _isMagicSoundOn;
 	private PlaylistViewModel? _selectedPlaylistForEdit;
 	private BulkObservableCollection<MusicTrack> _playlistEditTracks = new BulkObservableCollection<MusicTrack>();
@@ -1308,6 +1314,8 @@ public partial class MainViewModel : ViewModelBase
 				OnPropertyChanged("IsAlbumsTab");
 				OnPropertyChanged("IsGenresTab");
 				OnPropertyChanged("IsFoldersTab");
+				OnPropertyChanged("HasNoMusic");
+				OnPropertyChanged("IsCurrentTabLoading");
 			}
 		}
 	}
@@ -1443,15 +1451,68 @@ public partial class MainViewModel : ViewModelBase
 		}
 	}
 
+	private string CurrentContentKey =>
+		CurrentView == "songs" ? "tab:" + _currentTab : "view:" + CurrentView;
+
+	private TabLoadingStateTracker.State GetTabLoadState(string key)
+	{
+		return _tabLoading.IsLoading(key) ? TabLoadingStateTracker.State.Loading : TabLoadingStateTracker.State.Loaded;
+	}
+
+	private void SetTabLoadState(string key, TabLoadingStateTracker.State state)
+	{
+		if (string.IsNullOrWhiteSpace(key)) return;
+		if (state == TabLoadingStateTracker.State.Loading)
+			_tabLoading.Begin(key);
+		else
+			_tabLoading.MarkLoaded(key);
+		OnPropertyChanged("HasNoMusic");
+		if (key == CurrentContentKey)
+			OnPropertyChanged("IsCurrentTabLoading");
+	}
+
+	private int BeginTabLoad(string key)
+	{
+		if (string.IsNullOrWhiteSpace(key)) return 0;
+		int generation = _tabLoading.Begin(key);
+		OnPropertyChanged("HasNoMusic");
+		if (key == CurrentContentKey)
+			OnPropertyChanged("IsCurrentTabLoading");
+		return generation;
+	}
+
+	private void EndTabLoad(string key, int generation)
+	{
+		if (string.IsNullOrWhiteSpace(key)) return;
+		if (!_tabLoading.End(key, generation)) return;
+		OnPropertyChanged("HasNoMusic");
+		if (key == CurrentContentKey)
+			OnPropertyChanged("IsCurrentTabLoading");
+	}
+
+	// True while the data for the currently displayed tab/view has not finished
+	// loading. XAML may bind to this to keep Empty State hidden during loads.
+	public bool IsCurrentTabLoading => _tabLoading.IsLoading(CurrentContentKey);
+
 	public bool HasNoMusic
 	{
 		get
 		{
-			if (!IsSearching)
+			if (IsSearching) return false;
+			// Never report "empty" while the current content is still loading.
+			if (_tabLoading.IsLoading(CurrentContentKey)) return false;
+			if (CurrentView == "songs")
 			{
-				return DisplayedTracks.Count == 0;
+				return _currentTab switch
+				{
+					"artists" => Artists.Count == 0,
+					"albums" => Albums.Count == 0,
+					"genres" => Genres.Count == 0,
+					"folders" => Folders.Count == 0,
+					_ => DisplayedTracks.Count == 0
+				};
 			}
-			return false;
+			return DisplayedTracks.Count == 0;
 		}
 	}
 
@@ -4272,6 +4333,17 @@ public partial class MainViewModel : ViewModelBase
 		_winIntegration = winIntegration;
 		_backgroundTaskRegistry = new BackgroundTaskRegistry(logger);
 		_uiOps = new UiOperationTracker(logger);
+		// Initial empty-state gating: the first songs tab is loading until
+		// InitializeAsync finishes. Track that transition without modifying
+		// InitializeAsync itself.
+		PropertyChanged += (sender, args) =>
+		{
+			if (args.PropertyName == nameof(IsInitializing) && !IsInitializing)
+			{
+				int loadGeneration = BeginTabLoad("tab:songs");
+				EndTabLoad("tab:songs", loadGeneration);
+			}
+		};
 		EqPreset[] presets = EqPreset.Presets;
 		foreach (EqPreset item in presets)
 		{
@@ -6260,6 +6332,7 @@ public async Task LoadLibraryAsync()
 {
 	using var operation = _uiOps.TryBegin(nameof(LoadLibrary));
 	if (operation == null) return;
+	int loadGeneration = BeginTabLoad("tab:songs");
 	try
 	{
 		List<MusicTrack> tracks;
@@ -6287,6 +6360,10 @@ public async Task LoadLibraryAsync()
 	catch (Exception ex)
 	{
 		_logger.LogError(ex, "LoadLibrary failed");
+	}
+	finally
+	{
+		EndTabLoad("tab:songs", loadGeneration);
 	}
 }
 
@@ -6341,11 +6418,12 @@ private async Task LoadAlbumsAsync()
 {
 	using var operation = _uiOps.TryBegin(nameof(LoadAlbums));
 	if (operation == null) return;
+	int loadGeneration = BeginTabLoad("tab:albums");
 	try
 	{
 		var swTotal = System.Diagnostics.Stopwatch.StartNew();
 		var swFetch = System.Diagnostics.Stopwatch.StartNew();
-		List<MusicTrack> items = await Task.Run(() => (from g in _db.GetAllTracks()
+		List<MusicTrack> items = await Task.Run(() => (from g in _db.GetManagedFolderTracks()
 				.GroupBy<MusicTrack, string>(t => string.IsNullOrWhiteSpace(t.Album) ? "Unknown Album" : t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
 			select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
 			orderby t.Album
@@ -6362,12 +6440,17 @@ private async Task LoadAlbumsAsync()
 		await ReplaceAllChunkedAsync(Albums, sortedAlbums);
 		long publishMs = swPublish.ElapsedMilliseconds;
 		PerfTabData("albums", Albums.Count);
+		OnPropertyChanged("HasNoMusic");
 		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
 			LogHelper.LogInfo($"TAB-DATA albums fetchMs={fetchMs} sortMs={sortMs} publishMs={publishMs} totalMs={swTotal.ElapsedMilliseconds} count={sortedAlbums.Count}");
 	}
 	catch (Exception ex)
 	{
 		_logger.LogError(ex, "LoadAlbums failed");
+	}
+	finally
+	{
+		EndTabLoad("tab:albums", loadGeneration);
 	}
 }
 
@@ -6377,6 +6460,7 @@ private async Task LoadArtistsAsync()
 {
 	using var operation = _uiOps.TryBegin(nameof(LoadArtists));
 	if (operation == null) return;
+	int loadGeneration = BeginTabLoad("tab:artists");
 	try
 	{
 		(List<MusicTrack>, List<KeyValuePair<string, string>>) tuple = _preloadedArtistResult ?? (await BuildArtistItemsAsync());
@@ -6403,6 +6487,7 @@ private async Task LoadArtistsAsync()
 		await ReplaceAllChunkedAsync(Artists, sortedArtists);
 		long fillMs = swFill.ElapsedMilliseconds;
 		PerfTabData("artists", Artists.Count);
+		OnPropertyChanged("HasNoMusic");
 		var swKick = System.Diagnostics.Stopwatch.StartNew();
 		StartTrackedBackgroundTask("FetchMissingArtistImages", ct => FetchMissingArtistImagesAsync(result.Items, ct));
 		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
@@ -6412,13 +6497,17 @@ private async Task LoadArtistsAsync()
 	{
 		_logger.LogError(ex, "LoadArtists failed");
 	}
+	finally
+	{
+		EndTabLoad("tab:artists", loadGeneration);
+	}
 }
 
 	private Task<(List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages)> BuildArtistItemsAsync()
 	{
 		return Task.Run(delegate
 		{
-			List<MusicTrack> list = (from t in (from t in _db.GetAllTracks()
+			List<MusicTrack> list = (from t in (from t in _db.GetManagedFolderTracks()
 					where !string.IsNullOrWhiteSpace(t.Artist)
 					select t).GroupBy<MusicTrack, string>((MusicTrack t) => t.Artist.Trim(), StringComparer.OrdinalIgnoreCase).Select(delegate(IGrouping<string, MusicTrack> g)
 				{
@@ -6444,6 +6533,11 @@ private async Task LoadArtistsAsync()
 			}
 			return (Items: list, CachedImages: list2);
 		});
+	}
+
+	public void NotifyArtistImagesChanged()
+	{
+		OnPropertyChanged(nameof(ArtistImages));
 	}
 
 	private async Task FetchMissingArtistImagesAsync(List<MusicTrack> items, CancellationToken cancellationToken = default)
@@ -6548,9 +6642,10 @@ private async Task LoadArtistsAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadGenres));
 		if (operation == null) return;
+		int loadGeneration = BeginTabLoad("tab:genres");
 		try
 		{
-			List<MusicTrack> genres = await Task.Run(() => (from g in (from t in _db.GetAllTracks()
+			List<MusicTrack> genres = await Task.Run(() => (from g in (from t in _db.GetManagedFolderTracks()
 					where !string.IsNullOrWhiteSpace(t.Genre)
 					select t).GroupBy<MusicTrack, string>((MusicTrack t) => t.Genre.Trim(), StringComparer.OrdinalIgnoreCase)
 				select (from t in g
@@ -6566,12 +6661,17 @@ private async Task LoadArtistsAsync()
 			await DispatchAsync(delegate
 			{
 				Genres.ReplaceAll(items);
+				OnPropertyChanged("HasNoMusic");
 			});
 			PerfTabData("genres", Genres.Count);
 		}
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadGenres failed");
+		}
+		finally
+		{
+			EndTabLoad("tab:genres", loadGeneration);
 		}
 	}
 
@@ -6581,6 +6681,7 @@ private async Task LoadArtistsAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadFolders));
 		if (operation == null) return;
+		int loadGeneration = BeginTabLoad("tab:folders");
 		try
 		{
 			List<FolderItem> folderItems = await Task.Run(delegate
@@ -6613,6 +6714,10 @@ private async Task LoadArtistsAsync()
 		{
 			_logger.LogError(ex, "LoadFolders failed");
 		}
+		finally
+		{
+			EndTabLoad("tab:folders", loadGeneration);
+		}
 	}
 
 	private void LoadFolderDetail(string folderPath) => _ = LoadFolderDetailAsync(folderPath);
@@ -6622,6 +6727,7 @@ private async Task LoadArtistsAsync()
 		using var operation = _uiOps.TryBegin(nameof(LoadFolderDetail));
 		if (operation == null) return;
 		string folderPath2 = folderPath;
+		int loadGeneration = BeginTabLoad("view:folder_detail");
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetFolderTracks(folderPath2).ToList());
@@ -6639,6 +6745,10 @@ private async Task LoadArtistsAsync()
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadFolderDetail failed");
+		}
+		finally
+		{
+			EndTabLoad("view:folder_detail", loadGeneration);
 		}
 	}
 
@@ -6888,6 +6998,7 @@ private async Task LoadArtistsAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadFavoriteTracks));
 		if (operation == null) return;
+		int loadGeneration = BeginTabLoad("view:favorites");
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetFavoriteTracks());
@@ -6900,6 +7011,10 @@ private async Task LoadArtistsAsync()
 		{
 			_logger.LogError(ex, "LoadFavoriteTracks failed");
 		}
+		finally
+		{
+			EndTabLoad("view:favorites", loadGeneration);
+		}
 	}
 
 	private void LoadRecentPlayTracks() => _ = LoadRecentPlayTracksAsync();
@@ -6908,6 +7023,7 @@ private async Task LoadArtistsAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadRecentPlayTracks));
 		if (operation == null) return;
+		int loadGeneration = BeginTabLoad("view:recent");
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetRecentPlay());
@@ -6920,6 +7036,10 @@ private async Task LoadArtistsAsync()
 		{
 			_logger.LogError(ex, "LoadRecentPlayTracks failed");
 		}
+		finally
+		{
+			EndTabLoad("view:recent", loadGeneration);
+		}
 	}
 
 	private void LoadRecentAddTracks() => _ = LoadRecentAddTracksAsync();
@@ -6928,6 +7048,7 @@ private async Task LoadArtistsAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadRecentAddTracks));
 		if (operation == null) return;
+		int loadGeneration = BeginTabLoad("view:recent_add");
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetRecentAdd());
@@ -6940,6 +7061,10 @@ private async Task LoadArtistsAsync()
 		{
 			_logger.LogError(ex, "LoadRecentAddTracks failed");
 		}
+		finally
+		{
+			EndTabLoad("view:recent_add", loadGeneration);
+		}
 	}
 
 	private void LoadMostPlayedTracks() => _ = LoadMostPlayedTracksAsync();
@@ -6948,6 +7073,7 @@ private async Task LoadArtistsAsync()
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadMostPlayedTracks));
 		if (operation == null) return;
+		int loadGeneration = BeginTabLoad("view:most_played");
 		try
 		{
 			List<MusicTrack> tracks = await Task.Run(() => _db.GetMostPlay());
@@ -6959,6 +7085,10 @@ private async Task LoadArtistsAsync()
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadMostPlayedTracks failed");
+		}
+		finally
+		{
+			EndTabLoad("view:most_played", loadGeneration);
 		}
 	}
 
@@ -8933,6 +9063,7 @@ private async Task LoadArtistsAsync()
 		OnPropertyChanged("DisplayedTracks");
 		OnPropertyChanged("CanNavigateBack");
 		OnPropertyChanged("HasNoMusic");
+		OnPropertyChanged("IsCurrentTabLoading");
 	}
 
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]

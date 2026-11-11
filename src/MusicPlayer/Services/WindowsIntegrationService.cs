@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
+using MusicPlayer.ImageLoading;
 using MusicPlayer.Library;
 using MusicPlayer.Models;
 using MusicPlayer.Utilities;
@@ -358,9 +359,19 @@ public sealed class WindowsIntegrationService : IDisposable
             // disk cache ({md5}.jpg). Resolve it off the UI thread (TagLib fallback).
             string? artFile = null;
             if (!string.IsNullOrWhiteSpace(track.AlbumArtPath) && File.Exists(track.AlbumArtPath))
+            {
                 artFile = track.AlbumArtPath;
+            }
             else
-                artFile = await Task.Run(() => AlbumArtLoader.Instance?.GetCachedArtFilePath(track));
+            {
+                // Prefer the async coordinator path (no thread hop + blocking inside Task.Run).
+                // Fall back to the synchronous AlbumArtLoader path if coordinator is not available.
+                var coord = ImageLoadingCoordinator.Instance;
+                if (coord != null)
+                    artFile = await coord.GetCachedArtFilePathAsync(track, track.FilePath).ConfigureAwait(false);
+                else
+                    artFile = await Task.Run(() => AlbumArtLoader.Instance?.GetCachedArtFilePath(track)).ConfigureAwait(false);
+            }
             if (!string.IsNullOrWhiteSpace(artFile) && File.Exists(artFile))
             {
                 var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(artFile);

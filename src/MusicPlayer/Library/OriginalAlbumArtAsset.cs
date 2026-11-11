@@ -139,11 +139,25 @@ internal static class AlbumArtSourceResolver
             try
             {
                 using var tagFile = TagLib.File.Create(sourcePath);
+
+                // Two-pass: skip non-image frames (e.g. C2PA manifests with MIME
+                // "application/c2pa"). Prefer FrontCover; fall back to first image/* frame.
+                TagLib.IPicture? best = null;
                 foreach (var picture in tagFile.Tag.Pictures)
                 {
-                    if (picture.Data.Data is { Length: > 0 } data)
-                        return data;
+                    if (picture.Data.Data is not { Length: > 0 }) continue;
+                    if (!IsImageMime(picture.MimeType)) continue; // skip C2PA, PDF, etc.
+
+                    if (picture.Type == TagLib.PictureType.FrontCover)
+                    {
+                        best = picture;
+                        break;
+                    }
+                    best ??= picture;
                 }
+
+                if (best?.Data.Data is { Length: > 0 } data)
+                    return data;
             }
             catch { }
         }
@@ -251,6 +265,14 @@ internal static class AlbumArtSourceResolver
             || extension.Equals(".ogg", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".wma", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Returns true when the MIME type is an image/* type.
+    /// Rejects non-image embedded frames such as C2PA manifests ("application/c2pa").
+    /// </summary>
+    private static bool IsImageMime(string? mime)
+        => !string.IsNullOrEmpty(mime) &&
+           mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed class AlbumArtDerivedAssetCache
@@ -292,15 +314,37 @@ internal sealed class AlbumArtAssetService
 {
     private readonly ConcurrentDictionary<string, OriginalAlbumArtAsset> _originalByIdentity =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, OriginalAlbumArtAsset> _originalByPath =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly AlbumArtDerivedAssetCache _derivedCache = new();
 
     public OriginalAlbumArtAsset? Resolve(MusicTrack? track)
     {
+        var path = AlbumArtSourceResolver.ResolveTrackSourcePath(track);
+        if (string.IsNullOrWhiteSpace(path)) return null;
+
+        if (_originalByPath.TryGetValue(path, out var cached) && cached != null)
+        {
+            if (File.Exists(path))
+            {
+                var fi = new FileInfo(path);
+                if (fi.Length == cached.Identity.FileSizeBytes && fi.LastWriteTimeUtc.Ticks == cached.Identity.LastModifiedUtcTicks)
+                {
+                    return cached;
+                }
+            }
+            else
+            {
+                return cached;
+            }
+        }
+
         var source = AlbumArtSourceResolver.Resolve(track);
         if (source == null || !source.IsValid)
             return source;
 
         _originalByIdentity[source.Identity.CacheKey] = source;
+        _originalByPath[path] = source;
         return source;
     }
 

@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using MusicPlayer.ImageLoading;
 using MusicPlayer.ViewModels;
 
 namespace MusicPlayer.Views.Controls;
@@ -210,6 +211,22 @@ public sealed class AsyncArtistImage : Image
             return;
         }
 
+        // Also check the coordinator's shared memory cache (populated by ArtistImageConverter / ArtistImageProvider).
+        var coord = ImageLoadingCoordinator.Instance;
+        if (coord != null)
+        {
+            var coordCached = coord.TryGetArtistImage(artist, isHighRes: false)
+                           ?? coord.TryGetArtistImage(artist, isHighRes: true);
+            if (coordCached != null)
+            {
+                _diagnosticWaitingForArtistPath = false;
+                WriteImageDiagnostic($"coordinator memory cache hit artist='{artist}'");
+                var image = vm.ArtistImageCache.GetOrAdd(artist, coordCached);
+                Source = image;
+                return;
+            }
+        }
+
         if (!vm.ArtistImages.TryGetValue(artist, out var path) || string.IsNullOrWhiteSpace(path))
         {
             _diagnosticWaitingForArtistPath = true;
@@ -265,6 +282,18 @@ public sealed class AsyncArtistImage : Image
 
                 WriteImageDiagnostic($"image decode succeeded artist='{artist}'");
                 var image = vm.ArtistImageCache.GetOrAdd(artist, task.Result);
+
+                // Also populate the coordinator's shared memory cache so ArtistImageConverter
+                // and other consumers can hit it without re-decoding.
+                var coordForCache = ImageLoadingCoordinator.Instance;
+                if (coordForCache != null && image is BitmapSource)
+                {
+                    coordForCache.MemoryCache.Set(
+                        ArtistImageProvider.NormalizeKey(artist),
+                        ImageKind.Artist,
+                        ImageQuality.Thumbnail,
+                        image);
+                }
                 WriteFocusedImageDiagnostic(
                     $"ImageSource created type={image.GetType().Name} " +
                     $"size={image.Width:0.##}x{image.Height:0.##} " +

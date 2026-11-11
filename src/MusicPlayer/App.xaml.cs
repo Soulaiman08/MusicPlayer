@@ -361,6 +361,14 @@ public partial class App : Application
                 // Pre-create all singleton services on background thread to avoid UI thread blocking
                 provider.GetRequiredService<PlaybackService>();
                 provider.GetRequiredService<MusicScanner>();
+                provider.GetRequiredService<MusicPlayer.ImageLoading.ImageLoadingCoordinator>();
+                // Clean up any leftover temp files from a previous crash/abrupt shutdown.
+                try
+                {
+                    MusicPlayer.ImageLoading.ImageLoadingCoordinator.Instance?.DiskCache
+                        .CleanOldTempFiles(TimeSpan.FromHours(1));
+                }
+                catch { }
                 provider.GetRequiredService<AlbumArtLoader>();
                 provider.GetRequiredService<WindowsIntegrationService>();
                 provider.GetRequiredService<SystemTrayService>();
@@ -500,6 +508,9 @@ public partial class App : Application
 
         services.AddSingleton<DatabaseService>(sp =>
             new DatabaseService(AppPaths.DatabasePath, sp.GetRequiredService<ILogger<DatabaseService>>()));
+
+        services.AddSingleton<MusicPlayer.ImageLoading.ImageLoadingCoordinator>(sp =>
+            new MusicPlayer.ImageLoading.ImageLoadingCoordinator(sp.GetRequiredService<DatabaseService>(), sp.GetService<ILogger<MusicPlayer.ImageLoading.ImageLoadingCoordinator>>()));
         
         services.AddSingleton<AudioEngine>();
         services.AddSingleton<MusicScanner>(sp =>
