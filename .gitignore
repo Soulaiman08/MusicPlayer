@@ -59,6 +59,26 @@ stdout.txt
 scratch_*.txt
 *.wpftmp.csproj
 
+# Untracked docs (session-generated, not for commit)
+docs/PERFORMANCE_INVESTIGATION_UI_REDESIGN_CURRENT_AR.md
+docs/PHASE_0_1_P0_IMPLEMENTATION_AR.md
+docs/PHASE_0_SCALABILITY_FIXTURE_AR.md
+docs/PHASE_2_P1_IMPLEMENTATION_AR.md
+docs/PHASE_3_P2_DB_VIEWMODELS_AR.md
+docs/PHASE_4_FINAL_VERIFICATION_AR.md
+
+# Untracked markdown files (session-generated, not for commit)
+tools/MusicPlayer.Fixture/README.md
+
+# Untracked test files (session-generated, not for commit)
+tests/MusicPlayer.Tests/MusicPlayer.Tests/AlbumCardQueryTests.cs
+tests/MusicPlayer.Tests/MusicPlayer.Tests/AsyncArtistImageRequestPolicyTests.cs
+tests/MusicPlayer.Tests/MusicPlayer.Tests/BulkObservableCollectionTests.cs
+tests/MusicPlayer.Tests/MusicPlayer.Tests/FixtureNameNormalizerTests.cs
+tests/MusicPlayer.Tests/MusicPlayer.Tests/ImageLoadSchedulerTests.cs
+tests/MusicPlayer.Tests/MusicPlayer.Tests/LibrarySortTests.cs
+tests/MusicPlayer.Tests/MusicPlayer.Tests/VirtualizationConfigurationTests.cs
+
 # OS Generated Files
 .DS_Store
 Thumbs.db
