@@ -1177,7 +1177,11 @@ public class MusicScanner
         int fixedCount = 0;
         try
         {
-            var tracks = _db.GetAllTracks();
+            // Only get tracks where DateAdded is 0 (unset) or clearly wrong (before 1970)
+            // Use a public method on DatabaseService
+            var tracks = _db.GetTracksWithUnsetDateAdded();
+            if (tracks.Count == 0) return 0;
+
             _db.BeginTransaction();
             foreach (var track in tracks)
             {

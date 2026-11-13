@@ -53,3 +53,9 @@ public sealed class FolderAggregate
     public int NewestYear { get; set; }
     public long NewestDateAdded { get; set; }
 }
+
+/// <summary>Projection for genre names.</summary>
+internal sealed class GenreNameRow
+{
+    public string Name { get; set; } = string.Empty;
+}

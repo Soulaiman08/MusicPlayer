@@ -4618,16 +4618,21 @@ public partial class MainViewModel : ViewModelBase
 		bool skipBackgroundWarmup = Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1";
 		if (!skipBackgroundWarmup)
 			StartTrackedBackgroundTask("WarmUpAndRefresh", ct => WarmUpAndRefreshAsync(sortedTracks, ct));
-		StartTrackedBackgroundTask("WallpaperWarmupLoop", async ct =>
+		bool skipWallpaperWarmup = Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWALLPAPERWARMUP") == "1" ||
+			Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1";
+		if (!skipWallpaperWarmup)
 		{
-			while (!ct.IsCancellationRequested)
+			StartTrackedBackgroundTask("WallpaperWarmupLoop", async ct =>
 			{
-				await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-					quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, ct);
-				if (ct.IsCancellationRequested) break;
-				if (await EnsureWallpapersLoadedAsync(false, true, ct)) break;
-			}
-		});
+				while (!ct.IsCancellationRequested)
+				{
+					await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
+						quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, ct);
+					if (ct.IsCancellationRequested) break;
+					if (await EnsureWallpapersLoadedAsync(false, true, ct)) break;
+				}
+			});
+		}
 		// Re-crop all existing cached artist images with smart face-centered square crop.
 		// Cancelled while the user interacts, resumed when they pause — re-cropping is
 		// idempotent (already square files are skipped), so restarting stays cheap.
@@ -4852,6 +4857,14 @@ public partial class MainViewModel : ViewModelBase
 
 	private async Task RunUpgradeArtistCacheAsync(CancellationToken cancellationToken = default)
 	{
+		// PERFTEST GATE: Skip artist cache upgrade if MUSICPLAYER_PERFTEST_NOARTISTWARMUP=1 or NOWARMUP=1
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOARTISTWARMUP") == "1" ||
+		    Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1")
+		{
+			LogHelper.LogInfo("[ArtistImages] RunUpgradeArtistCacheAsync SKIPPED (PERFTEST gate)");
+			return;
+		}
+
 		try
 		{
 			await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(quietMs: 30000, minAgeMs: 45000, maxWaitMs: int.MaxValue, cancellationToken);
@@ -6685,7 +6698,10 @@ private async Task LoadArtistsAsync()
 		PerfTabData("artists", Artists.Count);
 		OnPropertyChanged("HasNoMusic");
 		var swKick = System.Diagnostics.Stopwatch.StartNew();
-		StartTrackedBackgroundTask("FetchMissingArtistImages", ct => FetchMissingArtistImagesAsync(result.Items, ct));
+		bool skipArtistFetch = Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOARTISTWARMUP") == "1" ||
+			Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1";
+		if (!skipArtistFetch)
+			StartTrackedBackgroundTask("FetchMissingArtistImages", ct => FetchMissingArtistImagesAsync(result.Items, ct));
 		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
 			LogHelper.LogInfo($"TAB-ARTISTS sortMs={sortMs} fillMs={fillMs} fetchKickMs={swKick.ElapsedMilliseconds}");
 	}
@@ -6872,6 +6888,14 @@ private async Task LoadArtistsAsync()
 
 	private async Task FetchMissingArtistImagesAsync(List<MusicTrack> items, CancellationToken cancellationToken = default)
 	{
+		// PERFTEST GATE: Skip artist image background fetch if MUSICPLAYER_PERFTEST_NOARTISTWARMUP=1 or NOWARMUP=1
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOARTISTWARMUP") == "1" ||
+		    Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1")
+		{
+			LogHelper.LogInfo("[ArtistImages] FetchMissingArtistImagesAsync SKIPPED (PERFTEST gate)");
+			return;
+		}
+
 		try
 		{
 			// Filter on the calling (UI) thread — cheap dictionary/string reads.
@@ -9394,6 +9418,14 @@ private async Task LoadArtistsAsync()
 
 	private void StartWallpaperPreload(IEnumerable<string> sources)
 	{
+		// PERFTEST GATE: Skip wallpaper preload if MUSICPLAYER_PERFTEST_NOWALLPAPERWARMUP=1 or NOWARMUP=1
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWALLPAPERWARMUP") == "1" ||
+		    Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1")
+		{
+			LogHelper.LogInfo("[Wallpaper] StartWallpaperPreload SKIPPED (PERFTEST gate)");
+			return;
+		}
+
 		if (_backgroundTaskRegistry.IsStopping)
 		{
 			return;
@@ -9496,6 +9528,14 @@ private async Task LoadArtistsAsync()
 	/// false when aborted because the user interacted — the caller should retry later.</returns>
 	private async Task<bool> EnsureWallpapersLoadedAsync(bool forceReload = false, bool abortIfUserActive = false, CancellationToken cancellationToken = default)
 	{
+		// PERFTEST GATE: Skip wallpaper loading if MUSICPLAYER_PERFTEST_NOWALLPAPERWARMUP=1 or NOWARMUP=1
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWALLPAPERWARMUP") == "1" ||
+		    Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1")
+		{
+			LogHelper.LogInfo("[Wallpaper] EnsureWallpapersLoadedAsync SKIPPED (PERFTEST gate)");
+			return false;
+		}
+
 		if (cancellationToken.IsCancellationRequested) return false;
 		if (!forceReload && Wallpapers.Count > 0)
 		{

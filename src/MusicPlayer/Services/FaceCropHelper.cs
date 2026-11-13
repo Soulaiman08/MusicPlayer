@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
@@ -14,12 +15,25 @@ public static class FaceCropHelper
 {
     private static FaceDetector? _faceDetector;
     private static bool _initialized;
+    private static readonly object _initLock = new();
+    private static Task<FaceDetector?>? _initTask;
 
-    private static async Task<FaceDetector?> GetDetectorAsync()
+    private static Task<FaceDetector?> GetDetectorAsync()
     {
-        if (_initialized) return _faceDetector;
-        _initialized = true;
+        if (_initialized) return Task.FromResult(_faceDetector);
 
+        lock (_initLock)
+        {
+            if (_initialized) return Task.FromResult(_faceDetector);
+            if (_initTask != null) return _initTask;
+
+            _initTask = InitializeDetectorAsync();
+            return _initTask;
+        }
+    }
+
+    private static async Task<FaceDetector?> InitializeDetectorAsync()
+    {
         try
         {
             if (FaceDetector.IsSupported)
@@ -29,6 +43,7 @@ public static class FaceCropHelper
         }
         catch { }
 
+        _initialized = true;
         return _faceDetector;
     }
 
@@ -37,10 +52,12 @@ public static class FaceCropHelper
     /// perfectly centered on the artist's face/upper body with proper portrait headroom.
     /// Falls back to smart upper-third crop for tall portrait images when no frontal face is detected.
     /// </summary>
-    public static async Task<byte[]> ProcessArtistImageAsync(byte[] inputBytes, int targetSize = 512)
+    public static async Task<byte[]> ProcessArtistImageAsync(byte[] inputBytes, int targetSize = 512, CancellationToken ct = default)
     {
         if (inputBytes == null || inputBytes.Length == 0)
             return Array.Empty<byte>();
+
+        ct.ThrowIfCancellationRequested();
 
         try
         {
@@ -61,6 +78,8 @@ public static class FaceCropHelper
             if (origW <= 0 || origH <= 0)
                 return inputBytes;
 
+            ct.ThrowIfCancellationRequested();
+
             // If already a square, just resize if necessary
             if (origW == origH)
             {
@@ -68,7 +87,9 @@ public static class FaceCropHelper
             }
 
             // Detect faces using WinRT FaceDetector if available
-            Rect? faceBounds = await DetectFaceBoundsAsync(inputBytes, origW, origH);
+            Rect? faceBounds = await DetectFaceBoundsAsync(inputBytes, origW, origH, ct);
+
+            ct.ThrowIfCancellationRequested();
 
             // Compute the optimal square crop box
             Int32Rect cropRect = CalculateSmartSquareCrop(origW, origH, faceBounds);
@@ -79,6 +100,10 @@ public static class FaceCropHelper
             // Scale to targetSize x targetSize
             return ResizeSquare(cropped, targetSize);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch
         {
             // Fallback: return original bytes if processing fails
@@ -86,12 +111,14 @@ public static class FaceCropHelper
         }
     }
 
-    private static async Task<Rect?> DetectFaceBoundsAsync(byte[] inputBytes, int origW, int origH)
+    private static async Task<Rect?> DetectFaceBoundsAsync(byte[] inputBytes, int origW, int origH, CancellationToken ct)
     {
         try
         {
             var detector = await GetDetectorAsync();
             if (detector == null) return null;
+
+            ct.ThrowIfCancellationRequested();
 
             using var ras = new InMemoryRandomAccessStream();
             using (var writer = new DataWriter(ras.GetOutputStreamAt(0)))
@@ -113,7 +140,9 @@ public static class FaceCropHelper
                 grayBitmap = origBitmap;
             }
 
-            var faces = await detector.DetectFacesAsync(grayBitmap);
+            ct.ThrowIfCancellationRequested();
+
+            var faces = await detector.DetectFacesAsync(grayBitmap).AsTask(ct);
             if (faces == null || faces.Count == 0) return null;
 
             // Compute union bounding box of all detected faces
@@ -130,6 +159,10 @@ public static class FaceCropHelper
             }
 
             return new Rect(minX, minY, Math.Max(1, maxX - minX), Math.Max(1, maxY - minY));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {

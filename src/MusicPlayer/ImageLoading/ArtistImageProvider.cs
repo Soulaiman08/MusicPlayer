@@ -175,9 +175,10 @@ public sealed class ArtistImageProvider : IDisposable
 
         try
         {
+            // Use Background priority for network fetch - this is a background operation
             string? imageUrl = await _scheduler.ScheduleAsync(
                 OperationType.NetworkFetch,
-                ImagePriority.Playback,
+                ImagePriority.Background,
                 token => SearchArtistImageAsync(artist, token),
                 ct).ConfigureAwait(false);
 
@@ -185,13 +186,18 @@ public sealed class ArtistImageProvider : IDisposable
 
             byte[] data = await _scheduler.ScheduleAsync(
                 OperationType.NetworkFetch,
-                ImagePriority.Playback,
+                ImagePriority.Background,
                 token => _http.GetByteArrayAsync(imageUrl, token),
                 ct).ConfigureAwait(false);
 
             if (data == null || data.Length < 2000) return null;
 
-            data = await FaceCropHelper.ProcessArtistImageAsync(data).ConfigureAwait(false);
+            // Process with ImageProcessing priority (face crop)
+            data = await _scheduler.ScheduleAsync(
+                OperationType.ImageDecode, // Using ImageDecode gate for CPU-bound processing
+                ImagePriority.Background,
+                _ => FaceCropHelper.ProcessArtistImageAsync(data, ct: ct),
+                ct).ConfigureAwait(false);
             if (data.Length < 100) return null;
 
             await File.WriteAllBytesAsync(tempPath, data, ct).ConfigureAwait(false);
@@ -217,7 +223,7 @@ public sealed class ArtistImageProvider : IDisposable
         try
         {
             var files = Directory.GetFiles(_cacheDir, "*.jpg");
-            var sem = new SemaphoreSlim(3);
+            var sem = new SemaphoreSlim(2); // Limit concurrent processing
             var tasks = files.Select(async file =>
             {
                 await sem.WaitAsync(ct).ConfigureAwait(false);
@@ -230,7 +236,13 @@ public sealed class ArtistImageProvider : IDisposable
                     var isAlreadySquare = await IsImageSquareAsync(original).ConfigureAwait(false);
                     if (isAlreadySquare) return;
 
-                    var processed = await FaceCropHelper.ProcessArtistImageAsync(original).ConfigureAwait(false);
+                    // Use the scheduler with ImageProcessing priority
+                    var processed = await _scheduler.ScheduleAsync(
+                        OperationType.ImageDecode, // CPU-bound work
+                        ImagePriority.Background,
+                        _ => FaceCropHelper.ProcessArtistImageAsync(original, ct: ct),
+                        ct).ConfigureAwait(false);
+
                     if (processed.Length > 1000)
                     {
                         string temp = file + ".upgtmp";

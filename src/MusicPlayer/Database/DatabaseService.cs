@@ -166,10 +166,21 @@ public class DatabaseService
         if (managedPaths.Count == 0)
             return new List<MusicTrack>();
 
-        var allTracks = _db.Table<MusicTrack>().ToList();
-        return allTracks.Where(t =>
-            !t.IsHidden &&
-            !string.IsNullOrEmpty(t.FilePath) &&
+        // Build a parameterized IN query for managed folder paths
+        // We need to use PathContainment logic, so we use a subquery approach
+        var placeholders = string.Join(",", managedPaths.Select((_, i) => $"@path{i}"));
+        
+        // Use a more efficient query that filters at the DB level where possible
+        // First, get candidate tracks that might be in managed folders using LIKE
+        // Then apply exact PathContainment in memory for accuracy
+        var pathConditions = managedPaths.Select((p, i) => $"FilePath LIKE ? || '%'").ToList();
+        string whereClause = $"IsHidden = 0 AND ({string.Join(" OR ", pathConditions)})";
+        
+        var query = _db.Query<MusicTrack>($"SELECT * FROM tracks WHERE {whereClause}", 
+            managedPaths.Select((p, i) => (object)p).ToArray());
+
+        return query.Where(t => 
+            !string.IsNullOrEmpty(t.FilePath) && 
             managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)))
             .ToList();
     }
@@ -249,6 +260,14 @@ public class DatabaseService
     {
         using var _ = LockIfNeeded();
         return _db.Table<MusicTrack>().FirstOrDefault(t => t.FilePath == path);
+    }
+
+    public List<MusicTrack> GetTracksWithUnsetDateAdded()
+    {
+        using var _ = LockIfNeeded();
+        return _db.Table<MusicTrack>()
+            .Where(t => !t.IsHidden && (t.DateAdded <= 0 || t.DateAdded < 31536000))
+            .ToList();
     }
 
     public void RemoveMissingTracks(IEnumerable<string>? scannedRoots = null)
@@ -346,17 +365,30 @@ public class DatabaseService
         if (managedPaths.Count == 0)
             return (0, 0, 0, 0, 0, 0);
 
-        var allTracks = _db.Table<MusicTrack>().ToList()
-            .Where(t => !t.IsHidden && IsTrackInManagedFolderLocked(t, managedPaths))
-            .ToList();
+        // Build path conditions for SQL queries
+        var pathConditions = managedPaths.Select((p, i) => $"FilePath LIKE ? || '%'").ToList();
+        string whereClause = $"IsHidden = 0 AND ({string.Join(" OR ", pathConditions)})";
+        var parameters = managedPaths.Select((p, i) => (object)p).ToArray();
 
-        int trackCount = allTracks.Count;
+        // Track count
+        int trackCount = _db.ExecuteScalar<int>($"SELECT COUNT(*) FROM tracks WHERE {whereClause}", parameters);
+
+        // Folder count
         int folderCount = managedPaths.Count;
-        int favoriteCount = allTracks.Count(t => t.IsFavorite);
-        int recentPlayCount = allTracks.Count(t => t.DateLastPlayed > 0);
+
+        // Favorite count
+        int favoriteCount = _db.ExecuteScalar<int>($"SELECT COUNT(*) FROM tracks WHERE {whereClause} AND IsFavorite = 1", parameters);
+
+        // Recent play count
+        int recentPlayCount = _db.ExecuteScalar<int>($"SELECT COUNT(*) FROM tracks WHERE {whereClause} AND DateLastPlayed > 0", parameters);
+
+        // Recent add count
         long thirtyDaysAgo = DateTimeOffset.UtcNow.AddDays(-30).ToUnixTimeSeconds();
-        int recentAddCount = allTracks.Count(t => t.DateAdded > thirtyDaysAgo);
-        int mostPlayedCount = allTracks.Count(t => t.PlayCount > 0);
+        int recentAddCount = _db.ExecuteScalar<int>($"SELECT COUNT(*) FROM tracks WHERE {whereClause} AND DateAdded > {thirtyDaysAgo}", parameters);
+
+        // Most played count
+        int mostPlayedCount = _db.ExecuteScalar<int>($"SELECT COUNT(*) FROM tracks WHERE {whereClause} AND PlayCount > 0", parameters);
+
         return (trackCount, folderCount, favoriteCount, recentPlayCount, recentAddCount, mostPlayedCount);
     }
 
@@ -1109,9 +1141,41 @@ public class DatabaseService
         var key = NormalizeArtistName(artistName);
         if (string.IsNullOrEmpty(key)) return new List<MusicTrack>();
 
-        return _db.Table<MusicTrack>()
-            .ToList()
-            .Where(t => !t.IsHidden && (ArtistFieldMatches(t.Artist, key) || ArtistFieldMatches(t.AlbumArtist, key)))
+        var managedPaths = _db.Table<ManagedMusicFolder>()
+            .Where(f => f.Enabled)
+            .Select(f => f.Path)
+            .ToList();
+
+        if (managedPaths.Count == 0) return new List<MusicTrack>();
+
+        // Build path conditions for SQL using positional parameters
+        var pathConditions = managedPaths.Select((p, i) => $"FilePath LIKE ? || '%'").ToList();
+        string pathWhere = string.Join(" OR ", pathConditions);
+        
+        string sql = $@"
+            SELECT * FROM tracks 
+            WHERE IsHidden = 0 
+            AND ({pathWhere})
+            AND (
+                LOWER(TRIM(Artist)) = ?
+                OR LOWER(TRIM(AlbumArtist)) = ?
+                OR LOWER(TRIM(Artist)) LIKE ? || ',%'
+                OR LOWER(TRIM(Artist)) LIKE '%, ' || ?
+                OR LOWER(TRIM(AlbumArtist)) LIKE ? || ',%'
+                OR LOWER(TRIM(AlbumArtist)) LIKE '%, ' || ?
+            )
+            ORDER BY Album, TrackNumber";
+
+        var parameters = new List<object>();
+        foreach (var p in managedPaths) parameters.Add(p);
+        // Add artist parameter 6 times
+        for (int i = 0; i < 6; i++) parameters.Add(key);
+
+        var candidates = _db.Query<MusicTrack>(sql, parameters.ToArray());
+
+        // Apply exact PathContainment check for accuracy
+        return candidates
+            .Where(t => !string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)))
             .OrderBy(t => t.Album)
             .ThenBy(t => t.TrackNumber)
             .ToList();
@@ -1149,13 +1213,18 @@ public class DatabaseService
             .Where(f => f.Enabled)
             .Select(f => f.Path)
             .ToList();
-        return _db.Table<MusicTrack>()
-            .ToList()
-            .Where(t => !t.IsHidden && !string.IsNullOrEmpty(t.Genre) &&
-                (!string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp))))
-            .Select(t => t.Genre)
-            .Distinct()
-            .OrderBy(g => g)
+        
+        if (managedPaths.Count == 0) return new List<string>();
+
+        var pathConditions = managedPaths.Select((p, i) => $"FilePath LIKE ? || '%'").ToList();
+        string whereClause = $"IsHidden = 0 AND Genre IS NOT NULL AND TRIM(Genre) <> '' AND ({string.Join(" OR ", pathConditions)})";
+        var parameters = managedPaths.Select((p, i) => (object)p).ToArray();
+
+        var genreRows = _db.Query<GenreNameRow>($"SELECT DISTINCT Genre AS Name FROM tracks WHERE {whereClause} ORDER BY Genre", parameters);
+        
+        return genreRows
+            .Select(r => r.Name)
+            .Where(g => !string.IsNullOrEmpty(g))
             .ToList();
     }
 
@@ -1166,13 +1235,20 @@ public class DatabaseService
             .Where(f => f.Enabled)
             .Select(f => f.Path)
             .ToList();
-        return _db.Table<MusicTrack>()
-            .ToList()
-            .Where(t => !t.IsHidden &&
-                string.Equals(t.Genre, genre, StringComparison.OrdinalIgnoreCase) &&
-                (!string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp))))
-            .OrderBy(t => t.Artist)
-            .ThenBy(t => t.Album)
+        
+        if (managedPaths.Count == 0) return new List<MusicTrack>();
+
+        var pathConditions = managedPaths.Select((p, i) => $"FilePath LIKE ? || '%'").ToList();
+        string whereClause = $"IsHidden = 0 AND Genre = ? COLLATE NOCASE AND ({string.Join(" OR ", pathConditions)})";
+
+        var parameters = new List<object>();
+        parameters.Add(genre);
+        foreach (var p in managedPaths) parameters.Add(p);
+
+        var candidates = _db.Query<MusicTrack>($"SELECT * FROM tracks WHERE {whereClause} ORDER BY Artist, Album, TrackNumber", parameters.ToArray());
+
+        return candidates
+            .Where(t => !string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)))
             .ToList();
     }
 

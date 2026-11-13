@@ -786,13 +786,24 @@
                 </Style.Triggers>
               </Style>
             </Grid.Style>
-          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="28,24,28,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True" Visibility="{Binding CurrentView, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=home}">
-            <StackPanel>
-              <Border Background="#331D2026" CornerRadius="12" Padding="16" Margin="0,0,0,20" Visibility="{Binding SearchQuery, Converter={StaticResource StringNullOrEmptyToVisibilityConverter}}">
-                <StackPanel>
-                  <TextBlock Text="Search Results" Style="{StaticResource APK_TextSectionTitle}" Margin="0,0,0,12" />
+          <ScrollViewer x:Name="HomeScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="28,24,28,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True" Visibility="{Binding CurrentView, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=home}">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+              </Grid.RowDefinitions>
+              <!-- Search Results Section -->
+              <Border Grid.Row="0" Background="#331D2026" CornerRadius="12" Padding="16" Margin="0,0,0,20" Visibility="{Binding SearchQuery, Converter={StaticResource StringNullOrEmptyToVisibilityConverter}}">
+                <Grid>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <TextBlock Grid.Row="0" Text="Search Results" Style="{StaticResource APK_TextSectionTitle}" Margin="0,0,0,12" />
                   <!-- Table Header -->
-                  <Border Background="#0AFFFFFF" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" Height="36" Margin="0,0,0,0">
+                  <Border Grid.Row="1" Background="#0AFFFFFF" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" Height="36" Margin="0,0,0,0">
                     <Grid>
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="48" />
@@ -803,10 +814,9 @@
                       <Path Grid.Column="0" Data="{StaticResource Icon.Album}" Fill="#60FFFFFF" Stretch="Uniform" Width="15" Height="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
                       <TextBlock Grid.Column="1" Text="Title" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
                       <TextBlock Grid.Column="2" Text="Artists" Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="12,0,8,0" />
-
                     </Grid>
                   </Border>
-                  <ItemsControl ItemsSource="{Binding SearchResults}">
+                  <ItemsControl Grid.Row="2" ItemsSource="{Binding SearchResults}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
                     <ItemsControl.ItemsPanel>
                       <ItemsPanelTemplate>
                         <VirtualizingStackPanel VirtualizingPanel.ScrollUnit="Pixel" />
@@ -851,11 +861,12 @@
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
-                  <TextBlock Text="No results found" Style="{StaticResource APK_TextMediumStyle}" HorizontalAlignment="Center" Margin="0,16" Visibility="{Binding SearchResults.Count, Converter={StaticResource ZeroToVisibilityConverter}}" />
-                </StackPanel>
+                  <TextBlock Grid.Row="3" Text="No results found" Style="{StaticResource APK_TextMediumStyle}" HorizontalAlignment="Center" Margin="0,16" Visibility="{Binding SearchResults.Count, Converter={StaticResource ZeroToVisibilityConverter}}" />
+                </Grid>
               </Border>
-              <local:HomeContent />
-            </StackPanel>
+              <!-- Home Content -->
+              <local:HomeContent Grid.Row="1" />
+            </Grid>
           </ScrollViewer>
           <Grid Visibility="{Binding IsTrackListView, Converter={StaticResource BoolToVisibilityConverter}}">
             <Grid.RowDefinitions>

@@ -12,15 +12,17 @@ public sealed class SingleFlightCoordinator<TResult>
         private readonly object _gate = new();
         private readonly CancellationTokenSource _internalCts = new();
         private int _waiterCount;
-        private readonly System.Threading.Tasks.Task<TResult?> _task;
+        private System.Threading.Tasks.Task<TResult?>? _task;
+        private readonly Func<CancellationToken, System.Threading.Tasks.Task<TResult?>> _factory;
 
         public Flight(Func<CancellationToken, System.Threading.Tasks.Task<TResult?>> factory)
         {
             _waiterCount = 1;
-            _task = System.Threading.Tasks.Task.Run(() => factory(_internalCts.Token));
+            _factory = factory;
+            // Task is NOT started here - it will be started after successful insertion into dictionary
         }
 
-        public System.Threading.Tasks.Task<TResult?> Task => _task;
+        public System.Threading.Tasks.Task<TResult?> Task => _task ??= System.Threading.Tasks.Task.Run(() => _factory(_internalCts.Token));
 
         public void AddWaiter()
         {
@@ -35,7 +37,7 @@ public sealed class SingleFlightCoordinator<TResult>
             lock (_gate)
             {
                 _waiterCount--;
-                if (_waiterCount <= 0 && !_task.IsCompleted)
+                if (_waiterCount <= 0 && _task != null && !_task.IsCompleted)
                 {
                     try { _internalCts.Cancel(); } catch { }
                 }

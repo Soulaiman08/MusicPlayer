@@ -181,6 +181,14 @@ public sealed class ArtistImageService : IDisposable
     /// </summary>
     public async Task UpgradeExistingCacheAsync(CancellationToken ct = default)
     {
+        // PERFTEST GATE: Skip cache upgrade if MUSICPLAYER_PERFTEST_NOARTISTWARMUP=1 or NOWARMUP=1
+        if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOARTISTWARMUP") == "1" ||
+            Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1")
+        {
+            _logger.LogInformation("UpgradeExistingCache SKIPPED (PERFTEST gate)");
+            return;
+        }
+
         if (ImageLoadingCoordinator.Instance?.ArtistImages != null)
         {
             await ImageLoadingCoordinator.Instance.ArtistImages.UpgradeExistingCacheAsync(ct).ConfigureAwait(false);
@@ -192,7 +200,7 @@ public sealed class ArtistImageService : IDisposable
             var files = Directory.GetFiles(_cacheDir, "*.jpg");
             _logger.LogInformation("UpgradeExistingCache: upgrading {Count} cached images with face-crop", files.Length);
 
-            var sem = new SemaphoreSlim(3);
+            var sem = new SemaphoreSlim(2); // Reduced from 3 to limit concurrent CPU-bound work
             var tasks = files.Select(async file =>
             {
                 await sem.WaitAsync(ct);
@@ -209,7 +217,7 @@ public sealed class ArtistImageService : IDisposable
                     var isAlreadySquare = await IsImageSquareAsync(original);
                     if (isAlreadySquare) return;
 
-                    var processed = await FaceCropHelper.ProcessArtistImageAsync(original);
+                    var processed = await FaceCropHelper.ProcessArtistImageAsync(original, ct: ct);
                     if (processed.Length > 1000)
                     {
                         await File.WriteAllBytesAsync(file, processed, ct);
