@@ -241,10 +241,37 @@ public class AlbumArtLoader : IDisposable
     private readonly ImageLoadingCoordinator _coordinator;
     private readonly bool _ownsCoordinator;
 
-    // Direct in-memory cache mirrors for test inspection compatibility
+    // Direct in-memory cache mirrors for test inspection compatibility.
+    // They are deliberately bounded: the coordinator's LRU only evicts its own
+    // map, so an unbounded mirror here pinned every decoded bitmap for the
+    // whole session (one of the main sources of the 550-650 MB private set).
+    private const int ThumbnailCacheLimit = 400;
+    private const int MediumCacheLimit = 200;
+    private const int FullCacheLimit = 32;
+
     private readonly ConcurrentDictionary<string, ImageSource?> _cache = new();
     private readonly ConcurrentDictionary<string, ImageSource?> _mediumCache = new();
     private readonly ConcurrentDictionary<string, ImageSource?> _fullQualityCache = new();
+
+    private static void StoreBounded(
+        ConcurrentDictionary<string, ImageSource?> cache,
+        string key,
+        ImageSource? value,
+        int limit)
+    {
+        if (string.IsNullOrWhiteSpace(key) || value == null) return;
+
+        cache[key] = value;
+        if (cache.Count <= limit) return;
+
+        int target = Math.Max(1, limit * 3 / 4);
+        foreach (var pair in cache)
+        {
+            if (cache.Count <= target) break;
+            if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase)) continue;
+            cache.TryRemove(pair.Key, out _);
+        }
+    }
 
     private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingThumbnailImages = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingMediumImages = new(StringComparer.OrdinalIgnoreCase);
@@ -428,7 +455,7 @@ public class AlbumArtLoader : IDisposable
                ?? _coordinator.TryGetAlbumArt(filePath, ImageQuality.Thumbnail);
         if (mem != null)
         {
-            _cache[filePath] = mem;
+            StoreBounded(_cache, filePath, mem, ThumbnailCacheLimit);
             return mem;
         }
 
@@ -463,7 +490,7 @@ public class AlbumArtLoader : IDisposable
                ?? _coordinator.TryGetAlbumArt(path, ImageQuality.Medium);
         if (mem != null)
         {
-            _mediumCache[path] = mem;
+            StoreBounded(_mediumCache, path, mem, MediumCacheLimit);
             return mem;
         }
 
@@ -502,7 +529,7 @@ public class AlbumArtLoader : IDisposable
                ?? _coordinator.TryGetAlbumArt(path, ImageQuality.Full);
         if (mem != null)
         {
-            _fullQualityCache[path] = mem;
+            StoreBounded(_fullQualityCache, path, mem, FullCacheLimit);
             return mem;
         }
 
@@ -537,9 +564,9 @@ public class AlbumArtLoader : IDisposable
 
                     if (result != null)
                     {
-                        if (quality == ImageQuality.Thumbnail) _cache[path] = result;
-                        else if (quality == ImageQuality.Medium) _mediumCache[path] = result;
-                        else if (quality == ImageQuality.Full) _fullQualityCache[path] = result;
+                        if (quality == ImageQuality.Thumbnail) StoreBounded(_cache, path, result, ThumbnailCacheLimit);
+                        else if (quality == ImageQuality.Medium) StoreBounded(_mediumCache, path, result, MediumCacheLimit);
+                        else if (quality == ImageQuality.Full) StoreBounded(_fullQualityCache, path, result, FullCacheLimit);
 
                         if (track != null)
                         {
@@ -644,7 +671,7 @@ public class AlbumArtLoader : IDisposable
                 try
                 {
                     var art = _coordinator.LoadAlbumArtAsync(track, track.FilePath, ImageQuality.Thumbnail, ImagePriority.Preload, cancellationToken).GetAwaiter().GetResult();
-                    if (art != null) _cache[track.FilePath] = art;
+                    if (art != null) StoreBounded(_cache, track.FilePath, art, ThumbnailCacheLimit);
                 }
                 catch { }
             });
@@ -660,17 +687,11 @@ public class AlbumArtLoader : IDisposable
             var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
             if (list.Count == 0) return;
 
+            // PreloadTrackArtwork already loads and caches the exact same
+            // Thumbnail quality for every track. The old second sequential pass
+            // re-requested each one (cache hits only) and doubled the awaits per
+            // batch while keeping the warmup task alive longer.
             await PreloadTrackArtwork(list, cancellationToken).ConfigureAwait(false);
-
-            foreach (var track in list)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    await _coordinator.LoadAlbumArtAsync(track, track.FilePath, ImageQuality.Thumbnail, ImagePriority.Background, cancellationToken).ConfigureAwait(false);
-                }
-                catch { }
-            }
         }, cancellationToken);
     }
 
@@ -735,7 +756,7 @@ public class AlbumArtLoader : IDisposable
                     var result = await decodeAsync(_lifetimeCts.Token).ConfigureAwait(false);
                     if (result != null)
                     {
-                        _fullQualityCache[path] = result;
+                        StoreBounded(_fullQualityCache, path, result, FullCacheLimit);
                         if (track != null)
                         {
                             var asset = _assetService.Resolve(track);
@@ -783,7 +804,7 @@ public class AlbumArtLoader : IDisposable
                     var result = await decodeAsync(_lifetimeCts.Token).ConfigureAwait(false);
                     if (result != null)
                     {
-                        _mediumCache[path] = result;
+                        StoreBounded(_mediumCache, path, result, MediumCacheLimit);
                     }
                     return result;
                 }

@@ -2513,6 +2513,7 @@ InitializeComponent();
     {
         if (root == null) return 0;
         if (root is BalancedItemsPanel panel) return panel.Children.Count;
+        if (root is VirtualizingBalancedPanel virtualizingPanel) return virtualizingPanel.Children.Count;
         if (root is not System.Windows.Media.Visual && root is not System.Windows.Media.Media3D.Visual3D) return 0;
 
         int childCount = VisualTreeHelper.GetChildrenCount(root);

@@ -13,6 +13,7 @@
       <conv:AlbumCoverArtConverter x:Key="AlbumCoverArtConverter" />
       <conv:StringNullOrEmptyToVisibilityConverter x:Key="StringNullOrEmptyToVisibilityConverter" />
       <conv:EqualityToVisibilityConverter x:Key="EqualityToVisibilityConverter" />
+      <conv:SortCriterionAllowedConverter x:Key="SortCriterionAllowed" />
       <conv:ZeroToVisibilityConverter x:Key="ZeroToVisibilityConverter" />
       <conv:PlayModeToVisibilityConverter x:Key="PlayModeToVisibilityConverter" />
       <conv:IntEqualityToBrushConverter x:Key="IntEqualityToBrushConverter" />

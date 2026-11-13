@@ -32,6 +32,20 @@ using TagLib;
 
 namespace MusicPlayer.ViewModels;
 
+/// <summary>
+/// The kind of list a sort is applied to. It decides which field the cards are
+/// sorted by: the track title, the artist name, the album name, the genre name
+/// or the folder name.
+/// </summary>
+internal enum LibrarySortCollection
+{
+	Tracks,
+	Artists,
+	Albums,
+	Genres,
+	Folders
+}
+
 public partial class MainViewModel : ViewModelBase
 {
 	private readonly PlaybackService _playback;
@@ -108,7 +122,6 @@ public partial class MainViewModel : ViewModelBase
 	private bool _isSearching;
 	private bool _isWindowMaximized;
 	private string _librarySortOrder = "date_added";
-	private bool _isLibrarySortDescending;
 	private string _selectedLibraryTab = "songs";
 	private bool _isSelectMode;
 	private bool _isSongsSectionCollapsed;
@@ -529,6 +542,7 @@ public partial class MainViewModel : ViewModelBase
 
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.RelayCommandGenerator", "8.4.0.0")]
 	private RelayCommand? toggleSortMenuCommand;
+	private RelayCommand? openSortMenuCommand;
 
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.RelayCommandGenerator", "8.4.0.0")]
 	private RelayCommand? toggleOverflowMenuCommand;
@@ -1308,6 +1322,11 @@ public partial class MainViewModel : ViewModelBase
 			if (_currentTab != value)
 			{
 				_currentTab = value;
+				ApplyPendingLibrarySortForScope(CurrentSortScope());
+				PublishFilteredForCurrentTab();
+				OnPropertyChanged(nameof(EffectiveLibrarySortOrder));
+				OnPropertyChanged(nameof(SortCriterionLabel));
+				OnPropertyChanged(nameof(ApplicableLibrarySortCriteria));
 				OnPropertyChanged("CurrentTab");
 				OnPropertyChanged("IsSongsTab");
 				OnPropertyChanged("IsArtistsTab");
@@ -2334,31 +2353,161 @@ public partial class MainViewModel : ViewModelBase
 		[MemberNotNull("_librarySortOrder")]
 		set
 		{
-			if (!EqualityComparer<string>.Default.Equals(_librarySortOrder, value))
+			string normalized = NormalizeSortCriterion(value);
+			if (!EqualityComparer<string>.Default.Equals(_librarySortOrder, normalized))
 			{
 				OnPropertyChanging("LibrarySortOrder");
-				_librarySortOrder = value;
+				_librarySortOrder = normalized;
 				OnPropertyChanged("LibrarySortOrder");
+				OnPropertyChanged(nameof(SortCriterionLabel));
+				OnPropertyChanged(nameof(EffectiveLibrarySortOrder));
+				OnPropertyChanged(nameof(ApplicableLibrarySortCriteria));
 			}
 		}
 	}
 
-	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]
-	[ExcludeFromCodeCoverage]
+	/// <summary>The active sort criterion, shown in the sort menu header.</summary>
+	public string SortCriterionLabel => SortCriterionDisplayName(EffectiveLibrarySortOrder);
+
+	/// <summary>The direction of the active sort ("▲" ascending / "▼" descending).</summary>
+	public string SortDirectionGlyph => IsLibrarySortDescending ? "▼" : "▲";
+
+	/// <summary>
+	/// The criterion that is really applied to the collection on screen. The
+	/// artist / album / genre / folder cards only have a name, so criteria that
+	/// do not apply to them fall back to that name - the menu shows what is
+	/// actually in effect instead of a criterion that would be ignored.
+	/// </summary>
+	public string EffectiveLibrarySortOrder =>
+		EffectiveSortCriterion(LibrarySortOrder, CurrentSortCollection());
+
+	/// <summary>
+	/// The criteria that can be applied to a collection.
+	///
+	/// Every tab only offers the criteria that match the information it shows:
+	/// the songs list has all of them, the artist grid can be sorted by name,
+	/// track count, total duration or newest year, the album grid additionally
+	/// by artist and year, the genre grid by name, track count or duration and
+	/// the folder list by name or track count.
+	/// </summary>
+	private static string SortCriteriaForCollection(LibrarySortCollection collection) => collection switch
+	{
+		LibrarySortCollection.Artists => "title|size|duration|year|date_added|random",
+		LibrarySortCollection.Albums => "title|artist|year|size|duration|date_added|random",
+		LibrarySortCollection.Genres => "title|size|duration|year|date_added|random",
+		LibrarySortCollection.Folders => "title|size|duration|year|date_added|random",
+		_ => "title|artist|album|year|duration|size|date_added|folder|random",
+	};
+
+	internal static string ApplicableSortCriteria(string scope) => SortCriteriaForCollection(CollectionForScope(scope));
+
+	internal static LibrarySortCollection CollectionForScope(string scope) => scope switch
+	{
+		"artists" => LibrarySortCollection.Artists,
+		"albums" => LibrarySortCollection.Albums,
+		"genres" => LibrarySortCollection.Genres,
+		"folders" => LibrarySortCollection.Folders,
+		_ => LibrarySortCollection.Tracks,
+	};
+
+	internal static bool IsSortCriterionApplicable(string scope, string criterion) =>
+		SortCriteriaForCollection(CollectionForScope(scope))
+			.Split('|')
+			.Contains(criterion, StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>The criteria the sort menu offers for the tab on screen.</summary>
+	public string ApplicableLibrarySortCriteria => ApplicableSortCriteria(CurrentSortScope());
+
+	private LibrarySortCollection CurrentSortCollection() => CollectionForScope(CurrentSortScope());
+
+	internal static string SortCriterionDisplayName(string? criterion) => NormalizeSortCriterion(criterion) switch
+	{
+		"artist" => "Artist",
+		"album" => "Album",
+		"year" => "Year",
+		"duration" => "Duration",
+		"size" => "Size",
+		"date_added" => "Date added",
+		"folder" => "Folder",
+		"random" => "Random",
+		_ => "Title",
+	};
+
+	/// <summary>
+	/// The direction of the active sort.
+	///
+	/// Every criterion remembers its own direction (the usual behaviour of a
+	/// sortable list): "Date added" stays "newest first" while "Title" stays
+	/// "A→Z", and picking a criterion again only reverses that criterion.
+	/// </summary>
 	public bool IsLibrarySortDescending
 	{
 		get
 		{
-			return _isLibrarySortDescending;
+			return IsDescendingFor(LibrarySortOrder);
 		}
 		set
 		{
-			if (!EqualityComparer<bool>.Default.Equals(_isLibrarySortDescending, value))
+			string criterion = NormalizeSortCriterion(LibrarySortOrder);
+			if (IsDescendingFor(criterion) == value) return;
+
+			OnPropertyChanging("IsLibrarySortDescending");
+			_sortDirections[criterion] = value;
+			SaveSortDirections();
+			OnPropertyChanged("IsLibrarySortDescending");
+			OnPropertyChanged(nameof(SortDirectionGlyph));
+		}
+	}
+
+	private readonly Dictionary<string, bool> _sortDirections = new(StringComparer.Ordinal);
+
+	private const string SortDirectionsSettingKey = "pref_library_sort_directions";
+
+	private bool IsDescendingFor(string criterion) =>
+		ResolveDirection(_sortDirections, criterion);
+
+	/// <summary>
+	/// The direction of a criterion: its own remembered direction, or its
+	/// natural one ("date added" starts with the newest first).
+	/// </summary>
+	internal static bool ResolveDirection(IReadOnlyDictionary<string, bool> directions, string criterion)
+	{
+		string key = NormalizeSortCriterion(criterion);
+		return directions.TryGetValue(key, out bool descending) ? descending : DefaultSortDirection(key);
+	}
+
+	private void LoadSortDirections()
+	{
+		string stored = _db.GetSetting(SortDirectionsSettingKey);
+		if (string.IsNullOrWhiteSpace(stored)) return;
+
+		try
+		{
+			using var document = System.Text.Json.JsonDocument.Parse(stored);
+			foreach (var property in document.RootElement.EnumerateObject())
 			{
-				OnPropertyChanging("IsLibrarySortDescending");
-				_isLibrarySortDescending = value;
-				OnPropertyChanged("IsLibrarySortDescending");
+				if (property.Value.ValueKind == System.Text.Json.JsonValueKind.True ||
+					property.Value.ValueKind == System.Text.Json.JsonValueKind.False)
+				{
+					_sortDirections[NormalizeSortCriterion(property.Name)] = property.Value.GetBoolean();
+				}
 			}
+		}
+		catch
+		{
+			// A broken setting must never stop the app: the natural direction is used.
+		}
+	}
+
+	private void SaveSortDirections()
+	{
+		try
+		{
+			var payload = _sortDirections.ToDictionary(p => p.Key, p => p.Value);
+			_db.SetSetting(SortDirectionsSettingKey, System.Text.Json.JsonSerializer.Serialize(payload));
+		}
+		catch
+		{
 		}
 	}
 
@@ -4101,6 +4250,10 @@ public partial class MainViewModel : ViewModelBase
 
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.RelayCommandGenerator", "8.4.0.0")]
 	[ExcludeFromCodeCoverage]
+	public IRelayCommand OpenSortMenuCommand => openSortMenuCommand ?? (openSortMenuCommand = new RelayCommand(OpenSortMenu));
+
+	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.RelayCommandGenerator", "8.4.0.0")]
+	[ExcludeFromCodeCoverage]
 	public IRelayCommand ToggleOverflowMenuCommand => toggleOverflowMenuCommand ?? (toggleOverflowMenuCommand = new RelayCommand(ToggleOverflowMenu));
 
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.RelayCommandGenerator", "8.4.0.0")]
@@ -4266,41 +4419,27 @@ public partial class MainViewModel : ViewModelBase
 	private readonly System.Collections.Concurrent.ConcurrentDictionary<object, int> _tabFillGens = new();
 
 	/// <summary>
-	/// Fills a tab collection in small chunks, one per rendered frame, instead of a
-	/// single ReplaceAll.
+	/// Publishes a fully prepared list with one Reset on the UI thread.
+	///
+	/// This used to add 12 items per rendered frame so a non-virtualizing panel
+	/// would not realize every tile in one pass. Artists and Albums now use
+	/// VirtualizingBalancedPanel, so the expensive layout is bounded by the
+	/// viewport instead of the item count. Keeping the old Add-per-item path only
+	/// added N CollectionChanged notifications and repeated layout passes; one
+	/// Reset lets the virtualizing panel generate the visible containers once.
+	/// The generation counter still prevents a stale load from overwriting a
+	/// newer one.
 	/// </summary>
 	private async Task ReplaceAllChunkedAsync(BulkObservableCollection<MusicTrack> target, List<MusicTrack> items)
 	{
 		int gen = _tabFillGens.AddOrUpdate(target, 1, (_, current) => current + 1);
-		const int chunk = 12;
 		try
 		{
-			if (items.Count <= chunk)
-			{
-				await DispatchAsync(delegate
-				{
-					if (_tabFillGens.TryGetValue(target, out int currentGen) && gen == currentGen) target.ReplaceAll(items);
-				});
-				return;
-			}
-			var first = items.GetRange(0, chunk);
 			await DispatchAsync(delegate
 			{
-				if (_tabFillGens.TryGetValue(target, out int currentGen) && gen == currentGen) target.ReplaceAll(first);
+				if (_tabFillGens.TryGetValue(target, out int currentGen) && gen == currentGen)
+					target.ReplaceAll(items);
 			});
-			int i = chunk;
-			while (i < items.Count)
-			{
-				int take = Math.Min(chunk, items.Count - i);
-				var next = items.GetRange(i, take);
-				i += take;
-				await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
-				if (!_tabFillGens.TryGetValue(target, out int currentGen) || gen != currentGen)
-				{
-					return;
-				}
-				target.AddRangeIncremental(next);
-			}
 		}
 		catch
 		{
@@ -4411,6 +4550,7 @@ public partial class MainViewModel : ViewModelBase
 		// One authoritative refresh/sync pass: a root that is unavailable,
 		// partially enumerated, denied, or cancelled can never authorize deletion.
 		var scanResult = await _scanner.RefreshAndSyncLibraryAsync(token);
+		InvalidateManagedTracksSnapshot();
 		LogHelper.LogInfo($"[StartupPerf] RefreshAndSyncLibraryAsync done totalMs={_startupSw.ElapsedMilliseconds}");
 		_logger.LogInformation(
 			"Library refresh completed: added={Added}, updated={Updated}, removed={Removed}",
@@ -4420,7 +4560,10 @@ public partial class MainViewModel : ViewModelBase
 		LogHelper.LogInfo($"[StartupPerf] BackfillDateAdded done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		Task<(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount)> countsTask = Task.Run(() => _db.GetAllCounts());
-		Task<List<MusicTrack>> tracksTask = Task.Run(() => _db.GetManagedFolderTracksSorted((LibrarySortOrder == "date_added") ? "date_added" : ((LibrarySortOrder == "duration") ? "duration" : ((LibrarySortOrder == "size") ? "size" : ((LibrarySortOrder == "year") ? "year" : "title"))), (LibrarySortOrder == "date_added") ? (!IsLibrarySortDescending) : IsLibrarySortDescending).Take(5000).ToList());
+		string startupSortOrder = LibrarySortOrder;
+		bool startupSortDescending = IsLibrarySortDescending;
+		List<MusicTrack> startupSnapshot = await GetManagedTracksSnapshotAsync();
+		Task<List<MusicTrack>> tracksTask = Task.Run(() => SortItems(startupSnapshot, LibrarySortCollection.Tracks, startupSortOrder, startupSortDescending).Take(5000).ToList());
 		await Task.WhenAll(countsTask, tracksTask);
 		LogHelper.LogInfo($"[StartupPerf] Counts/Tracks loaded totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
@@ -4470,7 +4613,11 @@ public partial class MainViewModel : ViewModelBase
 		IsInitializing = false;
 		LogHelper.LogInfo($"[StartupPerf] InitializeAsync complete totalMs={_startupSw.ElapsedMilliseconds}");
 		// Row-thumbnail warmup runs immediately in background so the entire library is cached in RAM.
-		StartTrackedBackgroundTask("WarmUpAndRefresh", ct => WarmUpAndRefreshAsync(sortedTracks, ct));
+		// MUSICPLAYER_PERFTEST_NOWARMUP=1 disables the background warmup and the
+		// artist-cache re-crop so scroll measurements are not polluted by them.
+		bool skipBackgroundWarmup = Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOWARMUP") == "1";
+		if (!skipBackgroundWarmup)
+			StartTrackedBackgroundTask("WarmUpAndRefresh", ct => WarmUpAndRefreshAsync(sortedTracks, ct));
 		StartTrackedBackgroundTask("WallpaperWarmupLoop", async ct =>
 		{
 			while (!ct.IsCancellationRequested)
@@ -4484,7 +4631,8 @@ public partial class MainViewModel : ViewModelBase
 		// Re-crop all existing cached artist images with smart face-centered square crop.
 		// Cancelled while the user interacts, resumed when they pause — re-cropping is
 		// idempotent (already square files are skipped), so restarting stays cheap.
-		StartTrackedBackgroundTask("UpgradeArtistCache", ct => RunUpgradeArtistCacheAsync(ct));
+		if (!skipBackgroundWarmup)
+			StartTrackedBackgroundTask("UpgradeArtistCache", ct => RunUpgradeArtistCacheAsync(ct));
 	}
 
 	private bool StartTrackedBackgroundTask(string name, Func<CancellationToken, Task> operation)
@@ -6063,8 +6211,9 @@ public partial class MainViewModel : ViewModelBase
 	{
 		_settings.LoadAll();
 		_settings.SettingsChanged += OnSettingsChanged;
-		LibrarySortOrder = _settings.LibraryOrder;
-		IsLibrarySortDescending = _db.GetSettingBool("pref_library_sort_descending");
+		LoadSortDirections();
+		LibrarySortOrder = _settings.LibraryOrder ?? string.Empty;
+		IsLibrarySortDescending = ResolveStoredSortDirection();
 		Volume = _settings.Volume * 100f;
 		Balance = _settings.Balance;
 		Speed = _settings.Speed;
@@ -6337,10 +6486,20 @@ public async Task LoadLibraryAsync()
 	{
 		List<MusicTrack> tracks;
 		(int TrackCount, int FolderCount, int FavoriteCount, int RecentPlayCount, int RecentAddCount, int MostPlayedCount) counts;
-		(tracks, counts) = await Task.Run(() => (_db.GetManagedFolderTracksSorted((LibrarySortOrder == "date_added") ? "date_added" : ((LibrarySortOrder == "duration") ? "duration" : ((LibrarySortOrder == "size") ? "size" : ((LibrarySortOrder == "year") ? "year" : "title"))), (LibrarySortOrder == "date_added") ? (!IsLibrarySortDescending) : IsLibrarySortDescending).Take(5000).ToList(), _db.GetAllCounts()));
+		string sortOrder = LibrarySortOrder;
+		bool sortDescending = IsLibrarySortDescending;
+		List<MusicTrack> snapshot = await GetManagedTracksSnapshotAsync();
+		int sortVersion = LibrarySortVersion;
+		counts = await Task.Run(() => _db.GetAllCounts());
+		// The same canonical sort as every other surface: the Songs list used
+		// to be sorted with a second, incomplete mapping (see SortItems).
+		tracks = await Task.Run(() => SortItems(snapshot, LibrarySortCollection.Tracks, sortOrder, sortDescending).Take(5000).ToList());
+		LogSortTrace("tracks", tracks, sortOrder, sortDescending);
 		await DispatchAsync(delegate
 		{
 			Tracks.ReplaceAll(tracks);
+			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("songs");
+			MarkLibrarySortApplied("songs");
 			if (HomeCards.Count >= 6)
 			{
 				HomeCards[0].Count = counts.TrackCount.ToString();
@@ -6369,6 +6528,9 @@ public async Task LoadLibraryAsync()
 
 public void LoadLibraryFull()
 {
+	// The library changed (scan, hide/unhide, settings): the shared snapshot
+	// has to be dropped so the tab loaders do not publish stale data.
+	InvalidateManagedTracksSnapshot();
 	_ = LoadLibraryAsync();
 	_ = LoadAlbumsAsync();
 	_preloadedArtistResult = null;
@@ -6376,6 +6538,33 @@ public void LoadLibraryFull()
 	_ = LoadGenresAsync();
 	_ = LoadFoldersAsync();
 	_ = LoadPlaylistsAsync();
+}
+
+private readonly object _managedTracksSnapshotGate = new();
+private Task<List<MusicTrack>>? _managedTracksSnapshotTask;
+
+/// <summary>
+/// One shared snapshot of the managed-folder tracks for all tab loaders.
+///
+/// Tracks, Albums, Artists and Genres each used to read the whole
+/// <c>tracks</c> table on their own, so one refresh performed four full reads
+/// (and four full table materialisations) of the same data.
+/// </summary>
+private Task<List<MusicTrack>> GetManagedTracksSnapshotAsync()
+{
+	lock (_managedTracksSnapshotGate)
+	{
+		_managedTracksSnapshotTask ??= Task.Run(() => _db.GetManagedFolderTracks());
+		return _managedTracksSnapshotTask;
+	}
+}
+
+private void InvalidateManagedTracksSnapshot()
+{
+	lock (_managedTracksSnapshotGate)
+	{
+		_managedTracksSnapshotTask = null;
+	}
 }
 
 public void UpdateHomeCardCounts() => _ = UpdateHomeCardCountsAsync();
@@ -6423,21 +6612,23 @@ private async Task LoadAlbumsAsync()
 	{
 		var swTotal = System.Diagnostics.Stopwatch.StartNew();
 		var swFetch = System.Diagnostics.Stopwatch.StartNew();
-		List<MusicTrack> items = await Task.Run(() => (from g in _db.GetManagedFolderTracks()
-				.GroupBy<MusicTrack, string>(t => string.IsNullOrWhiteSpace(t.Album) ? "Unknown Album" : t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
-			select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
-			orderby t.Album
-			select t).ToList());
+		List<MusicTrack> snapshot = await GetManagedTracksSnapshotAsync();
+		int sortVersion = LibrarySortVersion;
+		List<MusicTrack> items = await Task.Run(() => BuildAlbumCards(snapshot));
 		long fetchMs = swFetch.ElapsedMilliseconds;
 		string sortOrder = LibrarySortOrder;
 		bool sortDescending = IsLibrarySortDescending;
 		var swSort = System.Diagnostics.Stopwatch.StartNew();
 		List<MusicTrack> sortedAlbums = items.Count >= 2
-			? await Task.Run(() => SortItems(items, false, sortOrder, sortDescending).ToList())
+			? await Task.Run(() => SortItems(items, LibrarySortCollection.Albums, sortOrder, sortDescending).ToList())
 			: items;
 		long sortMs = swSort.ElapsedMilliseconds;
+		LogSortTrace("albums", sortedAlbums, sortOrder, sortDescending);
 		var swPublish = System.Diagnostics.Stopwatch.StartNew();
 		await ReplaceAllChunkedAsync(Albums, sortedAlbums);
+		if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("albums");
+		MarkLibrarySortApplied("albums");
+		RefilterLoadedCollection(Albums, "albums");
 		long publishMs = swPublish.ElapsedMilliseconds;
 		PerfTabData("albums", Albums.Count);
 		OnPropertyChanged("HasNoMusic");
@@ -6476,15 +6667,20 @@ private async Task LoadArtistsAsync()
 		});
 		// Sort BEFORE inserting (single pass) and fill progressively so the
 		// WrapPanel never realizes all artist tiles inside one frame.
+		int sortVersion = LibrarySortVersion;
 		string sortOrder = LibrarySortOrder;
 		bool sortDescending = IsLibrarySortDescending;
 		var swSort = System.Diagnostics.Stopwatch.StartNew();
 		List<MusicTrack> sortedArtists = await Task.Run(() => result.Items.Count >= 2
-			? SortItems(result.Items, isArtistCollection: true, sortOrder, sortDescending).ToList()
+			? SortItems(result.Items, LibrarySortCollection.Artists, sortOrder, sortDescending).ToList()
 			: result.Items);
 		long sortMs = swSort.ElapsedMilliseconds;
+		LogSortTrace("artists", sortedArtists, sortOrder, sortDescending);
 		var swFill = System.Diagnostics.Stopwatch.StartNew();
 		await ReplaceAllChunkedAsync(Artists, sortedArtists);
+		if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("artists");
+		MarkLibrarySortApplied("artists");
+		RefilterLoadedCollection(Artists, "artists");
 		long fillMs = swFill.ElapsedMilliseconds;
 		PerfTabData("artists", Artists.Count);
 		OnPropertyChanged("HasNoMusic");
@@ -6503,19 +6699,111 @@ private async Task LoadArtistsAsync()
 	}
 }
 
-	private Task<(List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages)> BuildArtistItemsAsync()
+	/// <summary>
+	/// One card per album, with the real aggregates of the album (track count,
+	/// total duration, newest year) so the album grid can be sorted by them.
+	/// </summary>
+	private static List<MusicTrack> BuildAlbumCards(IEnumerable<MusicTrack> tracks) =>
+		tracks
+			.Where(t => !string.IsNullOrWhiteSpace(t.Album))
+			.GroupBy(t => t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
+			.Select(g =>
+			{
+				MusicTrack representative = DatabaseService.PickCanonicalTrack(g) ?? g.First();
+				string artist = g
+					.Where(t => !string.IsNullOrWhiteSpace(t.Artist))
+					.GroupBy(t => t.Artist.Trim(), StringComparer.OrdinalIgnoreCase)
+					.OrderByDescending(x => x.Count())
+					.ThenBy(x => x.Key, StringComparer.Ordinal)
+					.FirstOrDefault()?.Key ?? string.Empty;
+
+				return new MusicTrack
+				{
+					Id = representative.Id,
+					Title = representative.Title,
+					Album = g.Key,
+					Artist = artist,
+					AlbumArtist = artist,
+					AlbumArtPath = representative.AlbumArtPath,
+					FilePath = representative.FilePath,
+					FolderPath = representative.FolderPath,
+					Duration = representative.Duration,
+					TrackNumber = representative.TrackNumber,
+					CardTrackCount = g.Count(),
+					CardTotalDuration = g.Sum(t => t.Duration),
+					CardNewestYear = g.Max(t => t.Year),
+					CardNewestDateAdded = g.Max(t => t.DateAdded)
+				};
+			})
+			.ToList();
+
+	/// <summary>One card per genre, with the real aggregates of the genre.</summary>
+	private static List<MusicTrack> BuildGenreCards(IEnumerable<MusicTrack> tracks) =>
+		tracks
+			.Where(t => !string.IsNullOrWhiteSpace(t.Genre))
+			.GroupBy(t => t.Genre.Trim(), StringComparer.OrdinalIgnoreCase)
+			.Select(g =>
+			{
+				MusicTrack representative = g
+					.OrderBy(t => t.Artist)
+					.ThenBy(t => t.Album)
+					.First();
+
+				return new MusicTrack
+				{
+					Id = representative.Id,
+					Title = representative.Title,
+					Genre = g.Key,
+					Artist = representative.Artist,
+					Album = representative.Album,
+					AlbumArtPath = representative.AlbumArtPath,
+					FilePath = representative.FilePath,
+					FolderPath = representative.FolderPath,
+					Duration = representative.Duration,
+					TrackNumber = representative.TrackNumber,
+					CardTrackCount = g.Count(),
+					CardTotalDuration = g.Sum(t => t.Duration),
+					CardNewestYear = g.Max(t => t.Year),
+					CardNewestDateAdded = g.Max(t => t.DateAdded)
+				};
+			})
+			.ToList();
+
+	private async Task<(List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages)> BuildArtistItemsAsync()
 	{
-		return Task.Run(delegate
+		List<MusicTrack> snapshot = await GetManagedTracksSnapshotAsync();
+		return await Task.Run(delegate
 		{
-			List<MusicTrack> list = (from t in (from t in _db.GetManagedFolderTracks()
+			List<MusicTrack> list = (from t in (from t in snapshot
 					where !string.IsNullOrWhiteSpace(t.Artist)
 					select t).GroupBy<MusicTrack, string>((MusicTrack t) => t.Artist.Trim(), StringComparer.OrdinalIgnoreCase).Select(delegate(IGrouping<string, MusicTrack> g)
 				{
 					MusicTrack musicTrack = (from t in g
 						orderby t.Album, t.TrackNumber
 						select t).First();
-					musicTrack.Artist = g.Key;
-					return musicTrack;
+					// The snapshot is shared between the tab loaders, so the card is
+					// a copy: mutating the shared instance would change the track
+					// that is published in the Songs list as well.
+					return new MusicTrack
+					{
+						Id = musicTrack.Id,
+						Title = musicTrack.Title,
+						Artist = g.Key,
+						Album = musicTrack.Album,
+						AlbumArtist = musicTrack.AlbumArtist,
+						AlbumArtPath = musicTrack.AlbumArtPath,
+						FilePath = musicTrack.FilePath,
+						FolderPath = musicTrack.FolderPath,
+						Duration = musicTrack.Duration,
+						TrackNumber = musicTrack.TrackNumber,
+						// Real aggregates of the artist, so sorting the artist grid
+						// by track count / total duration / newest year means
+						// something.
+						CardTrackCount = g.Count(),
+						CardTotalDuration = g.Sum(t => t.Duration),
+						CardNewestYear = g.Max(t => t.Year),
+						CardNewestDateAdded = g.Max(t => t.DateAdded)
+					};
 				})
 				orderby t.Artist
 				select t).ToList();
@@ -6535,9 +6823,51 @@ private async Task LoadArtistsAsync()
 		});
 	}
 
+	private int _artistImagesNotifyQueued;
+	private const int ArtistImageCacheSoftLimit = 512;
+
+	/// <summary>
+	/// Coalesces image-completion notifications into one per dispatcher turn.
+	/// Every decoded artist image used to raise its own notification, so a cold
+	/// grid could run N full binding refreshes for N images. With virtualization
+	/// that is smaller, but a batch of visible decodes still triggered a storm.
+	/// </summary>
 	public void NotifyArtistImagesChanged()
 	{
-		OnPropertyChanged(nameof(ArtistImages));
+		if (Interlocked.Exchange(ref _artistImagesNotifyQueued, 1) == 1) return;
+
+		Dispatcher? dispatcher = Application.Current?.Dispatcher;
+		if (dispatcher == null || dispatcher.HasShutdownStarted)
+		{
+			Interlocked.Exchange(ref _artistImagesNotifyQueued, 0);
+			OnPropertyChanged(nameof(ArtistImages));
+			return;
+		}
+
+		dispatcher.BeginInvoke(new Action(() =>
+		{
+			Interlocked.Exchange(ref _artistImagesNotifyQueued, 0);
+			OnPropertyChanged(nameof(ArtistImages));
+		}), DispatcherPriority.Background);
+	}
+
+	/// <summary>
+	/// Keeps the unbounded artist image dictionary from growing with every artist
+	/// ever displayed. Eviction is deliberately approximate (no LRU bookkeeping):
+	/// a miss simply re-reads the disk/memory cache, while an unbounded map kept
+	/// every decoded bitmap alive for the whole session.
+	/// </summary>
+	public void TrimArtistImageCache(string? keepKey = null)
+	{
+		if (ArtistImageCache.Count <= ArtistImageCacheSoftLimit) return;
+
+		int target = ArtistImageCacheSoftLimit * 3 / 4;
+		foreach (string key in ArtistImageCache.Keys)
+		{
+			if (ArtistImageCache.Count <= target) break;
+			if (keepKey != null && string.Equals(key, keepKey, StringComparison.OrdinalIgnoreCase)) continue;
+			ArtistImageCache.TryRemove(key, out _);
+		}
 	}
 
 	private async Task FetchMissingArtistImagesAsync(List<MusicTrack> items, CancellationToken cancellationToken = default)
@@ -6645,7 +6975,9 @@ private async Task LoadArtistsAsync()
 		int loadGeneration = BeginTabLoad("tab:genres");
 		try
 		{
-			List<MusicTrack> genres = await Task.Run(() => (from g in (from t in _db.GetManagedFolderTracks()
+			List<MusicTrack> snapshot = await GetManagedTracksSnapshotAsync();
+		int sortVersion = LibrarySortVersion;
+			List<MusicTrack> genres = await Task.Run(() => (from g in (from t in snapshot
 					where !string.IsNullOrWhiteSpace(t.Genre)
 					select t).GroupBy<MusicTrack, string>((MusicTrack t) => t.Genre.Trim(), StringComparer.OrdinalIgnoreCase)
 				select (from t in g
@@ -6656,11 +6988,15 @@ private async Task LoadArtistsAsync()
 			string sortOrder = LibrarySortOrder;
 			bool sortDescending = IsLibrarySortDescending;
 			List<MusicTrack> items = genres.Count >= 2
-				? await Task.Run(() => SortItems(genres, false, sortOrder, sortDescending).ToList())
+				? await Task.Run(() => SortItems(genres, LibrarySortCollection.Genres, sortOrder, sortDescending).ToList())
 				: genres;
+			LogSortTrace("genres", items, sortOrder, sortDescending);
 			await DispatchAsync(delegate
 			{
 				Genres.ReplaceAll(items);
+				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("genres");
+				MarkLibrarySortApplied("genres");
+				RefilterLoadedCollection(Genres, "genres");
 				OnPropertyChanged("HasNoMusic");
 			});
 			PerfTabData("genres", Genres.Count);
@@ -6687,16 +7023,19 @@ private async Task LoadArtistsAsync()
 			List<FolderItem> folderItems = await Task.Run(delegate
 			{
 				List<ManagedMusicFolder> managedFolders = _db.GetManagedFolders();
-				Dictionary<string, int> folderTrackCounts = _db.GetFolderTrackCounts();
+				Dictionary<string, FolderAggregate> aggregates = _db.GetFolderAggregates();
 				List<FolderItem> list = new List<FolderItem>();
 				foreach (ManagedMusicFolder item in managedFolders)
 				{
-					int valueOrDefault = folderTrackCounts.GetValueOrDefault(item.Path, 0);
+					aggregates.TryGetValue(item.Path, out FolderAggregate? aggregate);
 					list.Add(new FolderItem
 					{
 						Name = item.Name,
 						Path = item.Path,
-						TrackCount = valueOrDefault,
+						TrackCount = aggregate?.TrackCount ?? 0,
+						TotalDuration = aggregate?.TotalDuration ?? 0,
+						NewestYear = aggregate?.NewestYear ?? 0,
+						NewestDateAdded = aggregate?.NewestDateAdded ?? 0,
 						Id = item.Id,
 						IsManaged = true
 					});
@@ -7001,10 +7340,13 @@ private async Task LoadArtistsAsync()
 		int loadGeneration = BeginTabLoad("view:favorites");
 		try
 		{
-			List<MusicTrack> tracks = await Task.Run(() => _db.GetFavoriteTracks());
+			IReadOnlyList<MusicTrack> tracks = await Task.Run(() => SortItems(_db.GetFavoriteTracks(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
+		int sortVersion = LibrarySortVersion;
 			await DispatchAsync(delegate
 			{
 				FavoriteTracks.ReplaceAll(tracks);
+			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("favorites");
+				MarkLibrarySortApplied("favorites");
 			});
 		}
 		catch (Exception ex)
@@ -7026,10 +7368,13 @@ private async Task LoadArtistsAsync()
 		int loadGeneration = BeginTabLoad("view:recent");
 		try
 		{
-			List<MusicTrack> tracks = await Task.Run(() => _db.GetRecentPlay());
+			IReadOnlyList<MusicTrack> tracks = await Task.Run(() => SortItems(_db.GetRecentPlay(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
+		int sortVersion = LibrarySortVersion;
 			await DispatchAsync(delegate
 			{
 				RecentPlayTracks.ReplaceAll(tracks);
+			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("recent_play");
+				MarkLibrarySortApplied("recent_play");
 			});
 		}
 		catch (Exception ex)
@@ -7051,10 +7396,13 @@ private async Task LoadArtistsAsync()
 		int loadGeneration = BeginTabLoad("view:recent_add");
 		try
 		{
-			List<MusicTrack> tracks = await Task.Run(() => _db.GetRecentAdd());
+			IReadOnlyList<MusicTrack> tracks = await Task.Run(() => SortItems(_db.GetRecentAdd(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
+		int sortVersion = LibrarySortVersion;
 			await DispatchAsync(delegate
 			{
 				RecentAddTracks.ReplaceAll(tracks);
+			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("recent_add");
+				MarkLibrarySortApplied("recent_add");
 			});
 		}
 		catch (Exception ex)
@@ -7076,10 +7424,13 @@ private async Task LoadArtistsAsync()
 		int loadGeneration = BeginTabLoad("view:most_played");
 		try
 		{
-			List<MusicTrack> tracks = await Task.Run(() => _db.GetMostPlay());
+			IReadOnlyList<MusicTrack> tracks = await Task.Run(() => SortItems(_db.GetMostPlay(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
+		int sortVersion = LibrarySortVersion;
 			await DispatchAsync(delegate
 			{
 				MostPlayedTracks.ReplaceAll(tracks);
+			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("most_played");
+				MarkLibrarySortApplied("most_played");
 			});
 		}
 		catch (Exception ex)
@@ -7266,116 +7617,384 @@ private async Task LoadArtistsAsync()
 		};
 	}
 
+	private static readonly string[] LibrarySortScopes =
+		["songs", "artists", "albums", "genres", "folders", "favorites", "recent_play", "recent_add", "most_played"];
+
+	private readonly HashSet<string> _pendingLibrarySorts = new(StringComparer.Ordinal);
+
+	/// <summary>
+	/// Incremented whenever the sort order or the direction changes. The tab
+	/// loaders capture it before their (asynchronous) work and re-apply the sort
+	/// when it changed in the meantime - otherwise a sort chosen while a tab was
+	/// loading would be overwritten by the loader.
+	/// </summary>
+	private int _librarySortVersion;
+
+	private int LibrarySortVersion => Volatile.Read(ref _librarySortVersion);
+
+	private void BumpLibrarySortVersion()
+	{
+		Interlocked.Increment(ref _librarySortVersion);
+	}
+
+	/// <summary>
+	/// Applies the library sort order.
+	///
+	/// Only the collection that is on screen is sorted right away; the others
+	/// are marked as pending and sorted when their tab/view becomes visible.
+	/// Sorting all eight collections (each a full Reset of a collection that can
+	/// hold thousands of items) on every sort-option change was pure waste.
+	/// </summary>
 	private void ApplyLibrarySort()
 	{
-		if (Tracks.Count > 1)
+		BumpLibrarySortVersion();
+		_pendingLibrarySorts.Clear();
+		string visible = CurrentSortScope();
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
+			LogHelper.LogInfo($"SORT-SCOPE scope={visible} view={CurrentView} tab={CurrentTab} key={LibrarySortOrder} desc={IsLibrarySortDescending}");
+		foreach (string scope in LibrarySortScopes)
 		{
-			SortCollection(Tracks);
+			if (scope == visible) ApplyLibrarySortForScope(scope);
+			else _pendingLibrarySorts.Add(scope);
 		}
-		if (FavoriteTracks.Count > 1)
-		{
-			SortCollection(FavoriteTracks);
-		}
-		if (RecentPlayTracks.Count > 1)
-		{
-			SortCollection(RecentPlayTracks);
-		}
-		if (RecentAddTracks.Count > 1)
-		{
-			SortCollection(RecentAddTracks);
-		}
-		if (MostPlayedTracks.Count > 1)
-		{
-			SortCollection(MostPlayedTracks);
-		}
-		if (Albums.Count > 1)
-		{
-			SortCollection(Albums);
-		}
-		if (Artists.Count > 1)
-		{
-			SortCollection(Artists, isArtistCollection: true);
-		}
-		if (Genres.Count > 1)
-		{
-			SortCollection(Genres);
-		}
+
+		// The visible search results are a filtered copy of the current source;
+		// they have to follow the new order as well.
+		ResortSearchResults();
 	}
 
-	private IEnumerable<MusicTrack> SortItems(IEnumerable<MusicTrack> tracks, bool isArtistCollection = false)
-		=> SortItems(tracks, isArtistCollection, LibrarySortOrder, IsLibrarySortDescending);
-
-	private static IEnumerable<MusicTrack> SortItems(
-		IEnumerable<MusicTrack> tracks,
-		bool isArtistCollection,
-		string librarySortOrder,
-		bool isLibrarySortDescending)
+	private void ResortSearchResults()
 	{
-		Func<MusicTrack, string> keySelector = librarySortOrder switch
-		{
-			"artist" => (MusicTrack track) => track.Artist ?? string.Empty, 
-			"album" => (MusicTrack track) => track.Album ?? string.Empty, 
-			"folder" => (MusicTrack track) => Path.GetDirectoryName(track.FilePath) ?? string.Empty, 
-			_ when isArtistCollection => (MusicTrack track) => track.Artist ?? string.Empty, 
-			_ => (MusicTrack track) => track.Title ?? string.Empty, 
-		};
-		IEnumerable<MusicTrack> enumerable = librarySortOrder switch
-		{
-			"date_added" => tracks.OrderByDescending((MusicTrack track) => track.DateAdded), 
-			"date_modified" => tracks.OrderBy((MusicTrack track) => track.DateModified), 
-			"duration" => tracks.OrderBy((MusicTrack track) => track.Duration), 
-			"size" => tracks.OrderBy((MusicTrack track) => track.FileSize), 
-			"year" => tracks.OrderBy((MusicTrack track) => track.Year), 
-			"track_number" => tracks.OrderBy((MusicTrack track) => track.TrackNumber), 
-			"title_az" when isArtistCollection => tracks.OrderBy<MusicTrack, string>((MusicTrack track) => track.Artist ?? string.Empty, StringComparer.CurrentCultureIgnoreCase), 
-			"title_za" when isArtistCollection => tracks.OrderByDescending<MusicTrack, string>((MusicTrack track) => track.Artist ?? string.Empty, StringComparer.CurrentCultureIgnoreCase), 
-			"title_az" => tracks.OrderBy<MusicTrack, string>((MusicTrack track) => track.Title ?? string.Empty, StringComparer.CurrentCultureIgnoreCase), 
-			"title_za" => tracks.OrderByDescending<MusicTrack, string>((MusicTrack track) => track.Title ?? string.Empty, StringComparer.CurrentCultureIgnoreCase), 
-			"random" => tracks.OrderBy((MusicTrack _) => Guid.NewGuid()), 
-			_ when isArtistCollection => tracks.OrderBy<MusicTrack, string>(keySelector, StringComparer.CurrentCultureIgnoreCase), 
-			_ => tracks.OrderBy<MusicTrack, string>(keySelector, StringComparer.CurrentCultureIgnoreCase), 
-		};
-		if (isLibrarySortDescending)
-		{
-			enumerable = enumerable.Reverse();
-		}
-		return enumerable;
+		if (!IsSearchActive || SearchResults.Count < 2) return;
+
+		LibrarySortCollection collection = CurrentSortScope() == "artists"
+			? LibrarySortCollection.Artists
+			: LibrarySortCollection.Tracks;
+		SearchResults.ReplaceAll(SortItems(SearchResults, collection, LibrarySortOrder, IsLibrarySortDescending));
+		LogSortTrace("search", SearchResults.ToList(), LibrarySortOrder, IsLibrarySortDescending);
 	}
 
-	private void SortCollection(ObservableCollection<MusicTrack> tracks, bool isArtistCollection = false)
+	private bool ApplyLibrarySortForScope(string scope)
+	{
+		switch (scope)
+		{
+			case "songs": return SortCollection(Tracks, LibrarySortCollection.Tracks);
+			case "artists": return SortCollection(Artists, LibrarySortCollection.Artists);
+			case "albums": return SortCollection(Albums, LibrarySortCollection.Albums);
+			case "genres": return SortCollection(Genres, LibrarySortCollection.Genres);
+			case "folders": SortFolders(); return true;
+			case "favorites": return SortCollection(FavoriteTracks, LibrarySortCollection.Tracks);
+			case "recent_play": return SortCollection(RecentPlayTracks, LibrarySortCollection.Tracks);
+			case "recent_add": return SortCollection(RecentAddTracks, LibrarySortCollection.Tracks);
+			case "most_played": return SortCollection(MostPlayedTracks, LibrarySortCollection.Tracks);
+			default: return false;
+		}
+	}
+
+	private void ApplyPendingLibrarySortForScope(string scope)
+	{
+		if (string.IsNullOrEmpty(scope)) return;
+		if (!_pendingLibrarySorts.Contains(scope)) return;
+
+		// The collection may still be empty (its tab has not loaded yet). The
+		// pending flag is only consumed when the sort was really applied, so the
+		// sort is not lost while the tab is still loading.
+		if (ApplyLibrarySortForScope(scope))
+		{
+			_pendingLibrarySorts.Remove(scope);
+		}
+	}
+
+	/// <summary>Marks a scope as sorted (used by the loaders, which sort canonically).</summary>
+	private void MarkLibrarySortApplied(string scope)
+	{
+		if (!string.IsNullOrEmpty(scope)) _pendingLibrarySorts.Remove(scope);
+	}
+
+	/// <summary>The collection the user is currently looking at.</summary>
+	private string CurrentSortScope()
+	{
+		if (CurrentView == "songs")
+		{
+			return CurrentTab switch
+			{
+				"artists" => "artists",
+				"albums" => "albums",
+				"genres" => "genres",
+				"folders" => "folders",
+				_ => "songs"
+			};
+		}
+
+		return CurrentView switch
+		{
+			"favorites" => "favorites",
+			"recent" => "recent_play",
+			"recent_add" => "recent_add",
+			"most_played" => "most_played",
+			"folders" => "folders",
+			_ => "songs"
+		};
+	}
+
+	private IReadOnlyList<MusicTrack> SortItems(IEnumerable<MusicTrack> tracks, LibrarySortCollection collection)
+		=> SortItems(tracks, collection, LibrarySortOrder, IsLibrarySortDescending);
+
+	/// <summary>
+	/// The one and only library sort.
+	///
+	/// Every surface (Songs list, Albums, Artists, Genres, Favourites, Recent,
+	/// Most played) goes through this function, so the same sort option produces
+	/// the same order everywhere and stays the same after a reload.
+	///
+	/// The order is defined by two values:
+	///   * the criterion ("title", "artist", "album", "year", "duration",
+	///     "size", "date_added", "folder", "random");
+	///   * the direction (ascending / descending).
+	///
+	/// The previous implementation had a second, incomplete mapping for the
+	/// Songs list (title_az/title_za/artist/album/folder/random all collapsed
+	/// into "title", and duration/size/year were inverted), which is why the
+	/// order looked different per tab and reverted after a library refresh.
+	/// </summary>
+	internal static IReadOnlyList<MusicTrack> SortItems(
+		IEnumerable<MusicTrack> tracks,
+		LibrarySortCollection collection,
+		string librarySortOrder,
+		bool isDescending)
+	{
+		var list = tracks as IReadOnlyList<MusicTrack> ?? tracks.ToList();
+		if (list.Count < 2) return list;
+
+		string rawOrder = (librarySortOrder ?? string.Empty).Trim().ToLowerInvariant();
+
+		// The legacy keys carried the direction in the key itself.
+		bool descending = isDescending;
+		if (rawOrder == "title_za") descending = true;
+		else if (rawOrder == "title_az") descending = false;
+
+		// A criterion that does not apply to this kind of card falls back to the
+		// name of the card (artist name / album name / genre name / folder name),
+		// so the order stays meaningful and matches what the card shows.
+		string order = EffectiveSortCriterion(rawOrder, collection);
+		StringComparer textComparer = StringComparer.CurrentCultureIgnoreCase;
+
+		IOrderedEnumerable<MusicTrack> sorted = order switch
+		{
+			"date_added" => collection == LibrarySortCollection.Tracks
+				? list.OrderBy(t => t.DateAdded)
+				: list.OrderBy(t => t.CardNewestDateAdded),
+			"date_modified" => list.OrderBy(t => t.DateModified),
+			// The cards of the artist / album / genre grids are sorted by the
+			// real aggregates of the collection they represent.
+			"duration" => collection == LibrarySortCollection.Tracks
+				? list.OrderBy(t => t.Duration)
+				: list.OrderBy(t => t.CardTotalDuration),
+			"size" => collection == LibrarySortCollection.Tracks
+				? list.OrderBy(t => t.FileSize)
+				: list.OrderBy(t => t.CardTrackCount),
+			"year" => collection == LibrarySortCollection.Tracks
+				? list.OrderBy(t => t.Year)
+				: list.OrderBy(t => t.CardNewestYear),
+			"track_number" => list.OrderBy(t => t.TrackNumber),
+			"artist" => list.OrderBy(t => t.Artist ?? string.Empty, textComparer),
+			"album" => list.OrderBy(t => t.Album ?? string.Empty, textComparer),
+			"folder" => list.OrderBy(t => SafeDirectoryName(t.FilePath), textComparer),
+			"random" => list.OrderBy(_ => Guid.NewGuid()),
+			_ => list.OrderBy(t => SortTextKey(t, collection), textComparer),
+		};
+
+		// Without a tie-breaker the entries that share the same key keep the
+		// order they had before the sort. "Reverse()" therefore changes their
+		// relative order as well, so picking the same option again would produce
+		// a third order instead of going back to the first one. The extra key
+		// makes the order fully determined by the data.
+		IOrderedEnumerable<MusicTrack> ordered = sorted.ThenBy(t => SortTieBreaker(t, collection));
+		IEnumerable<MusicTrack> result = ordered;
+
+		if (descending && order != "random")
+		{
+			result = result.Reverse();
+		}
+
+		// Items without a value for the chosen criterion (no year, no artist,
+		// no album ...) are always moved to the end - otherwise they would sit
+		// at the top of an ascending list and hide the real content.
+		result = MoveUnknownToEnd(result, order, collection);
+
+		return result.ToList();
+	}
+
+	/// <summary>The deterministic key that decides the order between equal entries.</summary>
+	private static string SortTieBreaker(MusicTrack track, LibrarySortCollection collection) =>
+		collection == LibrarySortCollection.Tracks
+			? track.FilePath ?? track.Id.ToString()
+			: SortTextKey(track, collection);
+
+	/// <summary>
+	/// Moves the entries that have no value for the sorted criterion to the end
+	/// of the list, in both directions.
+	/// </summary>
+	private static IEnumerable<MusicTrack> MoveUnknownToEnd(
+		IEnumerable<MusicTrack> sorted,
+		string order,
+		LibrarySortCollection collection)
+	{
+		Func<MusicTrack, bool> isUnknown = order switch
+		{
+			"title" => t => string.IsNullOrWhiteSpace(SortTextKey(t, collection)),
+			"artist" => t => string.IsNullOrWhiteSpace(t.Artist),
+			"album" => t => string.IsNullOrWhiteSpace(t.Album),
+			"folder" => t => string.IsNullOrWhiteSpace(SafeDirectoryName(t.FilePath)),
+			"year" => t => (collection == LibrarySortCollection.Tracks ? t.Year : t.CardNewestYear) == 0,
+			"duration" => t => (collection == LibrarySortCollection.Tracks ? t.Duration : t.CardTotalDuration) == 0,
+			"size" => t => (collection == LibrarySortCollection.Tracks ? t.FileSize : t.CardTrackCount) == 0,
+			"date_added" => t => (collection == LibrarySortCollection.Tracks ? t.DateAdded : t.CardNewestDateAdded) == 0,
+			_ => _ => false,
+		};
+
+		var list = sorted.ToList();
+		if (list.Count == 0) return list;
+
+		return list.Where(t => !isUnknown(t)).Concat(list.Where(isUnknown));
+	}
+
+	/// <summary>
+	/// The criterion that is actually applied to a collection.
+	///
+	/// The cards of the artist / album / genre grids show a name, not a track
+	/// title, so "title" means "the name of the card" there. Criteria that make
+	/// no sense for a card (duration of an artist, size of a genre, ...) fall
+	/// back to that name as well - otherwise the list would jump into a
+	/// meaningless order.
+	/// </summary>
+	internal static string EffectiveSortCriterion(string? criterion, LibrarySortCollection collection)
+	{
+		string order = NormalizeSortCriterion(criterion);
+		bool applicable = SortCriteriaForCollection(collection)
+			.Split('|')
+			.Contains(order, StringComparer.OrdinalIgnoreCase);
+
+		return applicable ? order : "title";
+	}
+
+	/// <summary>The text a card is sorted by - the name that the card shows.</summary>
+	private static string SortTextKey(MusicTrack track, LibrarySortCollection collection) => collection switch
+	{
+		LibrarySortCollection.Artists => track.Artist ?? string.Empty,
+		LibrarySortCollection.Albums => track.Album ?? string.Empty,
+		LibrarySortCollection.Genres => track.Genre ?? string.Empty,
+		_ => track.Title ?? string.Empty,
+	};
+
+	private static string SafeDirectoryName(string? filePath)
+	{
+		if (string.IsNullOrWhiteSpace(filePath)) return string.Empty;
+		try { return Path.GetDirectoryName(filePath) ?? string.Empty; }
+		catch { return string.Empty; }
+	}
+
+	private static IEnumerable<MusicTrack> Shuffle(IReadOnlyList<MusicTrack> items)
+	{
+		var buffer = items.ToList();
+		var random = new Random();
+		for (int i = buffer.Count - 1; i > 0; i--)
+		{
+			int j = random.Next(i + 1);
+			(buffer[i], buffer[j]) = (buffer[j], buffer[i]);
+		}
+
+		return buffer;
+	}
+	private bool SortCollection(ObservableCollection<MusicTrack> tracks, LibrarySortCollection collection)
 	{
 		if (tracks.Count < 2)
 		{
-			return;
+			return false;
 		}
-		IEnumerable<MusicTrack> enumerable = SortItems(tracks, isArtistCollection);
+		IReadOnlyList<MusicTrack> sorted = SortItems(tracks, collection, LibrarySortOrder, IsLibrarySortDescending);
+		LogSortTrace(collection.ToString().ToLowerInvariant(), sorted, LibrarySortOrder, IsLibrarySortDescending);
 		if (tracks is BulkObservableCollection<MusicTrack> bulkObservableCollection)
 		{
-			bulkObservableCollection.ReplaceAll(enumerable);
-			return;
+			bulkObservableCollection.ReplaceAll(sorted);
+			return true;
 		}
-		List<MusicTrack> list = enumerable.ToList();
+		List<MusicTrack> list = sorted.ToList();
 		tracks.Clear();
 		foreach (MusicTrack item in list)
 		{
 			tracks.Add(item);
 		}
+		return true;
+	}
+
+	/// <summary>
+	/// Sort trace (enabled with MUSICPLAYER_PERFTEST=1): records the scope, the
+	/// sort key, the direction and the first few sort keys so the order of every
+	/// surface can be verified from the log.
+	/// </summary>
+	private static void LogSortTrace(string scope, IReadOnlyList<MusicTrack> items, string key, bool descending)
+	{
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") != "1") return;
+		if (items.Count == 0) return;
+
+		string first = string.Join(",", items.Take(3).Select(t =>
+		{
+			string value = !string.IsNullOrEmpty(t.Artist) ? t.Artist : t.Title;
+			return value.Length > 24 ? value[..24] : value;
+		}));
+
+		string effective = EffectiveSortCriterion(key, CollectionForScope(scope));
+		LogHelper.LogInfo($"SORT scope={scope} key={key} effective={effective} desc={descending} count={items.Count} first=[{first}]");
 	}
 
 	private void SortFolders()
 	{
 		if (Folders.Count < 2) return;
-		IEnumerable<FolderItem> sorted = LibrarySortOrder switch
+
+		// Folders know their name and the aggregates of their content.
+		string order = EffectiveSortCriterion(LibrarySortOrder, LibrarySortCollection.Folders);
+		IOrderedEnumerable<FolderItem> sorted = order switch
 		{
-			"title_az" => Folders.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase),
-			"title_za" => Folders.OrderByDescending(f => f.Name, StringComparer.CurrentCultureIgnoreCase),
-			"size" => Folders.OrderByDescending(f => f.TrackCount),
+			"size" => Folders.OrderBy(f => f.TrackCount),
+			"duration" => Folders.OrderBy(f => f.TotalDuration),
+			"year" => Folders.OrderBy(f => f.NewestYear),
+			"date_added" => Folders.OrderBy(f => f.NewestDateAdded),
 			"random" => Folders.OrderBy(_ => Guid.NewGuid()),
 			_ => Folders.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase),
 		};
-		if (IsLibrarySortDescending && LibrarySortOrder != "random")
-			sorted = sorted.Reverse();
+
+		// The deterministic key that decides between equal folders.
+		IOrderedEnumerable<FolderItem> ordered = sorted.ThenBy(f => f.Path);
+		IEnumerable<FolderItem> result = ordered;
+
+		if (IsLibrarySortDescending && order != "random")
+		{
+			result = result.Reverse();
+		}
+
+		// Folders without tracks have no value for the other criteria - keep
+		// them at the end in both directions.
+		if (order is "duration" or "year" or "date_added")
+		{
+			var list = result.ToList();
+			Func<FolderItem, bool> isUnknown = order switch
+			{
+				"duration" => f => f.TotalDuration == 0,
+				"year" => f => f.NewestYear == 0,
+				_ => f => f.NewestDateAdded == 0,
+			};
+			result = list.Where(f => !isUnknown(f)).Concat(list.Where(isUnknown));
+		}
+
 		Folders.ReplaceAll(sorted);
+		LogFolderSortTrace(order);
+	}
+
+	private void LogFolderSortTrace(string order)
+	{
+		if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") != "1") return;
+		LogHelper.LogInfo($"SORT scope=folders key={order} desc={IsLibrarySortDescending} count={Folders.Count}");
 	}
 
 	private static void BulkReplace<T>(ObservableCollection<T> target, IList<T> items)
@@ -7433,32 +8052,35 @@ private async Task LoadArtistsAsync()
 	}
 	private void RefreshLibraryTabs()
 	{
+		// The visible set of tracks changed (a track was hidden or restored).
+		InvalidateManagedTracksSnapshot();
 		try
 		{
-			var artists = _db.GetAllArtists();
-			Artists.Clear();
-			foreach (var a in artists) Artists.Add(new MusicTrack { Artist = a });
+			// The cards keep their aggregates (track count, total duration, newest
+			// year, newest date added) - otherwise the artist grid would lose the
+			// information it is sorted by after hiding or restoring a track.
+			var artists = _db.GetArtistCards();
+			Artists.ReplaceAll(artists);
 			OnPropertyChanged(nameof(DisplayedArtists));
 		}
 		catch { }
 		try
 		{
-			var albums = _db.GetAllAlbums();
-			Albums.Clear();
-			foreach (var al in albums)
-			{
-				var rep = _db.GetAlbumTracks(al).FirstOrDefault();
-				if (rep != null) Albums.Add(rep);
-				else Albums.Add(new MusicTrack { Album = al, Artist = _db.GetAlbumArtist(al) });
-			}
+			// One pass over the tracks table. The previous implementation asked
+			// the database for every album separately and each of those calls read
+			// the whole table, so listing the albums cost O(albums x tracks).
+			var swAlbums = System.Diagnostics.Stopwatch.StartNew();
+			var cards = _db.GetAlbumCards();
+			Albums.ReplaceAll(cards);
 			OnPropertyChanged(nameof(DisplayedAlbums));
+			if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
+				LogHelper.LogInfo($"TAB-REFRESH albums={cards.Count} ms={swAlbums.ElapsedMilliseconds}");
 		}
 		catch { }
 		try
 		{
-			var genres = _db.GetAllGenres();
-			Genres.Clear();
-			foreach (var g in genres) Genres.Add(new MusicTrack { Genre = g });
+			var genres = _db.GetGenreCards();
+			Genres.ReplaceAll(genres);
 			OnPropertyChanged(nameof(DisplayedGenres));
 		}
 		catch { }
@@ -7467,6 +8089,13 @@ private async Task LoadArtistsAsync()
 			OnPropertyChanged(nameof(DisplayedTracks));
 		}
 		catch { }
+
+		// The rebuilt cards come back in the order of the database, so the sort
+		// the user has chosen has to be applied again - otherwise hiding or
+		// restoring a track silently resets the order of the tabs.
+		ApplyLibrarySortForScope("artists");
+		ApplyLibrarySortForScope("albums");
+		ApplyLibrarySortForScope("genres");
 	}
 	private void HideTrack(MusicTrack? track)
 	{
@@ -7506,10 +8135,10 @@ private async Task LoadArtistsAsync()
 		}
 		else
 		{
-			// full reload if still present (reference mismatch)
-			Tracks.Clear();
-			foreach (var t in _db.GetManagedFolderTracksSorted(_librarySortOrder, _isLibrarySortDescending))
-				Tracks.Add(t);
+			// full reload if still present (reference mismatch) - with the same
+			// canonical sort as every other surface.
+			var snapshot = _db.GetManagedFolderTracks();
+			Tracks.ReplaceAll(SortItems(snapshot, LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
 		}
 		// remove from playback queue if present
 		try
@@ -7562,7 +8191,7 @@ private async Task LoadArtistsAsync()
 		if (!Tracks.Any(t => t.Id == track.Id) && System.IO.File.Exists(track.FilePath))
 		{
 			Tracks.Add(track);
-			SortCollection(Tracks);
+			SortCollection(Tracks, LibrarySortCollection.Tracks);
 		}
 		RefreshLibraryTabs();
 		UpdateHomeCardCounts();
@@ -8251,28 +8880,122 @@ private async Task LoadArtistsAsync()
 		ShowOverflowMenu = false;
 		ShowSortMenu = !ShowSortMenu;
 	}
+
+	/// <summary>Opens the sort panel from the overflow menu (the two menus never stack).</summary>
+	private void OpenSortMenu()
+	{
+		ShowOverflowMenu = false;
+		ShowSortMenu = true;
+	}
+
 	private void ToggleOverflowMenu()
 	{
 		ShowOverflowMenu = !ShowOverflowMenu;
+		ShowSortMenu = false;
 	}
+	/// <summary>
+	/// Picks a sort criterion, or reverses the current one when the active
+	/// criterion is picked again - the usual behaviour of a sortable list.
+	/// </summary>
 	private void SelectSortOption(string? sortKey)
 	{
-		if (!string.IsNullOrEmpty(sortKey))
+		if (string.IsNullOrEmpty(sortKey)) return;
+
+		if (sortKey == "reverse")
 		{
-			if (sortKey == "reverse")
-			{
-				IsLibrarySortDescending = !IsLibrarySortDescending;
-				_db.SetSetting("pref_library_sort_descending", IsLibrarySortDescending.ToString());
-			}
-			else
-			{
-				LibrarySortOrder = sortKey;
-				_settings.LibraryOrder = sortKey;
-			}
-			ApplyLibrarySort();
-			ShowSortMenu = false;
-			ShowOverflowMenu = false;
+			// Legacy entry point: flip the direction of the active criterion.
+			SetLibrarySortDescending(!IsLibrarySortDescending);
 		}
+		else if (string.Equals(sortKey, LibrarySortOrder, StringComparison.OrdinalIgnoreCase))
+		{
+			// Same criterion again -> reverse that criterion.
+			SetLibrarySortDescending(!IsLibrarySortDescending);
+		}
+		else
+		{
+			// A new criterion starts with its own (remembered) direction.
+			LibrarySortOrder = sortKey;
+			_settings.LibraryOrder = sortKey;
+			OnPropertyChanged("IsLibrarySortDescending");
+			OnPropertyChanged(nameof(SortDirectionGlyph));
+		}
+
+		BumpLibrarySortVersion();
+		ApplyLibrarySort();
+		ShowSortMenu = false;
+		ShowOverflowMenu = false;
+	}
+
+	private void SetLibrarySortDescending(bool descending)
+	{
+		IsLibrarySortDescending = descending;
+		_db.SetSetting("pref_library_sort_descending", descending.ToString());
+	}
+
+	/// <summary>
+	/// Reads the stored sort direction and migrates the old model.
+	///
+	/// The old model used the flag as "reverse the natural order" and treated
+	/// date added / duration / size / year as descending by default. The current
+	/// model uses the flag as the direction itself, so those criteria have to be
+	/// inverted once - the marker setting makes sure that happens exactly once.
+	/// </summary>
+	private bool ResolveStoredSortDirection()
+	{
+		bool stored = _db.GetSettingBool("pref_library_sort_descending");
+		string storedOrder = (_settings.LibraryOrder ?? string.Empty).Trim().ToLowerInvariant();
+
+		if (_db.GetSetting("pref_library_sort_model") == "v2")
+		{
+			return stored;
+		}
+
+		// Migration of the old model (one global "reverse" flag, where
+		// date added / duration / size / year were descending by default).
+		bool migrated = storedOrder switch
+		{
+			"title_za" => true,
+			"title_az" => false,
+			"date_added" or "duration" or "size" or "year" => !stored,
+			_ => stored,
+		};
+
+		_db.SetSetting("pref_library_sort_model", "v2");
+		_db.SetSetting("pref_library_sort_descending", migrated.ToString());
+		return migrated;
+	}
+
+	/// <summary>
+	/// The direction a criterion starts with: ascending for everything except
+	/// "date added", where the newest entry first is what people expect.
+	/// </summary>
+	internal static bool DefaultSortDirection(string? criterion) =>
+		string.Equals(NormalizeSortCriterion(criterion), "date_added", StringComparison.Ordinal);
+
+	/// <summary>
+	/// Maps the legacy sort keys ("title_az", "title_za") and the old A-Z/Z-A
+	/// labels onto the criterion model.
+	/// </summary>
+	internal static string NormalizeSortCriterion(string? criterion)
+	{
+		string value = (criterion ?? string.Empty).Trim().ToLowerInvariant();
+		return value switch
+		{
+			"title_az" or "title_za" or "a-z" or "z-a" or "title" => "title",
+			"artist" => "artist",
+			"album" => "album",
+			"year" => "year",
+			"duration" => "duration",
+			"size" => "size",
+			"date_added" => "date_added",
+			"date_modified" => "date_modified",
+			"folder" => "folder",
+			"track_number" => "track_number",
+			"random" => "random",
+			// Anything unknown (including an empty setting) means "title", so the
+			// menu always shows a check mark on the active criterion.
+			_ => "title",
+		};
 	}
 	private async Task RefreshMetadataAsync()
 	{
@@ -8288,6 +9011,7 @@ private async Task LoadArtistsAsync()
 		try
 		{
 			var (added, updated, removed) = await _scanner.RefreshAndSyncLibraryAsync();
+			InvalidateManagedTracksSnapshot();
 
 			await DispatchAsync(delegate
 			{
@@ -9042,6 +9766,8 @@ private async Task LoadArtistsAsync()
 			CancelWallpaperPreload();
 		}
 		bool preserveSearch = value is "songs" or "artists" or "albums" or "genres" or "folders" or "artist_detail" or "album_detail";
+		// A view that becomes visible may have a pending library sort.
+		ApplyPendingLibrarySortForScope(CurrentSortScope());
 		if (!preserveSearch)
 		{
 			IsSearching = false;
@@ -9106,9 +9832,13 @@ private async Task LoadArtistsAsync()
 				await DispatchAsync(delegate
 				{
 					SearchResults.ReplaceAll(results);
-					FilteredArtists.ReplaceAll(filteredArtists);
-					FilteredAlbums.ReplaceAll(filteredAlbums);
-					FilteredGenres.ReplaceAll(filteredGenres);
+					// Only the list of the visible tab is published; the other two
+					// are published when their tab is opened. Every published list
+					// is a Reset of a collection that can hold thousands of items.
+					_pendingFilteredArtists = filteredArtists;
+					_pendingFilteredAlbums = filteredAlbums;
+					_pendingFilteredGenres = filteredGenres;
+					PublishFilteredForCurrentTab();
 					OnPropertyChanged("DisplayedTracks");
 					OnPropertyChanged("DisplayedArtists");
 					OnPropertyChanged("DisplayedAlbums");
@@ -9132,6 +9862,92 @@ private async Task LoadArtistsAsync()
 		});
 	}
 
+	private List<MusicTrack>? _pendingFilteredArtists;
+	private List<MusicTrack>? _pendingFilteredAlbums;
+	private List<MusicTrack>? _pendingFilteredGenres;
+
+	/// <summary>
+	/// Publishes the filtered list of the tab that is on screen. The other two
+	/// stay pending until their tab is opened, so a search no longer resets
+	/// three collections that nobody is looking at.
+	/// </summary>
+	private void PublishFilteredForCurrentTab()
+	{
+		switch (CurrentTab)
+		{
+			case "artists":
+				if (_pendingFilteredArtists != null)
+				{
+					FilteredArtists.ReplaceAll(_pendingFilteredArtists);
+					_pendingFilteredArtists = null;
+					OnPropertyChanged("DisplayedArtists");
+					OnPropertyChanged("HasNoSearchResults");
+				}
+				break;
+			case "albums":
+				if (_pendingFilteredAlbums != null)
+				{
+					FilteredAlbums.ReplaceAll(_pendingFilteredAlbums);
+					_pendingFilteredAlbums = null;
+					OnPropertyChanged("DisplayedAlbums");
+					OnPropertyChanged("HasNoSearchResults");
+				}
+				break;
+			case "genres":
+				if (_pendingFilteredGenres != null)
+				{
+					FilteredGenres.ReplaceAll(_pendingFilteredGenres);
+					_pendingFilteredGenres = null;
+					OnPropertyChanged("DisplayedGenres");
+					OnPropertyChanged("HasNoSearchResults");
+				}
+				break;
+		}
+	}
+
+	/// <summary>
+	/// Re-applies the active search to a collection that has just been loaded.
+	///
+	/// Searching before a tab was opened produced an empty filtered list
+	/// (the collection was still empty at that moment) and the tab stayed empty
+	/// after its data arrived.
+	/// </summary>
+	private void RefilterLoadedCollection(ObservableCollection<MusicTrack> collection, string scope)
+	{
+		if (!IsSearchActive) return;
+		string query = SearchQuery?.Trim() ?? string.Empty;
+		if (string.IsNullOrWhiteSpace(query)) return;
+
+		List<MusicTrack> filtered = scope switch
+		{
+			"artists" => collection.Where(t => !string.IsNullOrEmpty(t.Artist) && t.Artist.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList(),
+			"albums" => collection.Where(t => !string.IsNullOrEmpty(t.Album) && t.Album.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList(),
+			"genres" => collection.Where(t => !string.IsNullOrEmpty(t.Genre) && t.Genre.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList(),
+			_ => new List<MusicTrack>()
+		};
+
+		switch (scope)
+		{
+			case "artists":
+				FilteredArtists.ReplaceAll(filtered);
+				_pendingFilteredArtists = null;
+				OnPropertyChanged("DisplayedArtists");
+				break;
+			case "albums":
+				FilteredAlbums.ReplaceAll(filtered);
+				_pendingFilteredAlbums = null;
+				OnPropertyChanged("DisplayedAlbums");
+				break;
+			case "genres":
+				FilteredGenres.ReplaceAll(filtered);
+				_pendingFilteredGenres = null;
+				OnPropertyChanged("DisplayedGenres");
+				break;
+		}
+
+		OnPropertyChanged("HasNoSearchResults");
+	}
+
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]
 	private void OnIsSearchingChanged(bool value)
 	{
@@ -9149,6 +9965,9 @@ private async Task LoadArtistsAsync()
 			FilteredArtists.Clear();
 			FilteredAlbums.Clear();
 			FilteredGenres.Clear();
+			_pendingFilteredArtists = null;
+			_pendingFilteredAlbums = null;
+			_pendingFilteredGenres = null;
 		}
 	}
 

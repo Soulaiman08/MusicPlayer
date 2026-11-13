@@ -25,6 +25,11 @@ namespace MusicPlayer.Views
             DependencyProperty.Register("Gap", typeof(double), typeof(VirtualizingBalancedPanel),
                 new FrameworkPropertyMetadata(8d, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsArrange));
 
+        public static readonly DependencyProperty CacheRowsProperty =
+            DependencyProperty.Register("CacheRows", typeof(int), typeof(VirtualizingBalancedPanel),
+                new FrameworkPropertyMetadata(2, FrameworkPropertyMetadataOptions.AffectsMeasure),
+                value => value is int rows && rows >= 0);
+
         private static readonly DependencyPropertyKey ItemWidthPropertyKey =
             DependencyProperty.RegisterReadOnly("ItemWidth", typeof(double), typeof(VirtualizingBalancedPanel),
                 new FrameworkPropertyMetadata(150d, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsArrange));
@@ -34,6 +39,7 @@ namespace MusicPlayer.Views
         public double MinItemWidth { get => (double)GetValue(MinItemWidthProperty); set => SetValue(MinItemWidthProperty, value); }
         public double MaxItemWidth { get => (double)GetValue(MaxItemWidthProperty); set => SetValue(MaxItemWidthProperty, value); }
         public double Gap { get => (double)GetValue(GapProperty); set => SetValue(GapProperty, value); }
+        public int CacheRows { get => (int)GetValue(CacheRowsProperty); set => SetValue(CacheRowsProperty, value); }
         public double ItemWidth => (double)GetValue(ItemWidthProperty);
 
         private double _slot;
@@ -42,11 +48,27 @@ namespace MusicPlayer.Views
         private double _rowHeight = 0;
         private const double RowHeightEstimate = 200;
 
+        // Solve() only depends on the available width and the three sizing DPs.
+        // It used to run twice per measure and once per arrange even when nothing
+        // changed, and then InvalidateScrollInfo() fired unconditionally.
+        private double _solvedWidth = double.NaN;
+        private double _solvedMin = double.NaN;
+        private double _solvedMax = double.NaN;
+        private double _solvedGap = double.NaN;
+        private double _lastInfoOffset = double.NaN;
+
         private Size _extent = new Size(0, 0);
         private Size _viewport = new Size(0, 0);
         private Point _offset = new Point(0, 0);
         private ScrollViewer? _scrollOwner;
         private ScrollViewer? _fallbackScrollViewer;
+        private bool _generatorMissingLogged;
+        private bool _measureDeferred;
+
+        public VirtualizingBalancedPanel()
+        {
+            Loaded += (_, _) => InvalidateMeasure();
+        }
 
         public bool CanHorizontallyScroll { get; set; } = false;
         public bool CanVerticallyScroll { get; set; } = true;
@@ -73,6 +95,12 @@ namespace MusicPlayer.Views
         private ItemsControl? Owner => ItemsControl.GetItemsOwner(this);
 
         private static bool IsFinitePositive(double value) => double.IsFinite(value) && value > 0;
+
+        private static bool ValuesClose(double a, double b) =>
+            Math.Abs(a - b) < 0.001 || (double.IsNaN(a) && double.IsNaN(b));
+
+        private static bool SizesClose(Size a, Size b) =>
+            ValuesClose(a.Width, b.Width) && ValuesClose(a.Height, b.Height);
 
         private static double GetSafeGap(double gap) =>
             double.IsFinite(gap) && gap > 0 ? gap : 0;
@@ -125,7 +153,8 @@ namespace MusicPlayer.Views
             double offset,
             double viewportHeight,
             double rowHeight,
-            double gap)
+            double gap,
+            int cacheRows = 2)
         {
             if (itemCount <= 0 || cols <= 0)
                 return new VisibleRange(0, 0, -1, 0);
@@ -150,9 +179,10 @@ namespace MusicPlayer.Views
                 ? totalRows
                 : Math.Max(1, (int)visibleRowsValue);
 
-            int firstRow = Math.Max(0, topRow - 2);
+            if (cacheRows < 0) cacheRows = 0;
+            int firstRow = Math.Max(0, topRow - cacheRows);
             long lastVisibleRow = Math.Min(totalRows - 1L, (long)topRow + visibleRows - 1);
-            int lastRow = (int)Math.Min(totalRows - 1L, lastVisibleRow + 2);
+            int lastRow = (int)Math.Min(totalRows - 1L, lastVisibleRow + cacheRows);
             int firstIndex = (int)Math.Min(itemCount - 1L, (long)firstRow * cols);
             int lastIndex = (int)Math.Min(itemCount - 1L, ((long)lastRow + 1) * cols - 1);
 
@@ -162,6 +192,20 @@ namespace MusicPlayer.Views
         private void Solve(double width)
         {
             var w = Math.Max(1, IsFinitePositive(width) ? width : IsFinitePositive(MinItemWidth) ? MinItemWidth : 140);
+            double configuredMin = IsFinitePositive(MinItemWidth) ? MinItemWidth : 140;
+            double configuredMax = IsFinitePositive(MaxItemWidth) ? MaxItemWidth : configuredMin;
+            double configuredGap = GetSafeGap(Gap);
+            if (Math.Abs(w - _solvedWidth) < 0.01 &&
+                Math.Abs(configuredMin - _solvedMin) < 0.01 &&
+                Math.Abs(configuredMax - _solvedMax) < 0.01 &&
+                Math.Abs(configuredGap - _solvedGap) < 0.01)
+            {
+                return;
+            }
+            _solvedWidth = w;
+            _solvedMin = configuredMin;
+            _solvedMax = configuredMax;
+            _solvedGap = configuredGap;
             var gap = Math.Min(GetSafeGap(Gap), w);
             var minWidth = IsFinitePositive(MinItemWidth) ? MinItemWidth : 140;
             var maxWidth = IsFinitePositive(MaxItemWidth) ? MaxItemWidth : minWidth;
@@ -263,13 +307,37 @@ namespace MusicPlayer.Views
                 _scrollOwner != null,
                 _offset.Y,
                 _fallbackScrollViewer?.VerticalOffset ?? 0);
-            VisibleRange visibleRange = CalculateVisibleRange(itemCount, cols, generationOffset, viewportHeight, rowHeight, Gap);
+            VisibleRange visibleRange = CalculateVisibleRange(
+                itemCount, cols, generationOffset, viewportHeight, rowHeight, Gap, CacheRows);
             if (_scrollOwner != null)
                 _offset.Y = visibleRange.Offset;
             int firstIndex = visibleRange.FirstIndex;
             int lastIndex = visibleRange.LastIndex;
 
-            IItemContainerGenerator generator = ItemContainerGenerator;
+            IItemContainerGenerator? generator = ItemContainerGenerator;
+            if (generator == null)
+            {
+                // The panel can be measured once while its ItemsPresenter is being
+                // re-attached (for example when the songs grid is switched back on
+                // after being collapsed). There is no generator to drive yet, so
+                // defer one layout pass instead of dereferencing null.
+                if (!_generatorMissingLogged && Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
+                {
+                    _generatorMissingLogged = true;
+                    MusicPlayer.Utilities.LogHelper.LogInfo("VirtualizingBalancedPanel: generator not attached yet; deferring measure");
+                }
+                if (!_measureDeferred)
+                {
+                    _measureDeferred = true;
+                    Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,
+                        new Action(() =>
+                        {
+                            _measureDeferred = false;
+                            InvalidateMeasure();
+                        }));
+                }
+                return new Size(width, Math.Max(0, _extent.Height));
+            }
 
             // Generate containers for visible range
             if (itemCount > 0 && lastIndex >= firstIndex)
@@ -319,14 +387,14 @@ namespace MusicPlayer.Views
                 }
             }
 
-            // Recompute extent with updated row height
-            Solve(width);
+            // Recompute extent with updated row height. Solve() is width/keyed, so
+            // row height changes never alter the column layout and must not rerun it.
             rowHeight = IsFinitePositive(_rowHeight) ? _rowHeight : RowHeightEstimate;
-            _extent = new Size(width, GetExtentHeight(itemCount, cols, rowHeight, Gap));
-            _viewport = new Size(width, viewportHeight);
+            var newExtent = new Size(width, GetExtentHeight(itemCount, cols, rowHeight, Gap));
+            var newViewport = new Size(width, viewportHeight);
             if (_scrollOwner != null)
             {
-                double clampedOffset = ClampOffset(_offset.Y, ExtentHeight, ViewportHeight);
+                double clampedOffset = ClampOffset(_offset.Y, newExtent.Height, newViewport.Height);
                 if (Math.Abs(clampedOffset - _offset.Y) > 0.001)
                 {
                     _offset.Y = clampedOffset;
@@ -334,7 +402,16 @@ namespace MusicPlayer.Views
                 }
             }
 
-            _scrollOwner?.InvalidateScrollInfo();
+            bool scrollInfoChanged = !SizesClose(_extent, newExtent)
+                || !SizesClose(_viewport, newViewport)
+                || !ValuesClose(_offset.Y, _lastInfoOffset);
+            _extent = newExtent;
+            _viewport = newViewport;
+            if (scrollInfoChanged)
+            {
+                _lastInfoOffset = _offset.Y;
+                _scrollOwner?.InvalidateScrollInfo();
+            }
 
             return new Size(width, _extent.Height);
         }

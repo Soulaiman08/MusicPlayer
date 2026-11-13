@@ -106,12 +106,45 @@ public class DatabaseService
             _db.CreateTable<ManagedMusicFolder>();
             _db.CreateTable<AlbumArtRecord>();
 
+            EnsureLibraryIndexes();
+
             _logger.LogInformation("Database initialized successfully at {Path}", _db.DatabasePath);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to initialize database");
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Creates the indexes used by the library queries.
+    ///
+    /// Before this, every album/artist lookup read the whole <c>tracks</c> table
+    /// and filtered it in memory, which turned "list all albums" into
+    /// O(albums × tracks) work (7.5M rows at 1500 albums × 5000 tracks).
+    /// </summary>
+    private void EnsureLibraryIndexes()
+    {
+        string[] statements =
+        [
+            "CREATE INDEX IF NOT EXISTS idx_tracks_album_nocase ON tracks (Album COLLATE NOCASE)",
+            "CREATE INDEX IF NOT EXISTS idx_tracks_artist_nocase ON tracks (Artist COLLATE NOCASE)",
+            "CREATE INDEX IF NOT EXISTS idx_tracks_genre_nocase ON tracks (Genre COLLATE NOCASE)",
+            "CREATE INDEX IF NOT EXISTS idx_tracks_hidden ON tracks (IsHidden)",
+        ];
+
+        foreach (string statement in statements)
+        {
+            try
+            {
+                _db.Execute(statement);
+            }
+            catch (Exception ex)
+            {
+                // An index is an optimisation: a failure must never stop startup.
+                _logger.LogWarning(ex, "Failed to create index: {Statement}", statement);
+            }
         }
     }
 
@@ -342,6 +375,48 @@ public class DatabaseService
             else counts[dir] = 1;
         }
         return counts;
+    }
+
+    /// <summary>
+    /// Aggregates of every managed folder (all tracks below it, including the
+    /// sub folders): track count, total duration, newest year and newest
+    /// "date added" - the information the folder list can be sorted by.
+    /// </summary>
+    public Dictionary<string, FolderAggregate> GetFolderAggregates()
+    {
+        using var _ = LockIfNeeded();
+        var managedPaths = GetManagedFolderPathsLocked();
+        var result = new Dictionary<string, FolderAggregate>(StringComparer.OrdinalIgnoreCase);
+
+        if (managedPaths.Count == 0) return result;
+
+        var rows = _db.Query<FolderAggregateRow>(
+            "SELECT FilePath AS FilePath, Duration AS Duration, Year AS Year, DateAdded AS DateAdded " +
+            "FROM tracks WHERE IsHidden = 0");
+
+        foreach (var row in rows)
+        {
+            if (string.IsNullOrEmpty(row.FilePath)) continue;
+
+            foreach (string managed in managedPaths)
+            {
+                if (!PathContainment.IsWithin(row.FilePath, managed)) continue;
+
+                if (!result.TryGetValue(managed, out FolderAggregate? aggregate))
+                {
+                    aggregate = new FolderAggregate();
+                    result[managed] = aggregate;
+                }
+
+                aggregate.TrackCount++;
+                aggregate.TotalDuration += row.Duration;
+                if (row.Year > aggregate.NewestYear) aggregate.NewestYear = row.Year;
+                if (row.DateAdded > aggregate.NewestDateAdded) aggregate.NewestDateAdded = row.DateAdded;
+                break;
+            }
+        }
+
+        return result;
     }
 
     public Dictionary<int, int> GetAllPlaylistTrackCounts()
@@ -773,10 +848,79 @@ public class DatabaseService
             .ToList();
     }
 
+    /// <summary>
+    /// Returns the album cards (one representative track per album) in a single
+    /// pass over the table.
+    ///
+    /// The previous implementation asked for every album separately, and each
+    /// of those calls read the whole table: listing the albums therefore cost
+    /// O(albums × tracks) row materialisations.
+    /// </summary>
+    public List<MusicTrack> GetAlbumCards()
+    {
+        using var _ = LockIfNeeded();
+
+        var rows = _db.Query<AlbumCardRow>(
+            "SELECT Id AS Id, Album AS Album, Artist AS Artist, TrackNumber AS TrackNumber, " +
+            "Title AS Title, FilePath AS FilePath, AlbumArtPath AS AlbumArtPath, Duration AS Duration, " +
+            "Year AS Year, FileSize AS FileSize, DateAdded AS DateAdded " +
+            "FROM tracks WHERE IsHidden = 0 AND Album IS NOT NULL AND TRIM(Album) <> ''");
+
+        if (rows.Count == 0) return new List<MusicTrack>();
+
+        var cards = new List<MusicTrack>(rows.Count);
+        foreach (var group in rows.GroupBy(r => (r.Album ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            var representative = group
+                .OrderBy(r => r.TrackNumber)
+                .ThenBy(r => r.Title ?? string.Empty, StringComparer.Ordinal)
+                .ThenBy(r => r.FilePath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .First();
+
+            string albumName = group.Key;
+            string artist = group
+                .Where(r => !string.IsNullOrWhiteSpace(r.Artist))
+                .GroupBy(r => (r.Artist ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(g => g.Count())
+                .ThenBy(g => g.Key, StringComparer.Ordinal)
+                .FirstOrDefault()?.Key ?? string.Empty;
+
+            cards.Add(new MusicTrack
+            {
+                Id = representative.Id,
+                Title = representative.Title ?? string.Empty,
+                Album = albumName,
+                Artist = artist,
+                AlbumArtist = artist,
+                AlbumArtPath = representative.AlbumArtPath ?? string.Empty,
+                FilePath = representative.FilePath ?? string.Empty,
+                Duration = representative.Duration,
+                TrackNumber = representative.TrackNumber,
+                // Real aggregates of the album - used when the album cards are
+                // sorted by track count, total duration or newest year.
+                CardTrackCount = group.Count(),
+                CardTotalDuration = group.Sum(r => r.Duration),
+                CardNewestYear = group.Max(r => r.Year),
+                CardNewestDateAdded = group.Max(r => r.DateAdded)
+            });
+        }
+
+        cards.Sort((a, b) => string.Compare(a.Album, b.Album, StringComparison.CurrentCultureIgnoreCase));
+        return cards;
+    }
+
     public List<MusicTrack> GetAlbumTracks(string album)
     {
         using var _ = LockIfNeeded();
         var key = album.Trim();
+
+        // Indexed lookup first; the trimmed comparison is only needed for the
+        // rare rows whose album name carries surrounding whitespace.
+        var fast = _db.Query<MusicTrack>(
+            "SELECT * FROM tracks WHERE IsHidden = 0 AND Album = ? COLLATE NOCASE ORDER BY TrackNumber",
+            key).ToList();
+        if (fast.Count > 0) return fast;
+
         return _db.Table<MusicTrack>()
             .ToList()
             .Where(t => !t.IsHidden && string.Equals(t.Album?.Trim(), key, StringComparison.OrdinalIgnoreCase))
@@ -788,6 +932,13 @@ public class DatabaseService
     {
         using var _ = LockIfNeeded();
         var key = album.Trim();
+
+        var fast = _db.Query<AlbumArtistRow>(
+            "SELECT Artist AS Artist, COUNT(*) AS TrackCount FROM tracks " +
+            "WHERE IsHidden = 0 AND Artist IS NOT NULL AND TRIM(Artist) <> '' AND Album = ? COLLATE NOCASE " +
+            "GROUP BY Artist COLLATE NOCASE ORDER BY TrackCount DESC LIMIT 1", key).ToList();
+        if (fast.Count > 0) return fast[0].Artist?.Trim() ?? "Unknown Artist";
+
         return _db.Table<MusicTrack>()
             .ToList()
             .Where(t => !t.IsHidden && string.Equals(t.Album?.Trim(), key, StringComparison.OrdinalIgnoreCase)
@@ -814,11 +965,23 @@ public class DatabaseService
             .Where(f => f.Enabled)
             .Select(f => f.Path)
             .ToList();
-        var all = _db.Table<MusicTrack>().ToList();
-        var tracks = all
-            .Where(t => !t.IsHidden &&
-                string.Equals(t.Album?.Trim(), key, StringComparison.OrdinalIgnoreCase) &&
-                (!string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp))))
+
+        var candidates = _db.Query<MusicTrack>(
+            "SELECT * FROM tracks WHERE IsHidden = 0 AND Album = ? COLLATE NOCASE ORDER BY TrackNumber, Title",
+            key).ToList();
+        if (candidates.Count == 0)
+        {
+            candidates = _db.Table<MusicTrack>()
+                .ToList()
+                .Where(t => !t.IsHidden && string.Equals(t.Album?.Trim(), key, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(t => t.TrackNumber)
+                .ThenBy(t => t.Title ?? string.Empty, StringComparer.Ordinal)
+                .ThenBy(t => t.FilePath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        var tracks = candidates
+            .Where(t => !string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)))
             .OrderBy(t => t.TrackNumber)
             .ThenBy(t => t.Title ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(t => t.FilePath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
@@ -851,6 +1014,66 @@ public class DatabaseService
             .ToList();
     }
 
+    /// <summary>
+    /// One card per artist, with the real aggregates of the artist (track count,
+    /// total duration, newest year, newest "date added").
+    ///
+    /// The plain <see cref="GetAllArtists"/> only returns the names, which would
+    /// leave the artist cards without the information the artist grid sorts by.
+    /// </summary>
+    public List<MusicTrack> GetArtistCards()
+    {
+        using var _ = LockIfNeeded();
+        var rows = _db.Query<GroupCardRow>(
+            "SELECT Artist AS Name, Album AS Album, Duration AS Duration, Year AS Year, DateAdded AS DateAdded " +
+            "FROM tracks WHERE IsHidden = 0 AND Artist IS NOT NULL AND TRIM(Artist) <> ''");
+
+        var cards = new List<MusicTrack>();
+        foreach (var group in rows.GroupBy(r => (r.Name ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            cards.Add(new MusicTrack
+            {
+                Artist = group.Key,
+                Album = group.First().Album ?? string.Empty,
+                Duration = group.Sum(r => r.Duration),
+                CardTrackCount = group.Count(),
+                CardTotalDuration = group.Sum(r => r.Duration),
+                CardNewestYear = group.Max(r => r.Year),
+                CardNewestDateAdded = group.Max(r => r.DateAdded)
+            });
+        }
+
+        cards.Sort((a, b) => string.Compare(a.Artist, b.Artist, StringComparison.CurrentCultureIgnoreCase));
+        return cards;
+    }
+
+    /// <summary>One card per genre, with the real aggregates of the genre.</summary>
+    public List<MusicTrack> GetGenreCards()
+    {
+        using var _ = LockIfNeeded();
+        var rows = _db.Query<GroupCardRow>(
+            "SELECT Genre AS Name, Album AS Album, Duration AS Duration, Year AS Year, DateAdded AS DateAdded " +
+            "FROM tracks WHERE IsHidden = 0 AND Genre IS NOT NULL AND TRIM(Genre) <> ''");
+
+        var cards = new List<MusicTrack>();
+        foreach (var group in rows.GroupBy(r => (r.Name ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            cards.Add(new MusicTrack
+            {
+                Genre = group.Key,
+                Album = group.First().Album ?? string.Empty,
+                Duration = group.Sum(r => r.Duration),
+                CardTrackCount = group.Count(),
+                CardTotalDuration = group.Sum(r => r.Duration),
+                CardNewestYear = group.Max(r => r.Year),
+                CardNewestDateAdded = group.Max(r => r.DateAdded)
+            });
+        }
+
+        cards.Sort((a, b) => string.Compare(a.Genre, b.Genre, StringComparison.CurrentCultureIgnoreCase));
+        return cards;
+    }
+
     public List<MusicTrack> GetArtistTracks(string artist)
     {
         using var _ = LockIfNeeded();
@@ -859,11 +1082,22 @@ public class DatabaseService
             .Where(f => f.Enabled)
             .Select(f => f.Path)
             .ToList();
-        return _db.Table<MusicTrack>()
-            .ToList()
-            .Where(t => !t.IsHidden &&
-                string.Equals(t.Artist?.Trim(), key, StringComparison.OrdinalIgnoreCase) &&
-                (!string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp))))
+
+        var candidates = _db.Query<MusicTrack>(
+            "SELECT * FROM tracks WHERE IsHidden = 0 AND Artist = ? COLLATE NOCASE ORDER BY Album, TrackNumber",
+            key).ToList();
+        if (candidates.Count == 0)
+        {
+            candidates = _db.Table<MusicTrack>()
+                .ToList()
+                .Where(t => !t.IsHidden && string.Equals(t.Artist?.Trim(), key, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(t => t.Album)
+                .ThenBy(t => t.TrackNumber)
+                .ToList();
+        }
+
+        return candidates
+            .Where(t => !string.IsNullOrEmpty(t.FilePath) && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)))
             .OrderBy(t => t.Album)
             .ThenBy(t => t.TrackNumber)
             .ToList();

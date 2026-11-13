@@ -33,9 +33,7 @@ public sealed class ArtistImageProvider : IDisposable
         _memoryCache = memoryCache;
         _scheduler = scheduler;
         _logger = logger;
-        _cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MusicPlayer", "ArtistImages");
+        _cacheDir = MusicPlayer.Utilities.AppPaths.ArtistImagesPath;
 
         try { Directory.CreateDirectory(_cacheDir); } catch { }
 
@@ -81,6 +79,21 @@ public sealed class ArtistImageProvider : IDisposable
         {
             return path;
         }
+
+        // Legacy cache files were written without the separator ("Sub Urban" ->
+        // "suburban.jpg"), while the normalizer now produces "sub_urban".
+        // Without this fallback those already downloaded images were ignored and
+        // the tile stayed on the placeholder until the artist was re-fetched.
+        var compact = key.Replace("_", string.Empty);
+        if (!string.IsNullOrEmpty(compact) && !string.Equals(compact, key, StringComparison.Ordinal))
+        {
+            var legacyPath = Path.Combine(_cacheDir, compact + ".jpg");
+            if (File.Exists(legacyPath))
+            {
+                return legacyPath;
+            }
+        }
+
         return null;
     }
 

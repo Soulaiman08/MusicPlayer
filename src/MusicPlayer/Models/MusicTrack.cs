@@ -52,4 +52,22 @@ public class MusicTrack
     public string FolderPath { get; set; } = string.Empty;
     
     public int Quality { get; set; }
+
+    // ── Aggregates for the card collections (artist / album / genre) ────────
+    // The artist, album and genre grids show one card per collection, not one
+    // card per track. Sorting those cards by the track fields of the
+    // representative track was meaningless, so the cards carry the real
+    // aggregates of the collection they represent.
+    [Ignore]
+    public int CardTrackCount { get; set; }
+
+    [Ignore]
+    public long CardTotalDuration { get; set; }
+
+    [Ignore]
+    public int CardNewestYear { get; set; }
+
+    /// <summary>The most recent "date added" of the tracks of the collection.</summary>
+    [Ignore]
+    public long CardNewestDateAdded { get; set; }
 }

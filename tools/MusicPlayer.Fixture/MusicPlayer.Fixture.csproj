@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <AssemblyName>MusicPlayer.Fixture</AssemblyName>
+    <RootNamespace>MusicPlayer.Fixture</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The tool stays independent of the WPF application (which would drag in
+         the Windows App SDK runtime). It only needs the same SQLite stack and
+         the same table layout; a unit test in the test project keeps the
+         artist-name normalisation in sync with the application. -->
+    <PackageReference Include="sqlite-net-pcl" Version="1.11.285" />
+    <PackageReference Include="SQLitePCLRaw.bundle_green" Version="2.1.11" />
+  </ItemGroup>
+
+</Project>

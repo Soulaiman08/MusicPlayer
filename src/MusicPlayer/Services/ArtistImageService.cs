@@ -34,9 +34,7 @@ public sealed class ArtistImageService : IDisposable
         _logger = logger;
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("MusicPlayer/1.0 (compatible; MusicBrainz-friendly)");
-        _cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MusicPlayer", "ArtistImages");
+        _cacheDir = MusicPlayer.Utilities.AppPaths.ArtistImagesPath;
         Directory.CreateDirectory(_cacheDir);
     }
 

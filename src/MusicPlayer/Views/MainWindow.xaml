@@ -1155,11 +1155,12 @@
                     </ItemsControl.ItemTemplate>
                   </ListBox>
                   <Grid x:Name="AllSongsGridPanel" Grid.Row="0" Grid.RowSpan="2" Visibility="{Binding IsSongsGridView, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}">
-                    <ScrollViewer x:Name="SongsGridScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,8,20,16">
-                      <ItemsControl ItemsSource="{Binding DisplayedTracks}">
+                    <ScrollViewer x:Name="SongsGridScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,8,20,16"
+                                  CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                      <ItemsControl ItemsSource="{Binding DisplayedTracks}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                         <ItemsControl.ItemsPanel>
                           <ItemsPanelTemplate>
-                            <local:BalancedItemsPanel MinItemWidth="260" MaxItemWidth="360" Gap="12"/>
+                            <local:VirtualizingBalancedPanel MinItemWidth="260" MaxItemWidth="360" Gap="12"/>
                           </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
@@ -1203,20 +1204,21 @@
                   </Grid>
                 </Grid>
                 <Grid Name="TabContent_Artists" Visibility="Collapsed">
-                  <ScrollViewer Name="ArtistsSearchScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Padding="20,10,20,20">
-                    <ItemsControl ItemsSource="{Binding DisplayedArtists}">
+                  <ScrollViewer Name="ArtistsSearchScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20"
+                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ItemsControl ItemsSource="{Binding DisplayedArtists}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                          <local:BalancedItemsPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
+                          <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
                         </ItemsPanelTemplate>
                       </ItemsControl.ItemsPanel>
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
                           <Border Cursor="Hand" Margin="0,0" HorizontalAlignment="Stretch" MouseLeftButtonUp="ArtistRow_Click">
                             <StackPanel HorizontalAlignment="Center">
-                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}">
+                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}">
                                 <UIElement.Clip>
-                                  <EllipseGeometry Center="{Binding ItemWidth, Converter={StaticResource HalfPointConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" RadiusX="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" RadiusY="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" />
+                                  <EllipseGeometry Center="{Binding ItemWidth, Converter={StaticResource HalfPointConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusX="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusY="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" />
                                 </UIElement.Clip>
                                 <Border Background="#28FFFFFF" />
                                 <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="LowQuality" RenderOptions.CachingHint="Cache" />
@@ -1756,20 +1758,21 @@
                 <TextBlock Grid.Column="1" Text="ARTISTS" Style="{StaticResource APK_TextSectionTitle}" VerticalAlignment="Center" />
               </Grid>
             </Border>
-            <ScrollViewer Name="MainArtistsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" Padding="16,8,16,12">
-              <ItemsControl ItemsSource="{Binding Artists}">
+            <ScrollViewer Name="MainArtistsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="16,8,16,12"
+                          VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+              <ItemsControl ItemsSource="{Binding Artists}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
-                    <local:BalancedItemsPanel MinItemWidth="132" MaxItemWidth="176" Gap="10"/>
+                    <local:VirtualizingBalancedPanel MinItemWidth="132" MaxItemWidth="176" Gap="10"/>
                   </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Margin="4,4" Cursor="Hand" HorizontalAlignment="Stretch" MouseLeftButtonUp="ArtistRow_Click">
                       <StackPanel HorizontalAlignment="Center">
-                        <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}">
+                        <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}">
                           <UIElement.Clip>
-                            <EllipseGeometry Center="{Binding ItemWidth, Converter={StaticResource HalfPointConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" RadiusX="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" RadiusY="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:BalancedItemsPanel}}}" />
+                            <EllipseGeometry Center="{Binding ItemWidth, Converter={StaticResource HalfPointConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusX="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusY="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" />
                           </UIElement.Clip>
                           <Border Background="#28FFFFFF" />
                           <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="LowQuality" RenderOptions.CachingHint="Cache" />
@@ -1922,15 +1925,17 @@
                 <Border Grid.Row="3" Height="1" Background="#22FFFFFF" Margin="0,0,0,4" SnapsToDevicePixels="True" UseLayoutRounding="True" />
                 <Grid Row="4" Name="ArtistDetailContentHost">
                   <Grid Visibility="{Binding ArtistDetailActiveTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=albums}">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                      <ListBox ItemsSource="{Binding ArtistAlbums}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
-                        <ListBox.ItemsPanel>
-                          <ItemsPanelTemplate>
-                            <local:BalancedItemsPanel MinItemWidth="152" MaxItemWidth="176" Gap="10"/>
-                          </ItemsPanelTemplate>
-                        </ListBox.ItemsPanel>
-                        <ListBox.ItemTemplate>
-                          <DataTemplate>
+                    <!-- The list scrolls itself: the outer ScrollViewer used to
+                         remove the height constraint, so every album card was
+                         realized even though virtualization was requested. -->
+                    <ListBox ItemsSource="{Binding ArtistAlbums}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
+                      <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <local:VirtualizingBalancedPanel MinItemWidth="152" MaxItemWidth="176" Gap="10"/>
+                        </ItemsPanelTemplate>
+                      </ListBox.ItemsPanel>
+                      <ListBox.ItemTemplate>
+                        <DataTemplate>
                             <Border Width="140" Margin="6,8" Cursor="Hand" MouseLeftButtonUp="ArtistAlbum_Click">
                               <StackPanel>
                                 <Border Width="140" Height="140" CornerRadius="10" ClipToBounds="True" Background="#26FFFFFF">
@@ -1948,10 +1953,9 @@
                                 <TextBlock FontSize="12" Foreground="#80FFFFFF" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" Text="{Binding Artist}" />
                               </StackPanel>
                             </Border>
-                          </DataTemplate>
-                        </ListBox.ItemTemplate>
+                        </DataTemplate>
+                      </ListBox.ItemTemplate>
                       </ListBox>
-                    </ScrollViewer>
                   </Grid>
                   <Grid Visibility="{Binding ArtistDetailActiveTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=tracks}">
                     <Grid.RowDefinitions>
@@ -5720,7 +5724,7 @@
               <Button Style="{StaticResource APK_OverflowMenuItem}" Command="{Binding ToggleSelectModeCommand}">
                 <TextBlock Text="Select" Style="{StaticResource APK_TextBodyStyle}" FontSize="14" FontWeight="SemiBold" />
               </Button>
-              <Button Style="{StaticResource APK_OverflowMenuItem}" Command="{Binding ToggleSortMenuCommand}">
+              <Button Style="{StaticResource APK_OverflowMenuItem}" Command="{Binding OpenSortMenuCommand}">
                 <Grid Width="170">
                   <TextBlock Text="Sort by" Style="{StaticResource APK_TextBodyStyle}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Left" />
                   <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.ArrowRight}" Fill="#99FFFFFF" Stretch="Uniform" Width="10" Height="10" />
@@ -5739,72 +5743,66 @@
               <ScaleTransform ScaleX="1" ScaleY="1" />
             </UIElement.RenderTransform>
             <StackPanel>
-              <TextBlock Text="Sort by" FontWeight="Bold" FontSize="15" Foreground="{StaticResource APK_YellowBrush}" Margin="8,4,8,8" />
+              <StackPanel Orientation="Horizontal" Margin="8,4,8,8">
+                <TextBlock Text="Sort by" FontWeight="Bold" FontSize="15" Foreground="{StaticResource APK_YellowBrush}" />
+                <TextBlock Text="·" FontWeight="Bold" FontSize="15" Foreground="{StaticResource APK_YellowBrush}" Margin="6,0" />
+                <TextBlock Text="{Binding SortCriterionLabel}" FontWeight="Bold" FontSize="15" Foreground="{StaticResource APK_YellowBrush}" />
+                <TextBlock Text="{Binding SortDirectionGlyph}" FontWeight="Bold" FontSize="13" Foreground="{StaticResource APK_YellowBrush}" Margin="5,1,0,0" />
+              </StackPanel>
+              <TextBlock Text="Pick a criterion - pick it again to reverse" FontSize="11" Foreground="#88FFFFFF" Margin="8,0,8,6" />
               <Border Height="1" Background="#1AFFFFFF" Margin="0,0,0,6" SnapsToDevicePixels="True" UseLayoutRounding="True" />
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="title_az" Command="{Binding SelectSortOptionCommand}">
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="title" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=title}">
                 <Grid Width="190">
-                  <TextBlock Text="A-Z" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=title_az}" />
+                  <TextBlock Text="Title" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=title}" />
                 </Grid>
               </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="title_za" Command="{Binding SelectSortOptionCommand}">
-                <Grid Width="190">
-                  <TextBlock Text="Z-A" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=title_za}" />
-                </Grid>
-              </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="year" Command="{Binding SelectSortOptionCommand}">
-                <Grid Width="190">
-                  <TextBlock Text="Year" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=year}" />
-                </Grid>
-              </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="artist" Command="{Binding SelectSortOptionCommand}">
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="artist" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=artist}">
                 <Grid Width="190">
                   <TextBlock Text="Artist" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=artist}" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=artist}" />
                 </Grid>
               </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="album" Command="{Binding SelectSortOptionCommand}">
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="album" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=album}">
                 <Grid Width="190">
                   <TextBlock Text="Album" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=album}" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=album}" />
                 </Grid>
               </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="folder" Command="{Binding SelectSortOptionCommand}">
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="year" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=year}">
                 <Grid Width="190">
-                  <TextBlock Text="Folder" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=folder}" />
+                  <TextBlock Text="Year" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=year}" />
                 </Grid>
               </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="date_added" Command="{Binding SelectSortOptionCommand}">
-                <Grid Width="190">
-                  <TextBlock Text="Date added" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=date_added}" />
-                </Grid>
-              </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="size" Command="{Binding SelectSortOptionCommand}">
-                <Grid Width="190">
-                  <TextBlock Text="Size" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=size}" />
-                </Grid>
-              </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="duration" Command="{Binding SelectSortOptionCommand}">
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="duration" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=duration}">
                 <Grid Width="190">
                   <TextBlock Text="Duration" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=duration}" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=duration}" />
                 </Grid>
               </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="random" Command="{Binding SelectSortOptionCommand}">
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="size" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=size}">
+                <Grid Width="190">
+                  <TextBlock Text="Size" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=size}" />
+                </Grid>
+              </Button>
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="date_added" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=date_added}">
+                <Grid Width="190">
+                  <TextBlock Text="Date added" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=date_added}" />
+                </Grid>
+              </Button>
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="folder" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=folder}">
+                <Grid Width="190">
+                  <TextBlock Text="Folder" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=folder}" />
+                </Grid>
+              </Button>
+              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="random" Command="{Binding SelectSortOptionCommand}" Visibility="{Binding ApplicableLibrarySortCriteria, Converter={StaticResource SortCriterionAllowed}, ConverterParameter=random}">
                 <Grid Width="190">
                   <TextBlock Text="Random" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding LibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=random}" />
-                </Grid>
-              </Button>
-              <Button Style="{StaticResource APK_IconButton}" Height="34" HorizontalContentAlignment="Left" Padding="8,0" CommandParameter="reverse" Command="{Binding SelectSortOptionCommand}">
-                <Grid Width="190">
-                  <TextBlock Text="Reverse" Style="{StaticResource APK_TextBodyStyle}" FontSize="13" VerticalAlignment="Center" />
-                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding IsLibrarySortDescending, Converter={StaticResource BoolToVisibilityConverter}}" />
+                  <Path HorizontalAlignment="Right" VerticalAlignment="Center" Data="{StaticResource Icon.Check}" Fill="{StaticResource APK_YellowBrush}" Stretch="Uniform" Width="14" Height="14" Visibility="{Binding EffectiveLibrarySortOrder, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=random}" />
                 </Grid>
               </Button>
             </StackPanel>

@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
@@ -179,6 +180,29 @@ public class EqualityToVisibilityConverter : IValueConverter
     {
         var match = string.Equals(value?.ToString(), parameter?.ToString(), StringComparison.OrdinalIgnoreCase);
         return match ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// SortCriterionAllowedConverter — shows a sort option only when it applies to
+// the collection that is on screen (value = "title|size|duration|…").
+// ─────────────────────────────────────────────────────────────────────────────
+public class SortCriterionAllowedConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        string available = value?.ToString() ?? string.Empty;
+        string criterion = parameter?.ToString() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(criterion)) return Visibility.Collapsed;
+
+        bool allowed = available
+            .Split('|')
+            .Any(entry => string.Equals(entry, criterion, StringComparison.OrdinalIgnoreCase));
+
+        return allowed ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
@@ -384,6 +408,22 @@ public class ArtistImageConverter : IValueConverter
     public static System.Windows.Media.ImageSource? DefaultArtistImage { get; set; }
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Windows.Media.ImageSource> HighResCache = new(StringComparer.OrdinalIgnoreCase);
 
+    private const int HighResCacheLimit = 64;
+
+    private static void StoreHighRes(string key, System.Windows.Media.ImageSource image)
+    {
+        HighResCache[key] = image;
+        if (HighResCache.Count <= HighResCacheLimit) return;
+
+        int target = HighResCacheLimit * 3 / 4;
+        foreach (string candidate in HighResCache.Keys)
+        {
+            if (HighResCache.Count <= target) break;
+            if (string.Equals(candidate, key, StringComparison.OrdinalIgnoreCase)) continue;
+            HighResCache.TryRemove(candidate, out _);
+        }
+    }
+
     // Cached on the UI thread when the window's DataContext is assigned. Reading
     // Application.Current.MainWindow enforces dispatcher affinity and throws when
     // touched from a worker thread (e.g. the background hi-res prefetch in
@@ -444,7 +484,7 @@ public class ArtistImageConverter : IValueConverter
             var mem = coord.TryGetArtistImage(artistName, isHighRes);
             if (mem != null)
             {
-                if (isHighRes) HighResCache[artistName] = mem;
+                if (isHighRes) StoreHighRes(artistName, mem);
                 return mem;
             }
         }
@@ -469,9 +509,12 @@ public class ArtistImageConverter : IValueConverter
                         if (result != null)
                         {
                             if (isHighRes)
-                                HighResCache[artistName] = result;
+                                StoreHighRes(artistName, result);
                             else
+                            {
                                 vm.ArtistImageCache[artistName] = result;
+                                vm.TrimArtistImageCache(artistName);
+                            }
 
                             // Notify on UI thread
                             var disp = Application.Current?.Dispatcher;

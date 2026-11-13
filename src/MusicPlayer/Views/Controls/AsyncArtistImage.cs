@@ -22,7 +22,7 @@ public sealed class AsyncArtistImage : Image
     private MainViewModel? _viewModel;
     private ScrollViewer? _scrollViewer;
     private int _requestVersion;
-    private readonly HashSet<string> _loadingArtists = new(StringComparer.OrdinalIgnoreCase);
+    private string? _pendingArtist;
     private int _focusedDiagnosticCount;
 
     // BEGIN TEMPORARY ARTIST IMAGE DIAGNOSTICS
@@ -54,8 +54,58 @@ public sealed class AsyncArtistImage : Image
 
     public bool HasArtistImage => Source is ImageSource;
 
+    internal enum ImageRequestDecision
+    {
+        Request,
+        SkipNoArtist,
+        SkipNoViewModel,
+        SkipNotLoaded
+    }
+
+    /// <summary>
+    /// Decides whether an artist thumbnail request may start.
+    ///
+    /// The viewport position is deliberately NOT part of the decision: a
+    /// virtualizing panel binds an item to a recycled container *before* the
+    /// container is arranged, so the hit-test fails exactly when the request is
+    /// made. Treating "outside the viewport" as a reason to skip dropped the
+    /// request with nothing to retry it, and the tiles stayed empty until the
+    /// window was resized or the metadata was refreshed.
+    /// </summary>
+    internal static ImageRequestDecision DecideImageRequest(
+        string? artist,
+        bool hasViewModel,
+        bool isLoaded,
+        bool isInViewport)
+    {
+        if (string.IsNullOrWhiteSpace(artist)) return ImageRequestDecision.SkipNoArtist;
+        if (!hasViewModel) return ImageRequestDecision.SkipNoViewModel;
+        if (!isLoaded) return ImageRequestDecision.SkipNotLoaded;
+        _ = isInViewport; // intentionally ignored, see the remarks above.
+        return ImageRequestDecision.Request;
+    }
+
     private static void OnArtistNameChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-        => ((AsyncArtistImage)d).RequestImage();
+    {
+        var control = (AsyncArtistImage)d;
+        control.ResetForNewArtist();
+        control.RequestImage();
+    }
+
+    /// <summary>
+    /// A virtualizing panel reuses containers: the same control can be bound to a
+    /// different artist while the previous decode is still running. The old bitmap
+    /// has to be cleared (otherwise the tile keeps showing the previous artist)
+    /// and the in-flight request has to be invalidated so a late decode cannot
+    /// paint the wrong artist.
+    /// </summary>
+    private void ResetForNewArtist()
+    {
+        Interlocked.Increment(ref _requestVersion);
+        _pendingArtist = null;
+        _diagnosticWaitingForArtistPath = false;
+        Source = null;
+    }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -64,7 +114,7 @@ public sealed class AsyncArtistImage : Image
         if (_viewModel != null) _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         SizeChanged -= OnSizeChangedForImageRetry;
         SizeChanged += OnSizeChangedForImageRetry;
-        Dispatcher.BeginInvoke(TryRequestImageWhenVisible, System.Windows.Threading.DispatcherPriority.Loaded);
+        Dispatcher.BeginInvoke(RequestImage, System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void OnSizeChangedForImageRetry(object? sender, SizeChangedEventArgs e)
@@ -104,9 +154,13 @@ public sealed class AsyncArtistImage : Image
 
         if (!IsInViewport())
         {
+            // The Artists grid is virtualized: a container exists because it was
+            // realized for the viewport (plus a small cache). Rejecting the
+            // request because the control has not been arranged *yet* is what
+            // left recycled tiles empty - the binding happens before the arrange,
+            // and nothing retried afterwards.
             WriteFocusedImageDiagnostic(
-                $"retry deferred: outside actual viewport size={FormatSize(RenderSize)} loaded={IsLoaded}");
-            return;
+                $"retry proceeding although outside viewport size={FormatSize(RenderSize)} loaded={IsLoaded}");
         }
 
         SizeChanged -= OnSizeChangedForImageRetry;
@@ -121,7 +175,6 @@ public sealed class AsyncArtistImage : Image
         SizeChanged -= OnSizeChangedForImageRetry;
         if (_scrollViewer != null)
         {
-            _scrollViewer.ScrollChanged -= OnScrollChanged;
             _scrollViewer.SizeChanged -= OnScrollViewerSizeChanged;
         }
         _scrollViewer = null;
@@ -137,14 +190,17 @@ public sealed class AsyncArtistImage : Image
 
         if (_scrollViewer != null)
         {
-            _scrollViewer.ScrollChanged -= OnScrollChanged;
             _scrollViewer.SizeChanged -= OnScrollViewerSizeChanged;
         }
 
         _scrollViewer = scrollViewer;
         if (_scrollViewer != null)
         {
-            _scrollViewer.ScrollChanged += OnScrollChanged;
+            // No per-control ScrollChanged subscription: the Artists grid now
+            // virtualizes, so containers are created/rebound as they enter the
+            // viewport and the DataContext/Loaded path already requests the image.
+            // Keeping one handler per image made every scroll event run N viewport
+            // hit-tests on the UI thread.
             _scrollViewer.SizeChanged += OnScrollViewerSizeChanged;
         }
     }
@@ -166,24 +222,22 @@ public sealed class AsyncArtistImage : Image
             if (pathAvailable) _diagnosticWaitingForArtistPath = false;
         }
 
-        if (inViewport) RequestImage();
-    }
-
-    private void OnScrollChanged(object sender, ScrollChangedEventArgs e)
-    {
-        WriteFocusedImageDiagnostic(
-            $"ScrollChanged verticalOffset={e.VerticalOffset:0.##} viewportHeight={e.ViewportHeight:0.##}");
-        if (Source is not null || !IsInViewport()) return;
-
-        SizeChanged -= OnSizeChangedForImageRetry;
-        TryRequestImageWhenVisible();
+        // Do not gate the retry on the viewport: recycled tiles are bound before
+        // they are arranged, so the hit-test failed exactly when a retry was
+        // needed.
+        RequestImage();
     }
 
     private void RequestImage()
     {
         var artist = ArtistName?.Trim();
         var vm = _viewModel ?? (Application.Current?.MainWindow?.DataContext as MainViewModel);
-        if (!string.IsNullOrEmpty(artist) && _loadingArtists.Contains(artist)) return;
+        if (!string.IsNullOrEmpty(artist) &&
+            string.Equals(_pendingArtist, artist, StringComparison.OrdinalIgnoreCase))
+        {
+            // A decode for this artist is already running for this control.
+            return;
+        }
         var isCkayDiagnostic = string.Equals(artist, "CKay", StringComparison.OrdinalIgnoreCase);
         var version = Interlocked.Increment(ref _requestVersion);
         if (_diagnosticRequestCount < 2)
@@ -194,7 +248,7 @@ public sealed class AsyncArtistImage : Image
                 $"loaded={IsLoaded} sourceSet={Source is not null}");
         }
 
-        if (string.IsNullOrEmpty(artist) || vm == null || !IsLoaded)
+        if (DecideImageRequest(artist, vm != null, IsLoaded, IsInViewport()) != ImageRequestDecision.Request)
         {
             Source = null;
             WriteImageDiagnostic(
@@ -222,6 +276,7 @@ public sealed class AsyncArtistImage : Image
                 _diagnosticWaitingForArtistPath = false;
                 WriteImageDiagnostic($"coordinator memory cache hit artist='{artist}'");
                 var image = vm.ArtistImageCache.GetOrAdd(artist, coordCached);
+                vm.TrimArtistImageCache(artist);
                 Source = image;
                 return;
             }
@@ -236,8 +291,11 @@ public sealed class AsyncArtistImage : Image
         }
 
         _diagnosticWaitingForArtistPath = false;
-        // BalancedItemsPanel realizes the full grid. Defer disk reads and image decoding
-        // for tiles outside the visible ScrollViewer viewport until scrolling reveals them.
+        // The grid is virtualized, so this control only exists for an item that
+        // was realized for (or next to) the viewport. The binding happens before
+        // the arrange, so a viewport hit-test at this point is unreliable: it
+        // used to reject the request and nothing ever retried it, which left
+        // recycled tiles empty until the window was resized.
         var inViewport = IsInViewport();
         WriteImageDiagnostic(
             $"artist path found artist='{artist}' cacheHit=false inViewport={inViewport} " +
@@ -246,13 +304,8 @@ public sealed class AsyncArtistImage : Image
         {
             WriteFocusedImageDiagnostic($"path='{path}' fileExists={File.Exists(path)} inViewport={inViewport}");
         }
-        if (!inViewport)
-        {
-            WriteImageDiagnostic($"RequestImage ended without Source: outside viewport artist='{artist}'");
-            return;
-        }
 
-        if (!_loadingArtists.Add(artist)) return;
+        _pendingArtist = artist;
 
         WriteFocusedImageDiagnostic(
             $"decode started path='{path}' fileExists={File.Exists(path)} pathFound=true " +
@@ -263,7 +316,8 @@ public sealed class AsyncArtistImage : Image
         {
             Dispatcher.BeginInvoke(() =>
             {
-                _loadingArtists.Remove(artist);
+                if (string.Equals(_pendingArtist, artist, StringComparison.OrdinalIgnoreCase))
+                    _pendingArtist = null;
                 if (task.Status != TaskStatus.RanToCompletion)
                 {
                     var exception = task.Exception?.GetBaseException();
@@ -282,6 +336,7 @@ public sealed class AsyncArtistImage : Image
 
                 WriteImageDiagnostic($"image decode succeeded artist='{artist}'");
                 var image = vm.ArtistImageCache.GetOrAdd(artist, task.Result);
+                vm.TrimArtistImageCache(artist);
 
                 // Also populate the coordinator's shared memory cache so ArtistImageConverter
                 // and other consumers can hit it without re-decoding.
