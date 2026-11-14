@@ -371,30 +371,19 @@ namespace MusicPlayer.Views
                 }
             }
 
-            // Cleanup containers outside range with proper recycling support
-            var recyclingGenerator = generator as System.Windows.Controls.Primitives.IRecyclingItemContainerGenerator;
+            // Cleanup containers outside range
             for (int i = InternalChildren.Count - 1; i >= 0; i--)
             {
                 var container = InternalChildren[i];
                 int index = (Owner != null ? Owner.ItemContainerGenerator.IndexFromContainer(container) : -1);
                 if (index < firstIndex || index > lastIndex)
                 {
-                    if (recyclingGenerator != null)
+                    try
                     {
-                        // Use recycling generator to properly recycle the container
-                        GeneratorPosition position = generator.GeneratorPositionFromIndex(index);
-                        recyclingGenerator.Recycle(position, 1);
+                        generator.Remove(generator.GeneratorPositionFromIndex(index), 1);
+                        RemoveInternalChildRange(i, 1);
                     }
-                    else
-                    {
-                        // Fallback for non-recycling generator
-                        try
-                        {
-                            generator.Remove(generator.GeneratorPositionFromIndex(index), 1);
-                        }
-                        catch { }
-                    }
-                    RemoveInternalChildRange(i, 1);
+                    catch { }
                 }
             }
 
