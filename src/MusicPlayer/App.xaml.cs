@@ -429,7 +429,9 @@ public partial class App : Application
                 catch { }
             });
 
-            AlbumArtLoader.Instance = ServiceProvider!.GetRequiredService<AlbumArtLoader>();
+            var albumArtLoader = ServiceProvider!.GetRequiredService<AlbumArtLoader>();
+            AlbumArtLoader.Instance = albumArtLoader;
+            mainWindow.AttachAlbumArtLoader(albumArtLoader);
 
             // Step 3: Create ViewModel and set DataContext
             var vm = ServiceProvider!.GetRequiredService<MainViewModel>();

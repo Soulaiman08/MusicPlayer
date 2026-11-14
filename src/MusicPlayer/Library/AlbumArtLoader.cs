@@ -14,6 +14,7 @@ using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
 using MusicPlayer.ImageLoading;
 using MusicPlayer.Models;
+using MusicPlayer.Services;
 using MusicPlayer.Utilities;
 
 namespace MusicPlayer.Library;
@@ -731,10 +732,15 @@ public class AlbumArtLoader : IDisposable
         IEnumerable<MusicTrack> tracks,
         CancellationToken cancellationToken = default)
     {
-        return Task.Run(async () =>
+        var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
+        if (list.Count == 0 || cancellationToken.IsCancellationRequested) return Task.CompletedTask;
+
+        var tasks = new List<Task>();
+        foreach (var track in list)
         {
-            var list = tracks.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
-            if (list.Count == 0) return;
+            if (cancellationToken.IsCancellationRequested) break;
+            tasks.Add(ArtworkPipeline.Instance.GetAsync(track.FilePath, ArtworkQuality.List, ArtworkPriority.Maintenance, track, cancellationToken));
+        }
 
             // PreloadTrackArtwork already loads and caches the exact same
             // Thumbnail quality for every track. The old second sequential pass

@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using MusicPlayer.ImageLoading;
 using MusicPlayer.ViewModels;
@@ -18,6 +17,7 @@ public sealed class AsyncArtistImage : Image
         nameof(ArtistName), typeof(string), typeof(AsyncArtistImage),
         new PropertyMetadata(string.Empty, OnArtistNameChanged));
 
+    private static readonly ConcurrentDictionary<string, byte> _inFlightLoads = new(StringComparer.OrdinalIgnoreCase);
     private MainViewModel? _viewModel;
     private int _requestVersion;
     private CancellationTokenSource? _requestCts;

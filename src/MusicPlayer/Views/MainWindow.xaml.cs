@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -185,6 +185,20 @@ namespace MusicPlayer.Views
     private double _queueScrollVelocity = 0.0;
     private int    _queueScrollDir      = 0; // last scroll direction (-1 up, +1 down)
 
+    private AlbumArtLoader? _albumArtLoader;
+
+    public void AttachAlbumArtLoader(AlbumArtLoader loader)
+    {
+        if (loader == null) throw new ArgumentNullException(nameof(loader));
+        if (ReferenceEquals(_albumArtLoader, loader)) return;
+        if (_albumArtLoader != null)
+        {
+            _albumArtLoader.MediumArtBatchReady -= OnMediumArtBatchReady;
+        }
+        _albumArtLoader = loader;
+        _albumArtLoader.MediumArtBatchReady += OnMediumArtBatchReady;
+    }
+
     public MainWindow()
     {
 InitializeComponent();
@@ -192,6 +206,14 @@ InitializeComponent();
    SmoothScrollHelper.Initialize();
    DataContextChanged += OnDataContextChanged;
    Loaded += OnWindowLoaded;
+   Closed += (_, _) =>
+   {
+       if (_albumArtLoader != null)
+       {
+           _albumArtLoader.MediumArtBatchReady -= OnMediumArtBatchReady;
+           _albumArtLoader = null;
+       }
+   };
    Deactivated += OnWindowDeactivated;
 // Keeps the table headers' column separators aligned with the row separators,
 // which sit inside each list's scrollbar gutter.
@@ -1633,6 +1655,168 @@ InitializeComponent();
         }
     }
 
+    private void OnMediumArtReady(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var dispatcher = Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(() => OnMediumArtReady(path)));
+            return;
+        }
+
+        try
+        {
+            UpdateAlbumImages(path);
+        }
+        catch { }
+    }
+
+    private void OnMediumArtBatchReady(System.Collections.Generic.IReadOnlySet<string> paths)
+    {
+        if (paths == null || paths.Count == 0) return;
+        var dispatcher = Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(new Action(() => OnMediumArtBatchReady(paths)));
+            return;
+        }
+
+        try
+        {
+            UpdateAlbumImagesBatch(paths);
+        }
+        catch { }
+    }
+
+    private static void UpdateAlbumImagesBatch(System.Collections.Generic.IReadOnlySet<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            UpdateAlbumImages(path);
+        }
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Generic.HashSet<System.WeakReference<System.Windows.Controls.Image>>> _registeredAlbumImages = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string? GetCoverPathFromDataContext(object? dataContext)
+    {
+        if (dataContext is MusicPlayer.Models.MusicTrack track)
+            return !string.IsNullOrEmpty(track.AlbumArtPath) ? track.AlbumArtPath : track.FilePath;
+        if (dataContext is string str)
+            return str;
+        return null;
+    }
+
+    internal static void RegisterAlbumImage(System.Windows.Controls.Image? img, object? dataContext = null)
+    {
+        if (img == null) return;
+        string? path = GetCoverPathFromDataContext(dataContext ?? img.DataContext);
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        var set = _registeredAlbumImages.GetOrAdd(path, _ => new System.Collections.Generic.HashSet<System.WeakReference<System.Windows.Controls.Image>>());
+        lock (set)
+        {
+            bool alreadyPresent = false;
+            set.RemoveWhere(wr =>
+            {
+                if (!wr.TryGetTarget(out var target)) return true;
+                if (ReferenceEquals(target, img)) { alreadyPresent = true; }
+                return false;
+            });
+            if (!alreadyPresent)
+            {
+                set.Add(new System.WeakReference<System.Windows.Controls.Image>(img));
+            }
+        }
+
+        if (AlbumArtLoader.Instance != null)
+        {
+            if (AlbumArtLoader.Instance.HasMediumArt(path) || 
+                MusicPlayer.Services.ArtworkPipeline.Instance.GetCached(path, MusicPlayer.Services.ArtworkQuality.Mini) != null ||
+                MusicPlayer.Services.ArtworkPipeline.Instance.GetCached(path, MusicPlayer.Services.ArtworkQuality.List) != null)
+            {
+                var be = System.Windows.Data.BindingOperations.GetBindingExpression(img, System.Windows.Controls.Image.SourceProperty);
+                be?.UpdateTarget();
+            }
+            else
+            {
+                AlbumArtLoader.Instance.EnqueueMediumArt(path, (dataContext ?? img.DataContext) as MusicPlayer.Models.MusicTrack);
+            }
+        }
+    }
+
+    internal static void UnregisterAlbumImage(System.Windows.Controls.Image? img, object? dataContext = null)
+    {
+        if (img == null) return;
+        string? path = GetCoverPathFromDataContext(dataContext ?? img.DataContext);
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        if (_registeredAlbumImages.TryGetValue(path, out var set))
+        {
+            lock (set)
+            {
+                set.RemoveWhere(wr => !wr.TryGetTarget(out var target) || ReferenceEquals(target, img));
+            }
+        }
+    }
+
+    private void AlbumArtImage_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Image img)
+        {
+            RegisterAlbumImage(img);
+        }
+    }
+
+    private void AlbumArtImage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Image img)
+        {
+            UnregisterAlbumImage(img);
+        }
+    }
+
+    private void AlbumArtImage_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Image img)
+        {
+            UnregisterAlbumImage(img, e.OldValue);
+            RegisterAlbumImage(img, e.NewValue);
+        }
+    }
+
+    private static void UpdateAlbumImages(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        if (_registeredAlbumImages.TryGetValue(path, out var set))
+        {
+            System.Windows.Controls.Image[] targets;
+            lock (set)
+            {
+                set.RemoveWhere(wr => !wr.TryGetTarget(out _));
+                targets = new System.Windows.Controls.Image[set.Count];
+                int idx = 0;
+                foreach (var wr in set)
+                {
+                    if (wr.TryGetTarget(out var img)) targets[idx++] = img;
+                }
+            }
+            foreach (var img in targets)
+            {
+                if (img != null)
+                {
+                    string? candidate = GetCoverPathFromDataContext(img.DataContext);
+                    if (string.Equals(candidate, path, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        var be = System.Windows.Data.BindingOperations.GetBindingExpression(img, System.Windows.Controls.Image.SourceProperty);
+                        be?.UpdateTarget();
+                    }
+                }
+            }
+        }
+    }
+
     private void OnWindowLoaded(object sender, RoutedEventArgs e)
     {
         if (SidebarBackButton != null)
@@ -2506,12 +2690,13 @@ InitializeComponent();
         if (itemsControl == null) return 0;
         var presenter = FindVisualChild<ItemsPresenter>(itemsControl);
         var panel = presenter != null ? FindVisualChild<Panel>(presenter) : null;
-        return panel?.Children.Count ?? FindVisualChild<BalancedItemsPanel>(itemsControl)?.Children.Count ?? 0;
+        return panel?.Children.Count ?? FindVisualChild<VirtualizingBalancedPanel>(itemsControl)?.Children.Count ?? FindVisualChild<BalancedItemsPanel>(itemsControl)?.Children.Count ?? 0;
     }
 
     private static int GetItemsPanelChildCount(DependencyObject? root)
     {
         if (root == null) return 0;
+        if (root is VirtualizingBalancedPanel vPanel) return vPanel.Children.Count;
         if (root is BalancedItemsPanel panel) return panel.Children.Count;
         if (root is VirtualizingBalancedPanel virtualizingPanel) return virtualizingPanel.Children.Count;
         if (root is not System.Windows.Media.Visual && root is not System.Windows.Media.Media3D.Visual3D) return 0;
@@ -3779,12 +3964,13 @@ InitializeComponent();
         string name = _artistTransitionArtistName;
         if (string.IsNullOrEmpty(name)) return;
 
-        try { ContentGrid.UpdateLayout(); } catch { }
-
+        // Note: Do NOT call ContentGrid.UpdateLayout() synchronously here; forcing a full-window layout
+        // pass right before the animation freezes the UI thread.
         FrameworkElement? card = null;
         FrameworkElement? circle = null;
         foreach (UIElement child in ContentGrid.Children)
         {
+            if (child.Visibility != Visibility.Visible) continue;
             var hit = FindHeroSourceCard(child, name, _isAlbumTransition);
             if (hit != null)
             {

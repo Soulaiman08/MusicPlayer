@@ -67,6 +67,7 @@ public partial class MainViewModel : ViewModelBase
 	private readonly WindowsIntegrationService? _winIntegration;
 
 	private (List<MusicTrack> Items, List<KeyValuePair<string, string>> CachedImages)? _preloadedArtistResult;
+	private List<MusicTrack>? _initialSortedAlbums;
 	private readonly BackgroundTaskRegistry _backgroundTaskRegistry;
 	private readonly UiOperationTracker _uiOps;
 	private readonly object _shutdownGate = new();
@@ -4598,12 +4599,198 @@ public partial class MainViewModel : ViewModelBase
 		{
 		}
 		LogHelper.LogInfo($"[StartupPerf] BuildArtistItemsAsync done totalMs={_startupSw.ElapsedMilliseconds}");
-		if (token.IsCancellationRequested) return;
-		if (sortedTracks != null && sortedTracks.Count > 0)
+		statusCallback?.Invoke("Preparing artwork & artists...");
+
+		var preloadTasks = new List<Task>();
+
+		// Stage 1: Essential items for the initial screen
+		// 1. Initial cached artists (top 6)
+		List<KeyValuePair<string, string>>? cachedArtists = null;
+		if (_preloadedArtistResult != null)
 		{
-			await _albumArt.PreloadTrackArtwork(sortedTracks.Take(60), token);
+			cachedArtists = _preloadedArtistResult.Value.CachedImages;
+			foreach (var kvp in cachedArtists)
+			{
+				if (!string.IsNullOrWhiteSpace(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value))
+					ArtistImages[kvp.Key] = kvp.Value;
+			}
+			if (cachedArtists.Count > 0)
+			{
+				preloadTasks.Add(Task.Run(() => PreloadArtistImages(cachedArtists.Take(6), 1, token, isPriority: true), token));
+			}
 		}
-		LogHelper.LogInfo($"[StartupPerf] PreloadTrackArtwork done totalMs={_startupSw.ElapsedMilliseconds}");
+
+		// Stage 1: Build canonical sorted albums matching LibrarySortOrder so the exact first viewport of Albums matches
+		List<MusicTrack>? allAlbums = null;
+		try
+		{
+			var rawAlbums = await Task.Run(() => (from g in _db.GetAllTracks()
+					.GroupBy<MusicTrack, string>(t => string.IsNullOrWhiteSpace(t.Album) ? "Unknown Album" : t.Album.Trim(), StringComparer.OrdinalIgnoreCase)
+				select (DatabaseService.PickCanonicalTrack(g) ?? g.First()) into t
+				orderby t.Album
+				select t).ToList(), token);
+
+			string sortOrder = LibrarySortOrder;
+			bool sortDescending = IsLibrarySortDescending;
+			if (rawAlbums != null && rawAlbums.Count >= 2)
+			{
+				allAlbums = await Task.Run(() => SortItems(rawAlbums, false, sortOrder, sortDescending).ToList(), token);
+			}
+			else
+			{
+				allAlbums = rawAlbums;
+			}
+			_initialSortedAlbums = allAlbums;
+		}
+		catch (Exception ex)
+		{
+			LogHelper.LogInfo($"[StartupPerf] Failed to build canonical albums: {ex.Message}");
+		}
+
+		var viewportAlbums = allAlbums?.Take(24).ToList() ?? new List<MusicTrack>();
+		var viewportTracks = sortedTracks?.Take(25).ToList() ?? new List<MusicTrack>();
+		var viewportArtists = cachedArtists?.Take(6).ToList() ?? new List<KeyValuePair<string, string>>();
+
+		int totalStartupItems = viewportAlbums.Count + viewportTracks.Count + viewportArtists.Count;
+		int completedStartupItems = 0;
+
+		void ReportStartupProgress()
+		{
+			int completed = Interlocked.Increment(ref completedStartupItems);
+			if (totalStartupItems > 0)
+			{
+				int pct = Math.Min(100, (completed * 100) / totalStartupItems);
+				statusCallback?.Invoke($"Loading covers {completed}/{totalStartupItems} ({pct}%)...");
+			}
+		}
+
+		if (totalStartupItems > 0)
+		{
+			statusCallback?.Invoke($"Loading covers 0/{totalStartupItems} (0%)...");
+		}
+
+		var startupTasks = new List<Task>();
+
+		// 1. Initial cached artists (top 6)
+		if (viewportArtists.Count > 0)
+		{
+			startupTasks.Add(Task.Run(async () =>
+			{
+				foreach (var kvp in viewportArtists)
+				{
+					if (token.IsCancellationRequested) break;
+					try
+					{
+						var img = await MusicPlayer.Services.ArtworkPipeline.Instance.GetAsync(
+							kvp.Value,
+							MusicPlayer.Services.ArtworkQuality.Cards,
+							MusicPlayer.Services.ArtworkPriority.StartupViewport,
+							token);
+						if (img != null)
+						{
+							ArtistImageCache[kvp.Key] = img;
+						}
+					}
+					catch { }
+					finally
+					{
+						ReportStartupProgress();
+					}
+				}
+			}, token));
+		}
+
+		// 2. First viewport of albums (24 cards)
+		if (viewportAlbums.Count > 0)
+		{
+			startupTasks.Add(Task.Run(async () =>
+			{
+				foreach (var album in viewportAlbums)
+				{
+					if (token.IsCancellationRequested) break;
+					try
+					{
+						string path = !string.IsNullOrEmpty(album.AlbumArtPath) ? album.AlbumArtPath : album.FilePath;
+						if (!string.IsNullOrEmpty(path))
+						{
+							await MusicPlayer.Services.ArtworkPipeline.Instance.GetAsync(
+								path,
+								MusicPlayer.Services.ArtworkQuality.Cards,
+								MusicPlayer.Services.ArtworkPriority.StartupViewport,
+								album,
+								token);
+						}
+					}
+					catch { }
+					finally
+					{
+						ReportStartupProgress();
+					}
+				}
+			}, token));
+		}
+
+		// 3. First viewport of track list (25 thumbnails)
+		if (viewportTracks.Count > 0)
+		{
+			startupTasks.Add(Task.Run(async () =>
+			{
+				foreach (var track in viewportTracks)
+				{
+					if (token.IsCancellationRequested) break;
+					try
+					{
+						if (!string.IsNullOrEmpty(track.FilePath))
+						{
+							await MusicPlayer.Services.ArtworkPipeline.Instance.GetAsync(
+								track.FilePath,
+								MusicPlayer.Services.ArtworkQuality.List,
+								MusicPlayer.Services.ArtworkPriority.StartupViewport,
+								token);
+						}
+					}
+					catch { }
+					finally
+					{
+						ReportStartupProgress();
+					}
+				}
+			}, token));
+		}
+
+		// 3. Await Stage 1 preloading with progress reporting and bounded 2.5s threshold
+		if (startupTasks.Count > 0)
+		{
+			try
+			{
+				var allDone = Task.WhenAll(startupTasks);
+				var startTime = System.Diagnostics.Stopwatch.StartNew();
+				int targetThreshold = (int)Math.Ceiling(totalStartupItems * 0.85);
+
+				while (!allDone.IsCompleted && startTime.ElapsedMilliseconds < 2500 && !token.IsCancellationRequested)
+				{
+					if (completedStartupItems >= targetThreshold && totalStartupItems > 0)
+					{
+						break;
+					}
+					await Task.Delay(20, token);
+				}
+
+				if (startTime.ElapsedMilliseconds >= 2500)
+				{
+					LogHelper.LogInfo($"[StartupPerf] Stage 1 artwork preload reached 2.5s ceiling ({completedStartupItems}/{totalStartupItems} ready), displaying UI");
+				}
+				else
+				{
+					LogHelper.LogInfo($"[StartupPerf] Stage 1 artwork preload ready ({completedStartupItems}/{totalStartupItems}) in {startTime.ElapsedMilliseconds}ms");
+				}
+			}
+			catch (Exception ex)
+			{
+				LogHelper.LogError("[StartupPerf] Stage 1 preload error", ex);
+			}
+		}
+		LogHelper.LogInfo($"[StartupPerf] Stage 1 Artwork and Artist Preload complete totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
 		GC.Collect(0);
 		LoadPlaylists();
@@ -4961,20 +5148,20 @@ public partial class MainViewModel : ViewModelBase
 		var sw = System.Diagnostics.Stopwatch.StartNew();
 		LogHelper.LogInfo("[StartupPerf] WarmUpAndRefresh start");
 		// Do not start heavy artwork extraction the moment the loading overlay
-		// disappears. Wait for the user to be idle (or for a minimum age) first.
+		// disappears. Wait for the user to be idle (and for staged preload to settle) first.
 		await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-			quietMs: 2000, minAgeMs: 5000, maxWaitMs: 120000, cancellationToken);
+			quietMs: 3000, minAgeMs: 12000, maxWaitMs: 120000, cancellationToken);
 		if (cancellationToken.IsCancellationRequested) return;
 
 		// Process the library in bounded batches so the UI thread and the decode
 		// gate are never held by an unbounded run. Each batch is cancellable and
 		// is re-run only when the user stops interacting.
-		const int batchSize = 64;
+		const int batchSize = 32;
 		for (int offset = 0; offset < tracks.Count; offset += batchSize)
 		{
 			if (cancellationToken.IsCancellationRequested) return;
 			await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-				quietMs: 1000, minAgeMs: 0, maxWaitMs: 60000, cancellationToken);
+				quietMs: 1500, minAgeMs: 0, maxWaitMs: 60000, cancellationToken);
 			if (cancellationToken.IsCancellationRequested) return;
 
 			var batch = tracks.Skip(offset).Take(batchSize).ToList();
@@ -4989,6 +5176,7 @@ public partial class MainViewModel : ViewModelBase
 				continue;
 			}
 			LogHelper.LogInfo($"[StartupPerf] WarmUp batch {offset / batchSize + 1} done totalMs={sw.ElapsedMilliseconds}");
+			await Task.Delay(40, cancellationToken);
 		}
 
 		long warmMs = sw.ElapsedMilliseconds;
@@ -6899,9 +7087,6 @@ private async Task LoadArtistsAsync()
 		try
 		{
 			// Filter on the calling (UI) thread — cheap dictionary/string reads.
-			// The per-artist kick-off (file probes, regex, HTTP client setup) used
-			// to run inline here: measured fetchKickMs=89 on the UI thread right
-			// after a tab fill, which showed up as a ~118ms dropped frame.
 			List<MusicTrack> missing = new List<MusicTrack>(items.Count);
 			foreach (MusicTrack t in items)
 			{
@@ -6913,49 +7098,51 @@ private async Task LoadArtistsAsync()
 			}
 			if (missing.Count == 0 || cancellationToken.IsCancellationRequested) return;
 
-			await Task.Run(async delegate
+			var pendingUpdates = new System.Collections.Concurrent.ConcurrentQueue<KeyValuePair<string, string>>();
+			int flushScheduled = 0;
+
+			void ScheduleFlush()
 			{
-				SemaphoreSlim sem = new SemaphoreSlim(6);
-				try
+				if (Interlocked.CompareExchange(ref flushScheduled, 1, 0) == 0)
 				{
-					await Task.WhenAll(missing.Select((Func<MusicTrack, Task>)async delegate(MusicTrack track)
+					_ = DispatchAsync(() =>
 					{
-						await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
-						try
+						Interlocked.Exchange(ref flushScheduled, 0);
+						bool anyAdded = false;
+						while (pendingUpdates.TryDequeue(out var kvp))
 						{
-							cancellationToken.ThrowIfCancellationRequested();
-							string path = await _artistImages.GetArtistImageAsync(track.Artist, cancellationToken).ConfigureAwait(false);
-							if (path != null)
+							if (!ArtistImages.ContainsKey(kvp.Key))
 							{
-								cancellationToken.ThrowIfCancellationRequested();
-								await DispatchAsync(delegate
-								{
-									if (!ArtistImages.ContainsKey(track.Artist))
-									{
-										ArtistImages[track.Artist] = path;
-										OnPropertyChanged(nameof(ArtistImages));
-									}
-								});
+								ArtistImages[kvp.Key] = kvp.Value;
+								anyAdded = true;
 							}
 						}
-						catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+						if (anyAdded)
 						{
+							OnPropertyChanged(nameof(ArtistImages));
 						}
-						catch (Exception ex)
-						{
-							_logger.LogWarning(ex, "Failed to fetch artist image: {Artist}", track.Artist);
-						}
-						finally
-						{
-							sem.Release();
-						}
-					}));
+					});
 				}
-				finally
+			}
+
+			await Task.WhenAll(missing.Select(async track =>
+			{
+				try
 				{
-					sem.Dispose();
+					string? path = await MusicPlayer.Services.BackgroundWorkCoordinator.Instance.ExecuteNetworkWorkAsync(
+						ct => _artistImages.GetArtistImageAsync(track.Artist, ct), cancellationToken).ConfigureAwait(false);
+					if (path != null && !cancellationToken.IsCancellationRequested)
+					{
+						pendingUpdates.Enqueue(new KeyValuePair<string, string>(track.Artist, path));
+						ScheduleFlush();
+					}
 				}
-			}, cancellationToken);
+				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+				catch (Exception ex)
+				{
+					_logger.LogWarning(ex, "Failed to fetch artist image: {Artist}", track.Artist);
+				}
+			})).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{

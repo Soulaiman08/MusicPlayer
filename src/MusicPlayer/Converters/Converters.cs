@@ -123,7 +123,9 @@ public class AlbumArtConverter : IValueConverter
 
         var paramStr = parameter as string ?? "";
         var fullQuality   = paramStr.Equals("full",   StringComparison.OrdinalIgnoreCase);
-        var mediumQuality = paramStr.Equals("medium", StringComparison.OrdinalIgnoreCase);
+        var cardsQuality  = paramStr.Equals("cards",  StringComparison.OrdinalIgnoreCase) ||
+                            paramStr.Equals("medium", StringComparison.OrdinalIgnoreCase);
+        var miniQuality   = paramStr.Equals("mini",   StringComparison.OrdinalIgnoreCase);
 
         if (fullQuality)
         {
@@ -133,12 +135,20 @@ public class AlbumArtConverter : IValueConverter
                 return AlbumArtLoader.Instance.LoadFullAlbumArt(path);
         }
 
-        if (mediumQuality)
+        if (cardsQuality)
         {
-            if (value is MusicTrack trackMed)
-                return AlbumArtLoader.Instance.LoadMediumAlbumArt(trackMed);
-            if (value is string pathMed && !string.IsNullOrWhiteSpace(pathMed))
-                return AlbumArtLoader.Instance.LoadMediumAlbumArt(pathMed);
+            if (value is MusicTrack trackCards)
+                return AlbumArtLoader.Instance.LoadCardsAlbumArt(trackCards);
+            if (value is string pathCards && !string.IsNullOrWhiteSpace(pathCards))
+                return AlbumArtLoader.Instance.LoadCardsAlbumArt(pathCards);
+        }
+
+        if (miniQuality)
+        {
+            if (value is MusicTrack trackMini)
+                return AlbumArtLoader.Instance.LoadMiniAlbumArt(trackMini);
+            if (value is string pathMini && !string.IsNullOrWhiteSpace(pathMini))
+                return AlbumArtLoader.Instance.LoadMiniAlbumArt(pathMini);
         }
 
         return value switch
