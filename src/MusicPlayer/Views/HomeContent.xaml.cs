@@ -21,7 +21,11 @@ public partial class HomeContent : UserControl
     private void RecentAddCard_Click(object sender, MouseButtonEventArgs e) => NavigateTo("recent_add");
     private void MostPlayCard_Click(object sender, MouseButtonEventArgs e) => NavigateTo("most_played");
 
-    private void NavigateTo(string view) => OwnerWindow?.ViewModel?.NavigateCommand.Execute(view);
+    private void NavigateTo(string view)
+    {
+        MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", view, "Enter");
+        OwnerWindow?.ViewModel?.NavigateCommand.Execute(view);
+    }
 
     private void NewPlaylist_Click(object sender, RoutedEventArgs e)
         => OwnerWindow?.ShowNewPlaylistOverlay();

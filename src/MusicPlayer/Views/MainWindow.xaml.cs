@@ -78,8 +78,6 @@ namespace MusicPlayer.Views
     // so the morphing overlay never doubles with the real card underneath.
     private FrameworkElement? _hiddenReverseCard;
     private FrameworkElement? _hiddenForwardHeroSource;
-    private sealed record PreparedTileHeroSource(object Item, FrameworkElement Element, ImageSource Image, Point Position, Size Size);
-    private PreparedTileHeroSource? _preparedTileHeroSource;
 
     private Point _queueDragStart;
     private bool _queuePressActive;
@@ -1707,6 +1705,18 @@ InitializeComponent();
         {
             if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1")
             {
+                if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NAV_SCENARIOS") == "1")
+                {
+                    var navTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                    navTimer.Tick += async (_, _) =>
+                    {
+                        navTimer.Stop();
+                        try { await RunNavigationScenarioCampaignAsync(); }
+                        catch (Exception ex) { LogHelper.LogError("NAV-CAMPAIGN", ex); }
+                    };
+                    navTimer.Start();
+                }
+
                 var probeTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
                 probeTimer.Tick += (_, _) => { probeTimer.Stop(); RunFullPlayerTransitionProbe(); };
                 probeTimer.Start();
@@ -2537,7 +2547,7 @@ InitializeComponent();
     {
         if (sender is Border card && card.DataContext is FolderItem folder)
         {
-            _preparedTileHeroSource = CaptureTileHeroSource(card);
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("folders", "folder_detail", "Enter");
             ViewModel?.NavigateToFolder(folder.Path);
         }
     }
@@ -2545,36 +2555,7 @@ InitializeComponent();
     private void GenreRow_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Border card || card.DataContext is not MusicTrack { Genre: { Length: > 0 } genre }) return;
-        _preparedTileHeroSource = CaptureTileHeroSource(card);
         ViewModel?.NavigateToGenre(genre);
-    }
-
-    // Genres and folders still navigate normally. Keep a click-time snapshot of
-    // the actual square tile so a later detail redesign can reuse its exact visual
-    // bounds and artwork without guessing from the data model or re-finding it.
-    private PreparedTileHeroSource? CaptureTileHeroSource(Border card)
-    {
-        try
-        {
-            card.UpdateLayout();
-            if (card.Child is not StackPanel stack || stack.Children.Count == 0 ||
-                stack.Children[0] is not FrameworkElement tile ||
-                tile.ActualWidth <= 0 || tile.ActualHeight <= 0)
-                return null;
-
-            Point position = tile.TransformToAncestor(ContentGrid).Transform(new Point(0, 0));
-            int width = Math.Max(1, (int)Math.Ceiling(tile.ActualWidth));
-            int height = Math.Max(1, (int)Math.Ceiling(tile.ActualHeight));
-            var image = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
-            image.Render(tile);
-            image.Freeze();
-            return new PreparedTileHeroSource(card.DataContext ?? tile.DataContext ?? tile, tile, image, position,
-                new Size(tile.ActualWidth, tile.ActualHeight));
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private void AlbumRow_Click(object sender, MouseButtonEventArgs e)
@@ -2838,6 +2819,7 @@ InitializeComponent();
 
     private void SidebarBackButton_Click(object sender, RoutedEventArgs e)
     {
+        MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation(ViewModel?.CurrentView ?? "unknown", "back", "Back");
         switch (ViewModel?.CurrentView)
         {
             case "artist_detail":
@@ -6521,6 +6503,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
                 else
                     RunPageZoomChoreography();
             }
+            MusicPlayer.Diagnostics.NavigationProbe.ScheduleLayoutAndCompletion(Dispatcher);
             if (!_heroTransitionPending)
             {
                 Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
@@ -6879,6 +6862,140 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         }
     }
 
+    private Task WaitForDispatcherIdleAsync()
+    {
+        var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, () => tcs.TrySetResult(true));
+        return tcs.Task;
+    }
+
+    private async System.Threading.Tasks.Task RunNavigationScenarioCampaignAsync()
+    {
+        LogHelper.LogInfo("[NAV-CAMPAIGN] Starting automated navigation campaign...");
+        await System.Threading.Tasks.Task.Delay(3000);
+
+        const int iterations = 5;
+
+        // Scenario 1: Home -> Favorites -> Back
+        LogHelper.LogInfo("[NAV-CAMPAIGN] Scenario 1: Home -> Favorites -> Back");
+        for (int i = 0; i < iterations; i++)
+        {
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", "favorites", "Enter");
+            ViewModel?.NavigateCommand.Execute("favorites");
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("favorites", "home", "Back");
+            ViewModel?.GoBackCommand.Execute(null);
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+        }
+
+        // Scenario 2: Home -> Recent Play -> Back
+        LogHelper.LogInfo("[NAV-CAMPAIGN] Scenario 2: Home -> Recent Play -> Back");
+        for (int i = 0; i < iterations; i++)
+        {
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", "recent", "Enter");
+            ViewModel?.NavigateCommand.Execute("recent");
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("recent", "home", "Back");
+            ViewModel?.GoBackCommand.Execute(null);
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+        }
+
+        // Scenario 3: Home -> Recent Add -> Back
+        LogHelper.LogInfo("[NAV-CAMPAIGN] Scenario 3: Home -> Recent Add -> Back");
+        for (int i = 0; i < iterations; i++)
+        {
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", "recent_add", "Enter");
+            ViewModel?.NavigateCommand.Execute("recent_add");
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("recent_add", "home", "Back");
+            ViewModel?.GoBackCommand.Execute(null);
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+        }
+
+        // Scenario 4: Home -> Most Played -> Back
+        LogHelper.LogInfo("[NAV-CAMPAIGN] Scenario 4: Home -> Most Played -> Back");
+        for (int i = 0; i < iterations; i++)
+        {
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", "most_played", "Enter");
+            ViewModel?.NavigateCommand.Execute("most_played");
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("most_played", "home", "Back");
+            ViewModel?.GoBackCommand.Execute(null);
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+        }
+
+        // Scenario 5: Home -> Folders -> Back
+        LogHelper.LogInfo("[NAV-CAMPAIGN] Scenario 5: Home -> Folders -> Back");
+        for (int i = 0; i < iterations; i++)
+        {
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", "folders", "Enter");
+            ViewModel?.NavigateCommand.Execute("folders");
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("folders", "home", "Back");
+            ViewModel?.GoBackCommand.Execute(null);
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+        }
+
+        // Scenario 6: Folders -> Folder Detail -> Back
+        LogHelper.LogInfo("[NAV-CAMPAIGN] Scenario 6: Folders -> Folder Detail -> Back");
+        ViewModel?.NavigateCommand.Execute("folders");
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(600);
+
+        string folderPath = ViewModel?.Folders.FirstOrDefault()?.Path ?? (ViewModel?.Tracks.FirstOrDefault()?.FolderPath ?? "C:\\");
+        for (int i = 0; i < iterations; i++)
+        {
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("folders", "folder_detail", "Enter");
+            ViewModel?.NavigateToFolder(folderPath);
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("folder_detail", "folders", "Back");
+            ViewModel?.GoBackCommand.Execute(null);
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(500);
+        }
+
+        // Return to home
+        ViewModel?.NavigateCommand.Execute("home");
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(500);
+
+        // Scenario 7: Rapid repeated navigation across pages
+        LogHelper.LogInfo("[NAV-CAMPAIGN] Scenario 7: Rapid repeated navigation across pages");
+        string[] rapidViews = { "favorites", "recent", "recent_add", "most_played", "folders", "home" };
+        for (int round = 0; round < 3; round++)
+        {
+            foreach (var target in rapidViews)
+            {
+                MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation(ViewModel?.CurrentView ?? "home", target, "Enter");
+                ViewModel?.NavigateCommand.Execute(target);
+                await System.Threading.Tasks.Task.Delay(60);
+            }
+        }
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(1000);
+
+        LogHelper.LogInfo("[NAV-CAMPAIGN] complete");
+        LogHelper.Flush();
+        Dispatcher.BeginInvoke(new Action(() => Application.Current.Shutdown()));
+    }
+
     private void RunPendingNavigation()
     {
         var nav = _pendingNavAction;
@@ -7050,9 +7167,17 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     //     the fixed header bar above ContentGrid.
     // Arrival-side navigation choreographies. Hero/reverse flights own their own
     // reveal and skip this entirely (see the guards at the call site).
-    private void RunSongsEntryChoreography() => AnimatePageEnterZoom();
+    private void RunSongsEntryChoreography()
+    {
+        if (MusicPlayer.Diagnostics.NavigationProbe.IsPageZoomDisabled) return;
+        AnimatePageEnterZoom();
+    }
 
-    private void RunPageZoomChoreography() => AnimatePageEnterZoom();
+    private void RunPageZoomChoreography()
+    {
+        if (MusicPlayer.Diagnostics.NavigationProbe.IsPageZoomDisabled) return;
+        AnimatePageEnterZoom();
+    }
 
     // Full zoom + fade entrance â€” camera pulls out (1.05 -> 1.0) with smooth fade-in (0.55 -> 1.0).
     // Zero BitmapCache backing ensures GPU never stalls on Intel HD Graphics.

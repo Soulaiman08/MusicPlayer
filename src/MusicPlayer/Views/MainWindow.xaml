@@ -1391,7 +1391,7 @@
               <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
                 <views:TrackTableHeader x:Name="RecentPlayHeader" Table="{Binding RecentPlayTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox x:Name="RecentPlayList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding RecentPlayTable, RelativeSource={RelativeSource AncestorType=Window}}">
+              <ListBox x:Name="RecentPlayList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedRecentPlayTracks}" controls:TrackTable.State="{Binding RecentPlayTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Name="recentRow" Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
@@ -1482,7 +1482,7 @@
               <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
                 <views:TrackTableHeader x:Name="RecentAddHeader" Table="{Binding RecentAddTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox x:Name="RecentAddList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding RecentAddTable, RelativeSource={RelativeSource AncestorType=Window}}">
+              <ListBox x:Name="RecentAddList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedRecentAddTracks}" controls:TrackTable.State="{Binding RecentAddTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
@@ -1573,7 +1573,7 @@
               <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
                 <views:TrackTableHeader x:Name="MostPlayedHeader" Table="{Binding MostPlayedTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox x:Name="MostPlayedList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding MostPlayedTable, RelativeSource={RelativeSource AncestorType=Window}}">
+              <ListBox x:Name="MostPlayedList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedMostPlayedTracks}" controls:TrackTable.State="{Binding MostPlayedTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
@@ -1665,7 +1665,7 @@
               <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
                 <views:TrackTableHeader x:Name="FavoritesHeader" Table="{Binding FavoritesTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox x:Name="FavoritesList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding FavoritesTable, RelativeSource={RelativeSource AncestorType=Window}}">
+              <ListBox x:Name="FavoritesList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedFavoriteTracks}" controls:TrackTable.State="{Binding FavoritesTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">
@@ -2411,7 +2411,7 @@
               <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
                 <views:TrackTableHeader x:Name="FolderDetailHeader" Table="{Binding FolderDetailTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
               </Border>
-              <ListBox x:Name="FolderDetailList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedTracks}" controls:TrackTable.State="{Binding FolderDetailTable, RelativeSource={RelativeSource AncestorType=Window}}">
+              <ListBox x:Name="FolderDetailList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding DisplayedFolderDetailTracks}" controls:TrackTable.State="{Binding FolderDetailTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="TrackRow_Click" SnapsToDevicePixels="True">

@@ -132,6 +132,10 @@ public class DatabaseService
             "CREATE INDEX IF NOT EXISTS idx_tracks_artist_nocase ON tracks (Artist COLLATE NOCASE)",
             "CREATE INDEX IF NOT EXISTS idx_tracks_genre_nocase ON tracks (Genre COLLATE NOCASE)",
             "CREATE INDEX IF NOT EXISTS idx_tracks_hidden ON tracks (IsHidden)",
+            "CREATE INDEX IF NOT EXISTS idx_tracks_favorite ON tracks (IsHidden, IsFavorite, Title COLLATE NOCASE)",
+            "CREATE INDEX IF NOT EXISTS idx_tracks_recent_play ON tracks (IsHidden, DateLastPlayed DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_tracks_recent_add ON tracks (IsHidden, DateAdded DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_tracks_most_played ON tracks (IsHidden, PlayCount DESC)",
         ];
 
         foreach (string statement in statements)
@@ -207,15 +211,16 @@ public class DatabaseService
     public int GetManagedFolderTrackCount()
     {
         using var _ = LockIfNeeded();
-        var managedPaths = _db.Table<ManagedMusicFolder>()
-            .Where(f => f.Enabled)
-            .Select(f => f.Path)
-            .ToList();
+        var managedPaths = GetManagedFolderPathsLocked();
 
         if (managedPaths.Count == 0) return 0;
 
-        return _db.Table<MusicTrack>().Count(t =>
-            !t.IsHidden &&
+        var pathConditions = managedPaths.Select((p, i) => $"FilePath LIKE ? || '%'").ToList();
+        string whereClause = $"IsHidden = 0 AND ({string.Join(" OR ", pathConditions)})";
+        var candidates = _db.Query<FolderAggregateRow>($"SELECT FilePath FROM tracks WHERE {whereClause}",
+            managedPaths.Select((p, i) => (object)p).ToArray());
+
+        return candidates.Count(t =>
             !string.IsNullOrEmpty(t.FilePath) &&
             managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)));
     }
@@ -686,9 +691,14 @@ public class DatabaseService
         using var _ = LockIfNeeded();
         var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0) return new List<MusicTrack>();
-        return _db.Table<MusicTrack>().Where(t => !t.IsHidden && t.IsFavorite).ToList()
+
+        var candidates = _db.Query<MusicTrack>(
+            "SELECT * FROM tracks WHERE IsHidden = 0 AND IsFavorite = 1 ORDER BY Title COLLATE NOCASE");
+
+        return candidates
             .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
-            .OrderBy(t => t.Title).ToList();
+            .OrderBy(t => t.Title)
+            .ToList();
     }
 
     public void ToggleFavorite(int trackId)
@@ -705,44 +715,110 @@ public class DatabaseService
     // Recent/Most played
     public List<MusicTrack> GetRecentPlay(int limit = 50)
     {
+        if (limit <= 0) return new List<MusicTrack>();
+
         using var _ = LockIfNeeded();
         var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0) return new List<MusicTrack>();
-        return _db.Table<MusicTrack>()
-            .Where(t => !t.IsHidden && t.DateLastPlayed > 0)
-            .ToList()
-            .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
-            .OrderByDescending(t => t.DateLastPlayed)
-            .Take(limit)
-            .ToList();
+
+        var result = new List<MusicTrack>(limit);
+        int batchSize = Math.Max(limit * 2, 50);
+        int offset = 0;
+
+        while (result.Count < limit)
+        {
+            var batch = _db.Query<MusicTrack>(
+                "SELECT * FROM tracks WHERE IsHidden = 0 AND DateLastPlayed > 0 ORDER BY DateLastPlayed DESC LIMIT ? OFFSET ?",
+                batchSize, offset);
+
+            if (batch.Count == 0) break;
+            offset += batch.Count;
+
+            foreach (var track in batch)
+            {
+                if (IsTrackInManagedFolderLocked(track, managedPaths))
+                {
+                    result.Add(track);
+                    if (result.Count >= limit) break;
+                }
+            }
+
+            if (batch.Count < batchSize) break;
+        }
+
+        return result;
     }
 
     public List<MusicTrack> GetMostPlay(int limit = 50)
     {
+        if (limit <= 0) return new List<MusicTrack>();
+
         using var _ = LockIfNeeded();
         var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0) return new List<MusicTrack>();
-        return _db.Table<MusicTrack>()
-            .Where(t => !t.IsHidden && t.PlayCount > 0)
-            .ToList()
-            .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
-            .OrderByDescending(t => t.PlayCount)
-            .Take(limit)
-            .ToList();
+
+        var result = new List<MusicTrack>(limit);
+        int batchSize = Math.Max(limit * 2, 50);
+        int offset = 0;
+
+        while (result.Count < limit)
+        {
+            var batch = _db.Query<MusicTrack>(
+                "SELECT * FROM tracks WHERE IsHidden = 0 AND PlayCount > 0 ORDER BY PlayCount DESC LIMIT ? OFFSET ?",
+                batchSize, offset);
+
+            if (batch.Count == 0) break;
+            offset += batch.Count;
+
+            foreach (var track in batch)
+            {
+                if (IsTrackInManagedFolderLocked(track, managedPaths))
+                {
+                    result.Add(track);
+                    if (result.Count >= limit) break;
+                }
+            }
+
+            if (batch.Count < batchSize) break;
+        }
+
+        return result;
     }
 
     public List<MusicTrack> GetRecentAdd(int limit = 50)
     {
+        if (limit <= 0) return new List<MusicTrack>();
+
         using var _ = LockIfNeeded();
         var managedPaths = GetManagedFolderPathsLocked();
         if (managedPaths.Count == 0) return new List<MusicTrack>();
-        return _db.Table<MusicTrack>()
-            .Where(t => !t.IsHidden)
-            .OrderByDescending(t => t.DateAdded)
-            .ToList()
-            .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
-            .Take(limit)
-            .ToList();
+
+        var result = new List<MusicTrack>(limit);
+        int batchSize = Math.Max(limit * 2, 50);
+        int offset = 0;
+
+        while (result.Count < limit)
+        {
+            var batch = _db.Query<MusicTrack>(
+                "SELECT * FROM tracks WHERE IsHidden = 0 ORDER BY DateAdded DESC LIMIT ? OFFSET ?",
+                batchSize, offset);
+
+            if (batch.Count == 0) break;
+            offset += batch.Count;
+
+            foreach (var track in batch)
+            {
+                if (IsTrackInManagedFolderLocked(track, managedPaths))
+                {
+                    result.Add(track);
+                    if (result.Count >= limit) break;
+                }
+            }
+
+            if (batch.Count < batchSize) break;
+        }
+
+        return result;
     }
 
     // Helper: get managed folder paths (lock-free internal; caller must hold lock)
@@ -1268,16 +1344,48 @@ public class DatabaseService
 
     public List<MusicTrack> GetFolderTracks(string folder)
     {
+        if (string.IsNullOrWhiteSpace(folder))
+            return new List<MusicTrack>();
+
         using var _ = LockIfNeeded();
-        var allInFolder = _db.Table<MusicTrack>()
-            .Where(t => !t.IsHidden && PathContainment.IsWithin(t.FilePath, folder))
+
+        string cleanFolder;
+        try
+        {
+            cleanFolder = System.IO.Path.GetFullPath(folder.Trim()).Replace('/', '\\').TrimEnd('\\');
+        }
+        catch
+        {
+            cleanFolder = folder.Trim().Replace('/', '\\').TrimEnd('\\');
+        }
+
+        if (cleanFolder.EndsWith(":", StringComparison.Ordinal))
+            cleanFolder += "\\";
+
+        // Query candidate tracks using LIKE on FilePath prefix
+        var candidates = _db.Query<MusicTrack>(
+            "SELECT * FROM tracks WHERE IsHidden = 0 AND FilePath LIKE ? || '%'",
+            cleanFolder);
+
+        var tracks = candidates
+            .Where(t => !string.IsNullOrEmpty(t.FilePath) && PathContainment.IsWithin(t.FilePath, folder))
             .OrderBy(t => t.Title)
             .ToList();
-        return allInFolder.Where(t =>
+
+        // Fallback for non-ASCII casing differences or uncommon path formatting in SQLite LIKE
+        if (tracks.Count == 0)
         {
-            var dir = System.IO.Path.GetDirectoryName(t.FilePath);
-            return string.Equals(dir, folder, System.StringComparison.OrdinalIgnoreCase);
-        }).ToList();
+            var fallback = _db.Table<MusicTrack>()
+                .Where(t => !t.IsHidden)
+                .ToList();
+
+            tracks = fallback
+                .Where(t => !string.IsNullOrEmpty(t.FilePath) && PathContainment.IsWithin(t.FilePath, folder))
+                .OrderBy(t => t.Title)
+                .ToList();
+        }
+
+        return tracks;
     }
 
     // Internal locked helpers used by transactional callers

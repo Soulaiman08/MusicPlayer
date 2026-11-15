@@ -113,6 +113,15 @@ public partial class MainViewModel : ViewModelBase
 	private long _themeApplyGeneration;
 	private System.Threading.Tasks.TaskCompletionSource<bool>? _themeApplyTcs;
 	private readonly object _themeApplyTcsLock = new();
+	private CancellationTokenSource? _navigationCts;
+
+	private CancellationToken BeginNavigationToken()
+	{
+		var prev = Interlocked.Exchange(ref _navigationCts, new CancellationTokenSource());
+		try { prev?.Cancel(); } catch (ObjectDisposedException) { }
+		try { prev?.Dispose(); } catch (ObjectDisposedException) { }
+		return _navigationCts.Token;
+	}
 	private bool _isStatusBarVisible;
 	private bool _isStatusBarHiddenLinkVisible;
 	private bool _isStatusBarLoading;
@@ -1451,6 +1460,43 @@ public partial class MainViewModel : ViewModelBase
 		}
 	}
 
+	public ObservableCollection<MusicTrack> DisplayedRecentPlayTracks => (IsSearching && CurrentView == "recent") ? SearchResults : RecentPlayTracks;
+	public ObservableCollection<MusicTrack> DisplayedRecentAddTracks => (IsSearching && CurrentView == "recent_add") ? SearchResults : RecentAddTracks;
+	public ObservableCollection<MusicTrack> DisplayedMostPlayedTracks => (IsSearching && CurrentView == "most_played") ? SearchResults : MostPlayedTracks;
+	public ObservableCollection<MusicTrack> DisplayedFavoriteTracks => (IsSearching && CurrentView == "favorites") ? SearchResults : FavoriteTracks;
+	public ObservableCollection<MusicTrack> DisplayedFolderDetailTracks => (IsSearching && CurrentView == "folder_detail") ? SearchResults : FolderDetailTracks;
+
+	private void NotifyDedicatedDisplayedTracks(string? view)
+	{
+		switch (view)
+		{
+			case "recent":
+				OnPropertyChanged(nameof(DisplayedRecentPlayTracks));
+				break;
+			case "recent_add":
+				OnPropertyChanged(nameof(DisplayedRecentAddTracks));
+				break;
+			case "most_played":
+				OnPropertyChanged(nameof(DisplayedMostPlayedTracks));
+				break;
+			case "favorites":
+				OnPropertyChanged(nameof(DisplayedFavoriteTracks));
+				break;
+			case "folder_detail":
+				OnPropertyChanged(nameof(DisplayedFolderDetailTracks));
+				break;
+		}
+	}
+
+	private void NotifyAllDedicatedDisplayedTracks()
+	{
+		OnPropertyChanged(nameof(DisplayedRecentPlayTracks));
+		OnPropertyChanged(nameof(DisplayedRecentAddTracks));
+		OnPropertyChanged(nameof(DisplayedMostPlayedTracks));
+		OnPropertyChanged(nameof(DisplayedFavoriteTracks));
+		OnPropertyChanged(nameof(DisplayedFolderDetailTracks));
+	}
+
 	public bool HasNoSearchResults
 	{
 		get
@@ -1531,7 +1577,15 @@ public partial class MainViewModel : ViewModelBase
 					_ => DisplayedTracks.Count == 0
 				};
 			}
-			return DisplayedTracks.Count == 0;
+			return CurrentView switch
+			{
+				"recent" => RecentPlayTracks.Count == 0,
+				"recent_add" => RecentAddTracks.Count == 0,
+				"most_played" => MostPlayedTracks.Count == 0,
+				"favorites" => FavoriteTracks.Count == 0,
+				"folder_detail" => FolderDetailTracks.Count == 0,
+				_ => DisplayedTracks.Count == 0
+			};
 		}
 	}
 
@@ -1866,10 +1920,19 @@ public partial class MainViewModel : ViewModelBase
 		{
 			if (!EqualityComparer<string>.Default.Equals(_currentView, value))
 			{
+				long tPre = Stopwatch.GetTimestamp();
+				double freq = Stopwatch.Frequency;
+				string oldView = _currentView;
 				OnPropertyChanging("CurrentView");
 				_currentView = value;
-				OnCurrentViewChanged(value);
+				OnCurrentViewChanged(oldView, value);
+				long tMid = Stopwatch.GetTimestamp();
 				OnPropertyChanged("CurrentView");
+				long tPost = Stopwatch.GetTimestamp();
+				if (MusicPlayer.Diagnostics.NavigationProbe.Enabled)
+				{
+					LogHelper.LogInfo($"[NAV-DETAIL] CurrentView='{value}' viewChangedMs={(tMid - tPre) * 1000.0 / freq:0.00} propChangedMs={(tPost - tMid) * 1000.0 / freq:0.00} totalMs={(tPost - tPre) * 1000.0 / freq:0.00}");
+				}
 			}
 		}
 	}
@@ -5218,6 +5281,7 @@ public partial class MainViewModel : ViewModelBase
 		{
 			return;
 		}
+		BeginNavigationToken();
 		if (CurrentView == "lrc_editor")
 		{
 			CleanupLrcEditIfEmpty();
@@ -5243,11 +5307,21 @@ public partial class MainViewModel : ViewModelBase
 			if (string.Equals(target, CurrentView, StringComparison.OrdinalIgnoreCase))
 				LogHelper.LogInfo($"GoBack: no-op, already on '{CurrentView}'");
 			else
+			{
+				if (MusicPlayer.Diagnostics.NavigationProbe.Current == null)
+					MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation(CurrentView, target, "Back");
+				MusicPlayer.Diagnostics.NavigationProbe.RecordHandlerStarted();
 				CurrentView = target;
+				MusicPlayer.Diagnostics.NavigationProbe.RecordViewModelStateUpdated();
+			}
 		}
 		else if (CurrentView != "home")
 		{
+			if (MusicPlayer.Diagnostics.NavigationProbe.Current == null)
+				MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation(CurrentView, "home", "Back");
+			MusicPlayer.Diagnostics.NavigationProbe.RecordHandlerStarted();
 			CurrentView = "home";
+			MusicPlayer.Diagnostics.NavigationProbe.RecordViewModelStateUpdated();
 		}
 		bool flag = num;
 		if (flag)
@@ -5572,14 +5646,20 @@ public partial class MainViewModel : ViewModelBase
 
 	public void NavigateToFolder(string folderPath)
 	{
+		var token = BeginNavigationToken();
+		if (MusicPlayer.Diagnostics.NavigationProbe.Current == null)
+			MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation(CurrentView, "folder_detail", "Enter");
+		MusicPlayer.Diagnostics.NavigationProbe.RecordHandlerStarted();
 		// Never record a consecutive duplicate: popping back to the view we are
 		// already on notifies nothing (silent no-op GoBack) and strands later
 		// backs — the ghost empty page. Mirrors Navigate().
 		if (!string.Equals(CurrentView, "folder_detail", StringComparison.OrdinalIgnoreCase))
 			_viewHistory.Push(CurrentView);
+		BeginTabLoad("view:folder_detail");
 		CurrentView = "folder_detail";
+		MusicPlayer.Diagnostics.NavigationProbe.RecordViewModelStateUpdated();
 		IsDrawerOpen = false;
-		LoadFolderDetail(folderPath);
+		LoadFolderDetail(folderPath, token);
 		OnPropertyChanged("CanNavigateBack");
 	}
 
@@ -5620,11 +5700,49 @@ public partial class MainViewModel : ViewModelBase
 	private void Navigate(string page)
 	{
 		MusicPlayer.Views.SmoothScrollHelper.MarkInteraction();
+		var token = BeginNavigationToken();
+		if (MusicPlayer.Diagnostics.NavigationProbe.Current == null)
+			MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation(CurrentView, page, "Enter");
+		MusicPlayer.Diagnostics.NavigationProbe.RecordHandlerStarted();
 		if (!string.Equals(CurrentView, page, StringComparison.OrdinalIgnoreCase))
 		{
 			_viewHistory.Push(CurrentView);
 		}
+		switch (page)
+		{
+		case "favorites":
+			if (!IsInitializing && FavoriteTracks.Count == 0)
+			{
+				BeginTabLoad("view:favorites");
+			}
+			break;
+		case "recent":
+			if (!IsInitializing && RecentPlayTracks.Count == 0)
+			{
+				BeginTabLoad("view:recent");
+			}
+			break;
+		case "recent_add":
+			if (!IsInitializing && RecentAddTracks.Count == 0)
+			{
+				BeginTabLoad("view:recent_add");
+			}
+			break;
+		case "most_played":
+			if (!IsInitializing && MostPlayedTracks.Count == 0)
+			{
+				BeginTabLoad("view:most_played");
+			}
+			break;
+		case "folders":
+			if (Folders.Count == 0)
+			{
+				BeginTabLoad("tab:folders");
+			}
+			break;
+		}
 		CurrentView = page;
+		MusicPlayer.Diagnostics.NavigationProbe.RecordViewModelStateUpdated();
 		IsDrawerOpen = false;
 		ShowSettings = page == "settings";
 		switch (page)
@@ -5632,25 +5750,25 @@ public partial class MainViewModel : ViewModelBase
 		case "favorites":
 			if (!IsInitializing && FavoriteTracks.Count == 0)
 			{
-				LoadFavoriteTracks();
+				LoadFavoriteTracks(token);
 			}
 			break;
 		case "recent":
 			if (!IsInitializing && RecentPlayTracks.Count == 0)
 			{
-				LoadRecentPlayTracks();
+				LoadRecentPlayTracks(token);
 			}
 			break;
 		case "recent_add":
 			if (!IsInitializing && RecentAddTracks.Count == 0)
 			{
-				LoadRecentAddTracks();
+				LoadRecentAddTracks(token);
 			}
 			break;
 		case "most_played":
 			if (!IsInitializing && MostPlayedTracks.Count == 0)
 			{
-				LoadMostPlayedTracks();
+				LoadMostPlayedTracks(token);
 			}
 			break;
 		case "albums":
@@ -5674,7 +5792,7 @@ public partial class MainViewModel : ViewModelBase
 		case "folders":
 			if (Folders.Count == 0)
 			{
-				LoadFolders();
+				LoadFolders(token);
 			}
 			break;
 		case "songs":
@@ -5932,6 +6050,7 @@ public partial class MainViewModel : ViewModelBase
 		{
 			SearchResults.Clear();
 			OnPropertyChanged("DisplayedTracks");
+			NotifyAllDedicatedDisplayedTracks();
 			OnPropertyChanged("HasNoMusic");
 			return;
 		}
@@ -5939,6 +6058,7 @@ public partial class MainViewModel : ViewModelBase
 		List<MusicTrack> items = currentViewSource.Where((MusicTrack t) => (!string.IsNullOrEmpty(t.Title) && t.Title.Contains(q, StringComparison.OrdinalIgnoreCase)) || (!string.IsNullOrEmpty(t.Artist) && t.Artist.Contains(q, StringComparison.OrdinalIgnoreCase)) || (!string.IsNullOrEmpty(t.Album) && t.Album.Contains(q, StringComparison.OrdinalIgnoreCase))).ToList();
 		SearchResults.ReplaceAll(items);
 		OnPropertyChanged("DisplayedTracks");
+		NotifyAllDedicatedDisplayedTracks();
 		OnPropertyChanged("HasNoMusic");
 	}
 	private void PlayPlaylist(PlaylistViewModel? playlist)
@@ -7035,17 +7155,19 @@ private async Task LoadArtistsAsync()
 		}
 	}
 
-	private void LoadFolders() => _ = LoadFoldersAsync();
+	private void LoadFolders(CancellationToken token = default) => _ = LoadFoldersAsync(token);
 
-	private async Task LoadFoldersAsync()
+	private async Task LoadFoldersAsync(CancellationToken token = default)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadFolders));
 		if (operation == null) return;
 		int loadGeneration = BeginTabLoad("tab:folders");
 		try
 		{
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadStarted("folders");
 			List<FolderItem> folderItems = await Task.Run(delegate
 			{
+				if (token.IsCancellationRequested) return new List<FolderItem>();
 				List<ManagedMusicFolder> managedFolders = _db.GetManagedFolders();
 				Dictionary<string, FolderAggregate> aggregates = _db.GetFolderAggregates();
 				List<FolderItem> list = new List<FolderItem>();
@@ -7064,15 +7186,21 @@ private async Task LoadArtistsAsync()
 						IsManaged = true
 					});
 				}
-				return list;
-			});
+				return SortFolderItems(list);
+			}, token);
+			if (token.IsCancellationRequested) return;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadCompleted("folders", folderItems.Count);
 			await DispatchAsync(delegate
 			{
+				if (token.IsCancellationRequested) return;
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("folders");
 				Folders.ReplaceAll(folderItems);
-				SortFolders();
+				LogFolderSortTrace(EffectiveSortCriterion(LibrarySortOrder, LibrarySortCollection.Folders));
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("folders");
 			});
 			PerfTabData("folders", Folders.Count);
 		}
+		catch (OperationCanceledException) { }
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadFolders failed");
@@ -7083,9 +7211,9 @@ private async Task LoadArtistsAsync()
 		}
 	}
 
-	private void LoadFolderDetail(string folderPath) => _ = LoadFolderDetailAsync(folderPath);
+	private void LoadFolderDetail(string folderPath, CancellationToken token = default) => _ = LoadFolderDetailAsync(folderPath, token);
 
-	private async Task LoadFolderDetailAsync(string folderPath)
+	private async Task LoadFolderDetailAsync(string folderPath, CancellationToken token = default)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadFolderDetail));
 		if (operation == null) return;
@@ -7093,7 +7221,14 @@ private async Task LoadArtistsAsync()
 		int loadGeneration = BeginTabLoad("view:folder_detail");
 		try
 		{
-			List<MusicTrack> tracks = await Task.Run(() => _db.GetFolderTracks(folderPath2).ToList());
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadStarted("folder_detail");
+			List<MusicTrack> tracks = await Task.Run(() =>
+			{
+				if (token.IsCancellationRequested) return new List<MusicTrack>();
+				return _db.GetFolderTracks(folderPath2).ToList();
+			}, token);
+			if (token.IsCancellationRequested) return;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadCompleted("folder_detail", tracks.Count);
 			string folderName = Path.GetFileName(folderPath2);
 			if (string.IsNullOrEmpty(folderName))
 			{
@@ -7101,10 +7236,14 @@ private async Task LoadArtistsAsync()
 			}
 			await DispatchAsync(delegate
 			{
+				if (token.IsCancellationRequested) return;
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("folder_detail");
 				CurrentFolderName = folderName;
 				FolderDetailTracks.ReplaceAll(tracks);
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("folder_detail");
 			});
 		}
+		catch (OperationCanceledException) { }
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadFolderDetail failed");
@@ -7355,24 +7494,35 @@ private async Task LoadArtistsAsync()
 		}
 	}
 
-	private void LoadFavoriteTracks() => _ = LoadFavoriteTracksAsync();
+	private void LoadFavoriteTracks(CancellationToken token = default) => _ = LoadFavoriteTracksAsync(token);
 
-	private async Task LoadFavoriteTracksAsync()
+	private async Task LoadFavoriteTracksAsync(CancellationToken token = default)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadFavoriteTracks));
 		if (operation == null) return;
 		int loadGeneration = BeginTabLoad("view:favorites");
 		try
 		{
-			IReadOnlyList<MusicTrack> tracks = await Task.Run(() => SortItems(_db.GetFavoriteTracks(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
-		int sortVersion = LibrarySortVersion;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadStarted("favorites");
+			IReadOnlyList<MusicTrack> tracks = await Task.Run(() =>
+			{
+				if (token.IsCancellationRequested) return (IReadOnlyList<MusicTrack>)Array.Empty<MusicTrack>();
+				return SortItems(_db.GetFavoriteTracks(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending);
+			}, token);
+			if (token.IsCancellationRequested) return;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadCompleted("favorites", tracks.Count);
+			int sortVersion = LibrarySortVersion;
 			await DispatchAsync(delegate
 			{
+				if (token.IsCancellationRequested) return;
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("favorites");
 				FavoriteTracks.ReplaceAll(tracks);
-			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("favorites");
+				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("favorites");
 				MarkLibrarySortApplied("favorites");
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("favorites");
 			});
 		}
+		catch (OperationCanceledException) { }
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadFavoriteTracks failed");
@@ -7383,24 +7533,35 @@ private async Task LoadArtistsAsync()
 		}
 	}
 
-	private void LoadRecentPlayTracks() => _ = LoadRecentPlayTracksAsync();
+	private void LoadRecentPlayTracks(CancellationToken token = default) => _ = LoadRecentPlayTracksAsync(token);
 
-	private async Task LoadRecentPlayTracksAsync()
+	private async Task LoadRecentPlayTracksAsync(CancellationToken token = default)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadRecentPlayTracks));
 		if (operation == null) return;
 		int loadGeneration = BeginTabLoad("view:recent");
 		try
 		{
-			IReadOnlyList<MusicTrack> tracks = await Task.Run(() => SortItems(_db.GetRecentPlay(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
-		int sortVersion = LibrarySortVersion;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadStarted("recent");
+			IReadOnlyList<MusicTrack> tracks = await Task.Run(() =>
+			{
+				if (token.IsCancellationRequested) return (IReadOnlyList<MusicTrack>)Array.Empty<MusicTrack>();
+				return SortItems(_db.GetRecentPlay(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending);
+			}, token);
+			if (token.IsCancellationRequested) return;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadCompleted("recent", tracks.Count);
+			int sortVersion = LibrarySortVersion;
 			await DispatchAsync(delegate
 			{
+				if (token.IsCancellationRequested) return;
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("recent");
 				RecentPlayTracks.ReplaceAll(tracks);
-			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("recent_play");
+				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("recent_play");
 				MarkLibrarySortApplied("recent_play");
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("recent");
 			});
 		}
+		catch (OperationCanceledException) { }
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadRecentPlayTracks failed");
@@ -7411,24 +7572,35 @@ private async Task LoadArtistsAsync()
 		}
 	}
 
-	private void LoadRecentAddTracks() => _ = LoadRecentAddTracksAsync();
+	private void LoadRecentAddTracks(CancellationToken token = default) => _ = LoadRecentAddTracksAsync(token);
 
-	private async Task LoadRecentAddTracksAsync()
+	private async Task LoadRecentAddTracksAsync(CancellationToken token = default)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadRecentAddTracks));
 		if (operation == null) return;
 		int loadGeneration = BeginTabLoad("view:recent_add");
 		try
 		{
-			IReadOnlyList<MusicTrack> tracks = await Task.Run(() => SortItems(_db.GetRecentAdd(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
-		int sortVersion = LibrarySortVersion;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadStarted("recent_add");
+			IReadOnlyList<MusicTrack> tracks = await Task.Run(() =>
+			{
+				if (token.IsCancellationRequested) return (IReadOnlyList<MusicTrack>)Array.Empty<MusicTrack>();
+				return SortItems(_db.GetRecentAdd(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending);
+			}, token);
+			if (token.IsCancellationRequested) return;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadCompleted("recent_add", tracks.Count);
+			int sortVersion = LibrarySortVersion;
 			await DispatchAsync(delegate
 			{
+				if (token.IsCancellationRequested) return;
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("recent_add");
 				RecentAddTracks.ReplaceAll(tracks);
-			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("recent_add");
+				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("recent_add");
 				MarkLibrarySortApplied("recent_add");
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("recent_add");
 			});
 		}
+		catch (OperationCanceledException) { }
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadRecentAddTracks failed");
@@ -7439,24 +7611,35 @@ private async Task LoadArtistsAsync()
 		}
 	}
 
-	private void LoadMostPlayedTracks() => _ = LoadMostPlayedTracksAsync();
+	private void LoadMostPlayedTracks(CancellationToken token = default) => _ = LoadMostPlayedTracksAsync(token);
 
-	private async Task LoadMostPlayedTracksAsync()
+	private async Task LoadMostPlayedTracksAsync(CancellationToken token = default)
 	{
 		using var operation = _uiOps.TryBegin(nameof(LoadMostPlayedTracks));
 		if (operation == null) return;
 		int loadGeneration = BeginTabLoad("view:most_played");
 		try
 		{
-			IReadOnlyList<MusicTrack> tracks = await Task.Run(() => SortItems(_db.GetMostPlay(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending));
-		int sortVersion = LibrarySortVersion;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadStarted("most_played");
+			IReadOnlyList<MusicTrack> tracks = await Task.Run(() =>
+			{
+				if (token.IsCancellationRequested) return (IReadOnlyList<MusicTrack>)Array.Empty<MusicTrack>();
+				return SortItems(_db.GetMostPlay(), LibrarySortCollection.Tracks, LibrarySortOrder, IsLibrarySortDescending);
+			}, token);
+			if (token.IsCancellationRequested) return;
+			MusicPlayer.Diagnostics.NavigationProbe.RecordDataLoadCompleted("most_played", tracks.Count);
+			int sortVersion = LibrarySortVersion;
 			await DispatchAsync(delegate
 			{
+				if (token.IsCancellationRequested) return;
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("most_played");
 				MostPlayedTracks.ReplaceAll(tracks);
-			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("most_played");
+				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("most_played");
 				MarkLibrarySortApplied("most_played");
+				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("most_played");
 			});
 		}
+		catch (OperationCanceledException) { }
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "LoadMostPlayedTracks failed");
@@ -7972,20 +8155,20 @@ private async Task LoadArtistsAsync()
 		LogHelper.LogInfo($"SORT scope={scope} key={key} effective={effective} desc={descending} count={items.Count} first=[{first}]");
 	}
 
-	private void SortFolders()
+	private List<FolderItem> SortFolderItems(List<FolderItem> items)
 	{
-		if (Folders.Count < 2) return;
+		if (items == null || items.Count < 2) return items ?? new List<FolderItem>();
 
 		// Folders know their name and the aggregates of their content.
 		string order = EffectiveSortCriterion(LibrarySortOrder, LibrarySortCollection.Folders);
 		IOrderedEnumerable<FolderItem> sorted = order switch
 		{
-			"size" => Folders.OrderBy(f => f.TrackCount),
-			"duration" => Folders.OrderBy(f => f.TotalDuration),
-			"year" => Folders.OrderBy(f => f.NewestYear),
-			"date_added" => Folders.OrderBy(f => f.NewestDateAdded),
-			"random" => Folders.OrderBy(_ => Guid.NewGuid()),
-			_ => Folders.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase),
+			"size" => items.OrderBy(f => f.TrackCount),
+			"duration" => items.OrderBy(f => f.TotalDuration),
+			"year" => items.OrderBy(f => f.NewestYear),
+			"date_added" => items.OrderBy(f => f.NewestDateAdded),
+			"random" => items.OrderBy(_ => Guid.NewGuid()),
+			_ => items.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase),
 		};
 
 		// The deterministic key that decides between equal folders.
@@ -8011,8 +8194,15 @@ private async Task LoadArtistsAsync()
 			result = list.Where(f => !isUnknown(f)).Concat(list.Where(isUnknown));
 		}
 
+		return result.ToList();
+	}
+
+	private void SortFolders()
+	{
+		if (Folders.Count < 2) return;
+		var sorted = SortFolderItems(Folders.ToList());
 		Folders.ReplaceAll(sorted);
-		LogFolderSortTrace(order);
+		LogFolderSortTrace(EffectiveSortCriterion(LibrarySortOrder, LibrarySortCollection.Folders));
 	}
 
 	private void LogFolderSortTrace(string order)
@@ -9797,7 +9987,7 @@ private async Task LoadArtistsAsync()
 	}
 
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]
-	private void OnCurrentViewChanged(string value)
+	private void OnCurrentViewChanged(string? oldView, string value)
 	{
 		Interlocked.Increment(ref _lyricsBrowserGeneration);
 		TryCancel(_lyricsBrowserCts);
@@ -9806,8 +9996,10 @@ private async Task LoadArtistsAsync()
 			CancelWallpaperPreload();
 		}
 		bool preserveSearch = value is "songs" or "artists" or "albums" or "genres" or "folders" or "artist_detail" or "album_detail";
-		// A view that becomes visible may have a pending library sort.
+		long t0 = Stopwatch.GetTimestamp();
+		double freq = Stopwatch.Frequency;
 		ApplyPendingLibrarySortForScope(CurrentSortScope());
+		long t1 = Stopwatch.GetTimestamp();
 		if (!preserveSearch)
 		{
 			IsSearching = false;
@@ -9826,10 +10018,22 @@ private async Task LoadArtistsAsync()
 		OnPropertyChanged("IsNonTrackListSearchableView");
 		OnPropertyChanged("CurrentTrackListTitle");
 		OnPropertyChanged("CurrentPageTitle");
-		OnPropertyChanged("DisplayedTracks");
+		long t2 = Stopwatch.GetTimestamp();
+		if (oldView == "songs" || value == "songs")
+		{
+			OnPropertyChanged("DisplayedTracks");
+		}
+		NotifyDedicatedDisplayedTracks(oldView);
+		NotifyDedicatedDisplayedTracks(value);
+		long t3 = Stopwatch.GetTimestamp();
 		OnPropertyChanged("CanNavigateBack");
 		OnPropertyChanged("HasNoMusic");
 		OnPropertyChanged("IsCurrentTabLoading");
+		long t4 = Stopwatch.GetTimestamp();
+		if (MusicPlayer.Diagnostics.NavigationProbe.Enabled)
+		{
+			LogHelper.LogInfo($"[NAV-DETAIL-OVC] view='{value}' sortMs={(t1 - t0) * 1000.0 / freq:0.00} dispTracksMs={(t3 - t2) * 1000.0 / freq:0.00} hasNoMusicMs={(t4 - t3) * 1000.0 / freq:0.00}");
+		}
 	}
 
 	[GeneratedCode("CommunityToolkit.Mvvm.SourceGenerators.ObservablePropertyGenerator", "8.4.0.0")]
@@ -9880,6 +10084,7 @@ private async Task LoadArtistsAsync()
 					_pendingFilteredGenres = filteredGenres;
 					PublishFilteredForCurrentTab();
 					OnPropertyChanged("DisplayedTracks");
+					NotifyAllDedicatedDisplayedTracks();
 					OnPropertyChanged("DisplayedArtists");
 					OnPropertyChanged("DisplayedAlbums");
 					OnPropertyChanged("DisplayedGenres");
