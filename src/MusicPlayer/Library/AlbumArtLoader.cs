@@ -272,23 +272,38 @@ public class AlbumArtLoader : IDisposable
         if (string.IsNullOrWhiteSpace(key) || value == null) return;
 
         long sizeBytes = EstimateSizeBytes(value);
+
+        // Re-storing a key must not charge the budget twice. The old code added the
+        // new size on top of the previous one, so the byte counter grew without
+        // bound for every repeated store of the same cover - and once the counter
+        // was inflated past the budget the eviction loop below could no longer find
+        // a removable entry and spun forever.
+        if (cacheSizes.TryGetValue(key, out long previousSize))
+        {
+            Interlocked.Add(ref currentBytes, -previousSize);
+        }
+
         cache[key] = value;
         cacheSizes[key] = sizeBytes;
         Interlocked.Add(ref currentBytes, sizeBytes);
 
-        // Evict LRU if over budget (simple approximation: remove oldest entries)
-        while (currentBytes > budgetBytes && cacheSizes.Count > 0)
+        // Evict until the budget is respected. The loop is bounded so that a single
+        // oversized image can never hang the caller.
+        int guard = cacheSizes.Count + 1;
+        while (currentBytes > budgetBytes && cacheSizes.Count > 0 && guard-- > 0)
         {
-            // Find and remove an entry (not the one we just added)
+            bool removed = false;
             foreach (var pair in cacheSizes)
             {
                 if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase)) continue;
                 if (cache.TryRemove(pair.Key, out _) && cacheSizes.TryRemove(pair.Key, out long removedSize))
                 {
                     Interlocked.Add(ref currentBytes, -removedSize);
+                    removed = true;
                     break;
                 }
             }
+            if (!removed) break;   // nothing left to evict
         }
     }
 
@@ -630,20 +645,20 @@ public class AlbumArtLoader : IDisposable
                     else if (quality == ImageQuality.Full)
                         StoreBounded(_fullQualityCache, _fullCacheSizes, ref _currentFullCacheBytes, FullCacheBudgetBytes, path, result);
 
-                    // Store derived asset for beneficiaries without re-extracting from audio file
+                    // Store derived asset for beneficiaries without re-extracting from audio file.
+                    // The key only needs the path, the file size and the modification time, so
+                    // the original artwork is NOT resolved here: resolving it re-read the source
+                    // file, hashed the artwork bytes and decoded the image at its native size
+                    // (a discarded decode) for every album that finished loading.
                     if (track != null)
                     {
-                        var asset = _assetService.Resolve(track);
-                        if (asset != null)
+                        var artQ = quality switch
                         {
-                            var artQ = quality switch
-                            {
-                                ImageQuality.Thumbnail => AlbumArtQuality.Thumbnail,
-                                ImageQuality.Medium => AlbumArtQuality.Medium,
-                                _ => AlbumArtQuality.Full
-                            };
-                            _assetService.StoreDerived(asset, artQ, result);
-                        }
+                            ImageQuality.Thumbnail => AlbumArtQuality.Thumbnail,
+                            ImageQuality.Medium => AlbumArtQuality.Medium,
+                            _ => AlbumArtQuality.Full
+                        };
+                        _assetService.StoreDerivedForTrack(track, artQ, result);
                     }
                 }
             });
@@ -679,13 +694,9 @@ public class AlbumArtLoader : IDisposable
         string? path = ResolveTrackArtPath(track);
         if (string.IsNullOrWhiteSpace(path)) return null;
 
-        string normPath = SourceIdentity.NormalizePath(path);
-        
-        // Try to get from DB record without blocking
-        var record = _coordinator.DiskCache.GetCacheFilePath(normPath, ImageQuality.Medium);
-        if (File.Exists(record)) return record;
-
-        // Trigger async load but return null for now (placeholder will show)
+        // The disk cache is keyed by the artwork's CONTENT HASH, not by the source
+        // path, so a path can never be turned into a cache file name directly. The
+        // async path below is the one that resolves the hash from the DB record.
         _ = _coordinator.GetCachedArtFilePathAsync(track, path, _lifetimeCts.Token);
         return null;
     }
@@ -693,11 +704,6 @@ public class AlbumArtLoader : IDisposable
     public string? GetCachedArtFilePath(string? filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath)) return null;
-        string normPath = SourceIdentity.NormalizePath(filePath);
-        
-        var record = _coordinator.DiskCache.GetCacheFilePath(normPath, ImageQuality.Medium);
-        if (File.Exists(record)) return record;
-
         _ = _coordinator.GetCachedArtFilePathAsync(null, filePath, _lifetimeCts.Token);
         return null;
     }
@@ -776,6 +782,7 @@ public class AlbumArtLoader : IDisposable
         _cache.Clear();
         _mediumCache.Clear();
         _fullQualityCache.Clear();
+        _assetService.ClearDerived();
         _coordinator.MemoryCache.Clear();
     }
 
@@ -808,11 +815,7 @@ public class AlbumArtLoader : IDisposable
                         StoreBounded(_fullQualityCache, _fullCacheSizes, ref _currentFullCacheBytes, FullCacheBudgetBytes, path, result);
                         if (track != null)
                         {
-                            var asset = _assetService.Resolve(track);
-                            if (asset != null)
-                            {
-                                _assetService.StoreDerived(asset, AlbumArtQuality.Full, result);
-                            }
+                            _assetService.StoreDerivedForTrack(track, AlbumArtQuality.Full, result);
                         }
                     }
                     return result;

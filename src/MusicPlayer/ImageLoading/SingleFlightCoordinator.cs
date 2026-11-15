@@ -22,7 +22,33 @@ public sealed class SingleFlightCoordinator<TResult>
             // Task is NOT started here - it will be started after successful insertion into dictionary
         }
 
-        public System.Threading.Tasks.Task<TResult?> Task => _task ??= System.Threading.Tasks.Task.Run(() => _factory(_internalCts.Token));
+        /// <summary>
+        /// The single task that represents this flight.
+        ///
+        /// The task must be created exactly once. The previous implementation
+        /// used <c>_task ??= Task.Run(...)</c>, and <c>??=</c> is not atomic:
+        /// two threads that reach the property at the same time can both see
+        /// <c>_task == null</c>, both queue the factory and both run it. That
+        /// silently breaks the single-flight guarantee and made the *same*
+        /// rendition of the *same* artwork decode twice (once per racing
+        /// thread). The lock below guarantees one factory execution per key.
+        /// </summary>
+        public System.Threading.Tasks.Task<TResult?> Task
+        {
+            get
+            {
+                var existing = Volatile.Read(ref _task);
+                if (existing != null) return existing;
+
+                lock (_gate)
+                {
+                    if (_task != null) return _task;
+                    ImageDecodeMetrics.RecordSingleFlightExecution();
+                    _task = System.Threading.Tasks.Task.Run(() => _factory(_internalCts.Token));
+                    return _task;
+                }
+            }
+        }
 
         public void AddWaiter()
         {
@@ -63,6 +89,7 @@ public sealed class SingleFlightCoordinator<TResult>
             {
                 flight = existing;
                 flight.AddWaiter();
+                ImageDecodeMetrics.RecordSingleFlightJoin();
                 break;
             }
 

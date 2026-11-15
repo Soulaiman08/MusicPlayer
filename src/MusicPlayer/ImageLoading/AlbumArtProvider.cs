@@ -67,11 +67,14 @@ public sealed class AlbumArtProvider
         // 1. Check Memory Cache
         if (_memoryCache.TryGet(normPath, ImageKind.AlbumArt, quality, out var memCached) && memCached != null)
         {
+            ImageDecodeMetrics.RecordMemoryHit();
             return memCached;
         }
+        ImageDecodeMetrics.RecordMemoryMiss();
 
         // 2. Single-flight request by (normPath + quality)
         string flightKey = $"{normPath}:{(int)quality}";
+        ImageDecodeMetrics.RecordSingleFlightRequest();
         return await _singleFlight.RunOrJoinAsync(
             flightKey,
             ct => LoadAndCacheArtAsync(track, sourcePath, normPath, quality, priority, ct),
@@ -116,10 +119,11 @@ public sealed class AlbumArtProvider
                 {
                     if (_diskCache.TryGetValidCachedFile(record.ContentHash, quality, out var cachedFile) && cachedFile != null)
                     {
+                        ImageDecodeMetrics.RecordDiskHit();
                         var decodedFromDisk = await _scheduler.ScheduleAsync(
                             OperationType.ImageDecode,
                             priority,
-                            _ => Task.FromResult(ImageDecoder.DecodeFromFile(cachedFile, quality)),
+                            _ => Task.FromResult(ImageDecoder.DecodeFromFile(cachedFile, quality, normPath)),
                             cancellationToken).ConfigureAwait(false);
 
                         if (decodedFromDisk != null)
@@ -132,10 +136,11 @@ public sealed class AlbumArtProvider
                     // decode target quality directly from the cached Full asset without TagLib re-extraction.
                     else if (_diskCache.TryGetValidCachedFile(record.ContentHash, ImageQuality.Full, out var fullCachedFile) && fullCachedFile != null)
                     {
+                        ImageDecodeMetrics.RecordDiskHit();
                         var derivedFromFull = await _scheduler.ScheduleAsync(
                             OperationType.ImageDecode,
                             priority,
-                            _ => Task.FromResult(ImageDecoder.DecodeFromFile(fullCachedFile, quality)),
+                            _ => Task.FromResult(ImageDecoder.DecodeFromFile(fullCachedFile, quality, normPath)),
                             cancellationToken).ConfigureAwait(false);
 
                         if (derivedFromFull != null)
@@ -166,6 +171,10 @@ public sealed class AlbumArtProvider
 
                             return derivedFromFull;
                         }
+                    }
+                    else
+                    {
+                        ImageDecodeMetrics.RecordDiskMiss();
                     }
                 }
             }
@@ -209,7 +218,7 @@ public sealed class AlbumArtProvider
         var decoded = await _scheduler.ScheduleAsync(
             OperationType.ImageDecode,
             priority,
-            _ => Task.FromResult(ImageDecoder.Decode(extracted.RawBytes, quality)),
+            _ => Task.FromResult(ImageDecoder.Decode(extracted.RawBytes, quality, normPath)),
             cancellationToken).ConfigureAwait(false);
 
         if (decoded != null)
@@ -365,68 +374,77 @@ public sealed class AlbumArtProvider
         ct.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(sourcePath)) return null;
 
-        // 1. Check external image path
-        if (File.Exists(sourcePath) && IsImagePath(sourcePath))
-        {
-            try
-            {
-                var bytes = File.ReadAllBytes(sourcePath);
-                if (bytes.Length > 0) return new ExtractedArt(bytes, SourceKind.External, sourcePath);
-            }
-            catch { }
-        }
-
-        // 2. Check embedded tags in audio file
-        if (File.Exists(sourcePath) && IsAudioPath(sourcePath))
-        {
-            try
-            {
-                using var tagFile = TagLib.File.Create(sourcePath);
-
-                // Two-pass selection: skip non-image frames (e.g. C2PA manifests with MIME
-                // "application/c2pa" that TagLib exposes as PictureType.NotAPicture).
-                // Pass 1: FrontCover with an image/* MIME — best possible match.
-                // Pass 2: any picture with an image/* MIME — fallback for unlabeled art.
-                TagLib.IPicture? best = null;
-                foreach (var picture in tagFile.Tag.Pictures)
-                {
-                    if (picture.Data.Data == null || picture.Data.Data.Length == 0) continue;
-                    if (!IsImageMime(picture.MimeType)) continue; // skip C2PA, PDF, etc.
-
-                    if (picture.Type == TagLib.PictureType.FrontCover)
-                    {
-                        best = picture;
-                        break; // perfect match, stop immediately
-                    }
-                    best ??= picture; // remember first valid image as fallback
-                }
-
-                if (best != null)
-                    return new ExtractedArt(best.Data.Data!, SourceKind.Embedded, sourcePath);
-            }
-            catch { }
-        }
-
-        // 3. Check sidecar images in track folder
+        ImageDecodeMetrics.RecordExtraction(ImageDecodeMetrics.CompactKey(sourcePath));
+        long extractStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            string? dir = Path.GetDirectoryName(sourcePath);
-            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            // 1. Check external image path
+            if (File.Exists(sourcePath) && IsImagePath(sourcePath))
             {
-                foreach (var sidecarName in SidecarNames)
+                try
                 {
-                    string sidecarPath = Path.Combine(dir, sidecarName);
-                    if (File.Exists(sidecarPath))
+                    var bytes = File.ReadAllBytes(sourcePath);
+                    if (bytes.Length > 0) return new ExtractedArt(bytes, SourceKind.External, sourcePath);
+                }
+                catch { }
+            }
+
+            // 2. Check embedded tags in audio file
+            if (File.Exists(sourcePath) && IsAudioPath(sourcePath))
+            {
+                try
+                {
+                    using var tagFile = TagLib.File.Create(sourcePath);
+
+                    // Two-pass selection: skip non-image frames (e.g. C2PA manifests with MIME
+                    // "application/c2pa" that TagLib exposes as PictureType.NotAPicture).
+                    // Pass 1: FrontCover with an image/* MIME — best possible match.
+                    // Pass 2: any picture with an image/* MIME — fallback for unlabeled art.
+                    TagLib.IPicture? best = null;
+                    foreach (var picture in tagFile.Tag.Pictures)
                     {
-                        var bytes = File.ReadAllBytes(sidecarPath);
-                        if (bytes.Length > 0) return new ExtractedArt(bytes, SourceKind.Sidecar, sidecarPath);
+                        if (picture.Data.Data == null || picture.Data.Data.Length == 0) continue;
+                        if (!IsImageMime(picture.MimeType)) continue; // skip C2PA, PDF, etc.
+
+                        if (picture.Type == TagLib.PictureType.FrontCover)
+                        {
+                            best = picture;
+                            break; // perfect match, stop immediately
+                        }
+                        best ??= picture; // remember first valid image as fallback
+                    }
+
+                    if (best != null)
+                        return new ExtractedArt(best.Data.Data!, SourceKind.Embedded, sourcePath);
+                }
+                catch { }
+            }
+
+            // 3. Check sidecar images in track folder
+            try
+            {
+                string? dir = Path.GetDirectoryName(sourcePath);
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                {
+                    foreach (var sidecarName in SidecarNames)
+                    {
+                        string sidecarPath = Path.Combine(dir, sidecarName);
+                        if (File.Exists(sidecarPath))
+                        {
+                            var bytes = File.ReadAllBytes(sidecarPath);
+                            if (bytes.Length > 0) return new ExtractedArt(bytes, SourceKind.Sidecar, sidecarPath);
+                        }
                     }
                 }
             }
-        }
-        catch { }
+            catch { }
 
-        return null;
+            return null;
+        }
+        finally
+        {
+            ImageDecodeMetrics.RecordPhase("extract", System.Diagnostics.Stopwatch.GetTimestamp() - extractStart);
+        }
     }
 
     private static bool IsImagePath(string path)

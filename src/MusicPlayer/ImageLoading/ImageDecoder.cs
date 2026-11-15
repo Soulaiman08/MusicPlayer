@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Windows.Media.Imaging;
 
@@ -20,13 +21,13 @@ public static class ImageDecoder
         _ => MediumPixelSize
     };
 
-    public static BitmapSource? Decode(byte[]? data, ImageQuality quality)
+    public static BitmapSource? Decode(byte[]? data, ImageQuality quality, string? sourceKey = null)
     {
         if (data == null || data.Length == 0) return null;
         try
         {
             using var ms = new MemoryStream(data);
-            return Decode(ms, quality);
+            return Decode(ms, quality, sourceKey);
         }
         catch
         {
@@ -34,13 +35,13 @@ public static class ImageDecoder
         }
     }
 
-    public static BitmapSource? Decode(Stream? stream, ImageQuality quality)
+    public static BitmapSource? Decode(Stream? stream, ImageQuality quality, string? sourceKey = null)
     {
         if (stream == null) return null;
         try
         {
             int size = GetTargetPixelSize(quality);
-            return DecodeSized(stream, size, size);
+            return DecodeSized(stream, size, size, sourceKey);
         }
         catch
         {
@@ -48,7 +49,7 @@ public static class ImageDecoder
         }
     }
 
-    public static BitmapSource? DecodeFromFile(string? filePath, ImageQuality quality)
+    public static BitmapSource? DecodeFromFile(string? filePath, ImageQuality quality, string? sourceKey = null)
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) return null;
         try
@@ -57,7 +58,7 @@ public static class ImageDecoder
             using var ms = new MemoryStream();
             fs.CopyTo(ms);
             ms.Position = 0;
-            return Decode(ms, quality);
+            return Decode(ms, quality, sourceKey);
         }
         catch
         {
@@ -65,8 +66,9 @@ public static class ImageDecoder
         }
     }
 
-    public static BitmapSource? DecodeSized(Stream stream, int pixelWidth, int pixelHeight)
+    public static BitmapSource? DecodeSized(Stream stream, int pixelWidth, int pixelHeight, string? sourceKey = null)
     {
+        long started = Stopwatch.GetTimestamp();
         try
         {
             var bitmap = new BitmapImage();
@@ -78,16 +80,25 @@ public static class ImageDecoder
             if (pixelHeight > 0) bitmap.DecodePixelHeight = pixelHeight;
             bitmap.EndInit();
             bitmap.Freeze();
+            ImageDecodeMetrics.RecordDecode(
+                $"{pixelWidth}x{pixelHeight}",
+                sourceKey,
+                Stopwatch.GetTimestamp() - started);
             return bitmap;
         }
         catch
         {
+            ImageDecodeMetrics.RecordDecode(
+                $"{pixelWidth}x{pixelHeight}",
+                sourceKey,
+                Stopwatch.GetTimestamp() - started);
             return null;
         }
     }
 
-    public static BitmapSource? DecodePreservingAspect(Stream stream, int maxDimension)
+    public static BitmapSource? DecodePreservingAspect(Stream stream, int maxDimension, string? sourceKey = null)
     {
+        long started = Stopwatch.GetTimestamp();
         try
         {
             var bitmap = new BitmapImage();
@@ -98,10 +109,18 @@ public static class ImageDecoder
             if (maxDimension > 0) bitmap.DecodePixelWidth = maxDimension;
             bitmap.EndInit();
             bitmap.Freeze();
+            ImageDecodeMetrics.RecordDecode(
+                $"max{maxDimension}",
+                sourceKey,
+                Stopwatch.GetTimestamp() - started);
             return bitmap;
         }
         catch
         {
+            ImageDecodeMetrics.RecordDecode(
+                $"max{maxDimension}",
+                sourceKey,
+                Stopwatch.GetTimestamp() - started);
             return null;
         }
     }

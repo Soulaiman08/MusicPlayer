@@ -111,4 +111,44 @@ public class VirtualizingBalancedPanelTests
         Assert.True(range.LastIndex > range.FirstIndex);
         Assert.InRange(range.LastIndex, range.FirstIndex, 999);
     }
+
+    /// <summary>
+    /// The panel realises the containers between FirstIndex and LastIndex and
+    /// removes every container outside that range. A range that does not cover
+    /// whole rows would therefore either drop a visible container or leave an
+    /// empty column behind - the "gap in the grid" regression.
+    ///
+    /// This test replaces a locally added (never committed) case that was lost
+    /// when the file was reverted to its committed state; it restores the
+    /// coverage for the container-cleanup path that must not change.
+    /// </summary>
+    [Fact]
+    public void CalculateVisibleRange_CoversWholeRowsSoTheCleanupNeverRemovesAVisibleContainer()
+    {
+        const int itemCount = 1000;
+        const int cols = 4;
+        const double rowHeight = 200;
+        const double viewportHeight = 600;
+
+        double[] offsets = { 0d, 100d, 800d, 2400d, 47800d, 100000d };
+
+        foreach (double offset in offsets)
+        {
+            var range = VirtualizingBalancedPanel.CalculateVisibleRange(
+                itemCount: itemCount,
+                cols: cols,
+                offset: offset,
+                viewportHeight: viewportHeight,
+                rowHeight: rowHeight,
+                gap: 0);
+
+            Assert.InRange(range.FirstIndex, 0, itemCount - 1);
+            Assert.InRange(range.LastIndex, range.FirstIndex, itemCount - 1);
+
+            // The realised range has to start on a row border ...
+            Assert.Equal(0, range.FirstIndex % cols);
+            // ... and end on the last column of a row.
+            Assert.Equal(cols - 1, range.LastIndex % cols);
+        }
+    }
 }

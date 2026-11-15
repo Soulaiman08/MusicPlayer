@@ -575,6 +575,41 @@ public class HalfConverter : IValueConverter
         => throw new NotImplementedException();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CircleClipConverter — square item width → one shared, frozen circular clip.
+//
+// The artist cards used to build their own EllipseGeometry whose Center,
+// RadiusX and RadiusY were three separate AncestorType bindings: three
+// visual-tree look-ups plus two converter calls per realized card, and a
+// private, never-frozen geometry for every card.
+//
+// This converter keeps the exact same circle (a circle inscribed in the
+// square item box) but produces ONE frozen geometry per distinct width, so
+// every card of a panel shares a single cached clip instead of carrying its
+// own mutable geometry.
+// ─────────────────────────────────────────────────────────────────────────────
+public class CircleClipConverter : IValueConverter
+{
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<double, EllipseGeometry> Cache = new();
+
+    public object? Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is not double width) return null;
+        if (double.IsNaN(width) || double.IsInfinity(width) || width <= 0) return null;
+
+        return Cache.GetOrAdd(width, static w =>
+        {
+            double r = w / 2.0;
+            var geometry = new EllipseGeometry(new Point(r, r), r, r);
+            geometry.Freeze();
+            return geometry;
+        });
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
 public class WidthToColumnsConverter : IValueConverter
 {
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
@@ -715,7 +750,11 @@ public class RoundedClipConverter : IMultiValueConverter
             var w = ToFinite(values[0]);
             var h = ToFinite(values[1]);
             if (w > 0 && h > 0)
-                return new RectangleGeometry(new Rect(0, 0, w, h), r, r);
+            {
+                var geom = new RectangleGeometry(new Rect(0, 0, w, h), r, r);
+                geom.Freeze();
+                return geom;
+            }
         }
         return null;
     }

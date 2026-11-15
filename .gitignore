@@ -83,3 +83,12 @@ tests/MusicPlayer.Tests/MusicPlayer.Tests/VirtualizationConfigurationTests.cs
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# M2 session-generated reports and artifacts
+/docs/m2_*.md
+/perf-results/
+/video_analysis/
+/video_analysis2/
+/video_analysis_*/
+/tools/perf/
+/extracted_frames/

@@ -28,6 +28,7 @@
       <conv:WidthToItemSizeConverter x:Key="WidthToItemSizeConverter" />
       <conv:HalfPointConverter x:Key="HalfPointConverter" />
       <conv:HalfConverter x:Key="HalfConverter" />
+      <conv:CircleClipConverter x:Key="CircleClipConverter" />
       <conv:WidthToColumnsConverter x:Key="WidthToColumnsConverter" />
       <conv:RoundedClipConverter x:Key="RoundedClipConverter" />
       <conv:VolumeToGeometryConverter x:Key="VolumeToGeometryConverter" />

@@ -20,6 +20,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\MusicPlayer\MusicPlayer.csproj" />
+    <!-- The fixture tool carries its own copy of the artist-name normalisation;
+         FixtureNameNormalizerTests keeps it in sync with the application, so the
+         test project needs a reference to it. Without this reference the whole
+         test project failed to compile. -->
+    <ProjectReference Include="..\..\..\tools\MusicPlayer.Fixture\MusicPlayer.Fixture.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -141,10 +141,13 @@ public sealed class ArtistImageProvider : IDisposable
         var quality = isHighRes ? ImageQuality.Large : ImageQuality.Thumbnail;
         if (_memoryCache.TryGet(key, ImageKind.Artist, quality, out var memCached) && memCached != null)
         {
+            ImageDecodeMetrics.RecordMemoryHit();
             return memCached;
         }
+        ImageDecodeMetrics.RecordMemoryMiss();
 
         string flightKey = $"{key}:{(int)quality}";
+        ImageDecodeMetrics.RecordSingleFlightRequest();
         return await _singleFlightSource.RunOrJoinAsync(
             flightKey,
             async token =>
@@ -156,7 +159,7 @@ public sealed class ArtistImageProvider : IDisposable
                 var decoded = await _scheduler.ScheduleAsync(
                     OperationType.ImageDecode,
                     priority,
-                    _ => Task.FromResult(ImageDecoder.DecodeFromFile(path, quality)),
+                    _ => Task.FromResult(ImageDecoder.DecodeFromFile(path, quality, ImageDecodeMetrics.CompactKey(path))),
                     linked.Token).ConfigureAwait(false);
 
                 if (decoded != null)

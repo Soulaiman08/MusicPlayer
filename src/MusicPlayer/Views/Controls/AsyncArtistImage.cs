@@ -80,6 +80,12 @@ public sealed class AsyncArtistImage : Image
         _requestCts?.Dispose();
         _requestCts = null;
 
+        // The in-flight guard must not survive a reset. A recycled container is
+        // unloaded and loaded again; if the guard still named the artist, the
+        // re-load request was short-circuited and the card stayed blank even
+        // though the image was already cached.
+        _pendingArtist = null;
+
         Interlocked.Increment(ref _requestVersion);
         Source = null;
     }
@@ -101,6 +107,9 @@ public sealed class AsyncArtistImage : Image
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(MainViewModel.ArtistImages)) return;
+        // Don't short-circuit if Source is already set - the new ArtistImages notification
+        // may indicate a higher-quality image is available, or the artist changed in a
+        // recycled container. RequestImage() handles deduplication and version guards.
         RequestImage();
     }
 
@@ -175,11 +184,18 @@ public sealed class AsyncArtistImage : Image
 
                     if (task.Status == TaskStatus.RanToCompletion && task.Result != null)
                     {
+                        // The image is in hand: release the in-flight guard so the next
+                        // trigger (a recycled container, an artist-images notification)
+                        // can take the fast cache paths instead of being short-circuited.
+                        if (string.Equals(_pendingArtist, artist, StringComparison.OrdinalIgnoreCase))
+                            _pendingArtist = null;
                         Source = task.Result;
                     }
                     else if (IsLoaded && string.Equals(ArtistName?.Trim(), artist, StringComparison.OrdinalIgnoreCase))
                     {
-                        // Retry if still relevant
+                        // Retry if still relevant. The guard is intentionally kept on a
+                        // failure so a permanently missing artist is not re-requested
+                        // on every notification.
                         RequestImage();
                     }
                 }, System.Windows.Threading.DispatcherPriority.Background);

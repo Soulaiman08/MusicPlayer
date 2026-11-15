@@ -87,11 +87,28 @@ public sealed class AudioVisualizerControl : FrameworkElement
         }
 
         IsVisibleChanged += OnIsVisibleChanged;
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (IsVisible && !_renderPaused)
+        {
+            SubscribeToRendering();
+            EnsureWakeTimer();
+        }
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        UnsubscribeFromRendering();
+        StopWakeTimer();
     }
 
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        if (IsVisible)
+        if (IsVisible && !_renderPaused)
         {
             // Restart the wake-timer so audio resumption is detected even if
             // a previous session left it stopped.
@@ -170,7 +187,12 @@ public sealed class AudioVisualizerControl : FrameworkElement
 
     private void OnRendering(object? sender, EventArgs e)
     {
-        if (_renderPaused) return;
+        if (_renderPaused || !IsVisible)
+        {
+            UnsubscribeFromRendering();
+            StopWakeTimer();
+            return;
+        }
 
         long stamp = AudioAnalyzer.Instance.LastSpectrumStamp;
         bool fresh = stamp != 0L &&
@@ -194,8 +216,23 @@ public sealed class AudioVisualizerControl : FrameworkElement
         RenderFrame();
     }
 
-    public void PauseRendering() => _renderPaused = true;
-    public void ResumeRendering() { _renderPaused = false; _isSettledAtIdle = false; }
+    public void PauseRendering()
+    {
+        _renderPaused = true;
+        UnsubscribeFromRendering();
+        StopWakeTimer();
+    }
+
+    public void ResumeRendering()
+    {
+        _renderPaused = false;
+        _isSettledAtIdle = false;
+        if (IsVisible)
+        {
+            SubscribeToRendering();
+            EnsureWakeTimer();
+        }
+    }
 
     private void EnsureResources()
     {

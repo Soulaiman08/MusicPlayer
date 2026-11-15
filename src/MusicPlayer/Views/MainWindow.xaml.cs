@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -657,7 +657,15 @@ InitializeComponent();
     }
 
     private void SidebarGlassSurface_SizeChanged(object sender, SizeChangedEventArgs e)
-        => UpdateGlassSurfaceBrushes();
+    {
+        // Refresh the glass sample mapping whenever the sidebar (or the surfaces sharing
+        // this pipeline) resizes — INCLUDING while the drawer width animation is running.
+        // UpdateGlassSurfaceBrush only sets brush Viewbox/Background properties (no layout
+        // invalidation), so per-frame refresh during the 280ms toggle is cheap and keeps
+        // the frosted sample and its dark tint regions aligned with the animated surface
+        // instead of stretching the stale region and snapping on completion.
+        UpdateGlassSurfaceBrushes();
+    }
 
     private System.Windows.Media.ImageSource? _solidWallpaperFallback;
     // Generation guard for async wallpaper loads: only the latest requested
@@ -6381,7 +6389,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         if (ViewModel?.CurrentlyPlayingPage == CurrentlyPlayingPage.Lyrics && ViewModel?.Lyrics?.Count > 0)
             return;
 
-        if ((DateTime.Now - _lastWheelSwipe).TotalMilliseconds < 220) return;
+        if ((DateTime.Now - _lastWheelSwipe).TotalMilliseconds < 300) return;
         if (Math.Abs(e.Delta) < 25) return;
 
         _lastWheelSwipe = DateTime.Now;
@@ -6406,6 +6414,7 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
 
     // â”€â”€â”€ Lyrics auto-scroll + slide animation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private CurrentlyPlayingPage _previousPlayingPage = CurrentlyPlayingPage.AlbumArt;
+    private long _pageTransitionVersion;
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -6438,7 +6447,6 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         else if (e.PropertyName == nameof(MainViewModel.ShowFullPlayer))
         {
             UpdateAppWindowTitleBarDragRegions();
-            Dispatcher.BeginInvoke(() => StartFpTitleMarquee());
             if (ViewModel?.ShowFullPlayer == true)
             {
                 AnimateFullPlayerIn();
@@ -6587,6 +6595,8 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     private void AnimateFullPlayerIn()
     {
         if (FullPlayerGrid == null) return;
+        StopFpTitleMarquee();
+        _fullPlayerTransitionCached = true;
         var height = Math.Max(FullPlayerGrid.ActualHeight, ActualHeight);
         if (height <= 0) height = 600;
         if (FullPlayerGrid.RenderTransform is not TranslateTransform tt)
@@ -6601,8 +6611,15 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         FullPlayerGrid.Visibility = Visibility.Visible;
         FullPlayerGrid.IsHitTestVisible = false;
         FullPlayerGrid.CacheMode = _fpBitmapCache;
-        var dur = TimeSpan.FromMilliseconds(380);
+        // The TopBar stays fully visible while the FullPlayer slides up: the rising player
+        // surface covers it naturally at the end of the slide, so there is no early
+        // fade/slide-away (the old synchronized exit read as an unnatural disappearance).
+        // Only clear stale transition state so the bar is always opaque and in place.
+        var dur = TimeSpan.FromMilliseconds(300); // Slightly faster for snappier feel
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+        ResetTopBarTransitionState();
+
         var slide = new DoubleAnimation(startY, 0, dur) { EasingFunction = ease };
         slide.Completed += (_, _) =>
         {
@@ -6611,8 +6628,38 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             tt.Y = 0;
             FullPlayerGrid.CacheMode = null;
             FullPlayerGrid.IsHitTestVisible = true;
+            _fullPlayerTransitionCached = false;
+            StartFpTitleMarquee();
         };
         tt.BeginAnimation(TranslateTransform.YProperty, slide);
+    }
+
+    // Clears any leftover TopBar transition state (e.g. an interrupted FullPlayer toggle)
+    // without touching Visibility — DataTriggers based on CurrentView own Visibility.
+    // The FullPlayer slide covers/uncovers the bar naturally, so no fade belongs here.
+    private void ResetTopBarTransitionState()
+    {
+        if (HeaderGlassLayer != null && HeaderGlassLayer.Visibility == Visibility.Visible)
+        {
+            HeaderGlassLayer.BeginAnimation(OpacityProperty, null);
+            HeaderGlassLayer.Opacity = 1;
+            if (HeaderGlassLayer.RenderTransform is TranslateTransform headerTt)
+            {
+                headerTt.BeginAnimation(TranslateTransform.YProperty, null);
+                headerTt.Y = 0;
+            }
+        }
+
+        if (TopBarControls != null && TopBarControls.Visibility == Visibility.Visible)
+        {
+            TopBarControls.BeginAnimation(OpacityProperty, null);
+            TopBarControls.Opacity = 1;
+            if (TopBarControls.RenderTransform is TranslateTransform controlsTt)
+            {
+                controlsTt.BeginAnimation(TranslateTransform.YProperty, null);
+                controlsTt.Y = 0;
+            }
+        }
     }
 
     private void AnimateFullPlayerOut()
@@ -6622,6 +6669,8 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             RunPendingNavigation();
             return;
         }
+        StopFpTitleMarquee();
+        _fullPlayerTransitionCached = true;
         FullPlayerGrid.IsHitTestVisible = false;
         // Artist/Album close uses a plain fade instead of sliding down.
         bool slide = !_closeFullPlayerFadeOnly;
@@ -6643,16 +6692,25 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
         if (FullPlayerGrid.Visibility != Visibility.Visible)
         {
+            _fullPlayerTransitionCached = false;
             FullPlayerGrid.Visibility = Visibility.Collapsed;
             RunPendingNavigation();
             return;
         }
+
+        // The TopBar was never faded away: as the FullPlayer slides (or fades) out it
+        // uncovers the bar in place at full opacity. Just clear stale transition state —
+        // fading from 0 here would blink the bar while it is already fully visible.
         var dur = TimeSpan.FromMilliseconds(slide ? 280 : 220);
         var ease = new CubicEase { EasingMode = slide ? EasingMode.EaseIn : EasingMode.EaseInOut };
+
+        ResetTopBarTransitionState();
+
         FullPlayerGrid.CacheMode = _fpBitmapCache;
         var completion = new EventHandler((_, _) =>
         {
             if (transitionVersion != _fullPlayerTransitionVersion) return;
+            _fullPlayerTransitionCached = false;
             FullPlayerGrid.CacheMode = null;
             FullPlayerGrid.BeginAnimation(OpacityProperty, null);
             FullPlayerGrid.Visibility = Visibility.Collapsed;
@@ -7065,8 +7123,18 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         double targetWidth = open ? 230 : 50;
         var duration = TimeSpan.FromMilliseconds(280);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+        // The sidebar column stays on Auto for BOTH directions: an Auto column tracks the
+        // animated border frame-by-frame, so the page content slides smoothly while opening
+        // (identical to the already-smooth closing) instead of jumping ~180px the moment the
+        // toggle starts. Auto always measures >= the animated border, so nothing clips.
+
         var widthAnim = new DoubleAnimation(SidebarBorder.ActualWidth, targetWidth, duration) { EasingFunction = ease };
-        widthAnim.Completed += (_, _) => UpdateAppWindowTitleBarDragRegions();
+        widthAnim.Completed += (_, _) =>
+        {
+            UpdateGlassSurfaceBrushes();
+            UpdateAppWindowTitleBarDragRegions();
+        };
         SidebarBorder.BeginAnimation(FrameworkElement.WidthProperty, widthAnim);
         SidebarBrandButton.BeginAnimation(
             FrameworkElement.WidthProperty,
@@ -7126,6 +7194,26 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         var incomingGrid = GetGrid(targetPage);
         var incomingTrans = GetTransform(targetPage);
 
+        // Version guard: a rapid re-entry (wheel scrolling) supersedes the
+        // in-flight transition. The stale transition's Completed handler must
+        // not touch the visual tree afterwards.
+        _pageTransitionVersion++;
+        long myVersion = _pageTransitionVersion;
+
+        // Synchronously reset any leftover transforms from a cancelled transition
+        // so the new one starts from a consistent state (otherwise rapid wheel
+        // scrolling leaves grids translated off-screen and nothing shows).
+        if (outgoingTrans != null)
+        {
+            outgoingTrans.BeginAnimation(TranslateTransform.XProperty, null);
+            outgoingTrans.X = 0;
+        }
+        if (incomingTrans != null)
+        {
+            incomingTrans.BeginAnimation(TranslateTransform.XProperty, null);
+            incomingTrans.X = 0;
+        }
+
         var allGrids = new[] { VisualizerPageGrid, AlbumArtPageGrid, LyricsPageGrid };
         foreach (var g in allGrids)
         {
@@ -7133,6 +7221,26 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             {
                 ClearAnimations(g);
                 g.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        // Clean up any snapshot/host left by an interrupted previous transition.
+        if (SlideHost != null)
+        {
+            var toRemove = new List<FrameworkElement>();
+            foreach (var child in SlideHost.Children)
+            {
+                if (child is FrameworkElement fe &&
+                    (string.Equals(fe.Tag as string, "slide-snapshot", StringComparison.Ordinal) ||
+                     string.Equals(fe.Tag as string, "slide-host", StringComparison.Ordinal)))
+                {
+                    toRemove.Add(fe);
+                }
+            }
+            foreach (var fe in toRemove)
+            {
+                if (fe is System.Windows.Controls.Decorator dec) dec.Child = null;
+                SlideHost.Children.Remove(fe);
             }
         }
 
@@ -7146,6 +7254,46 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             outgoingGrid.IsHitTestVisible = false;
             incomingGrid.IsHitTestVisible = true;
 
+            // The outgoing page is rasterised ONCE into a static snapshot (a
+            // VisualBrush) so the MIL renderer never re-rasterises its full-size
+            // content while it slides out.
+            var snapshot = new System.Windows.Controls.Border
+            {
+                Width = outgoingGrid.ActualWidth > 0 ? outgoingGrid.ActualWidth : 1,
+                Height = outgoingGrid.ActualHeight > 0 ? outgoingGrid.ActualHeight : 1,
+                IsHitTestVisible = false,
+                Tag = "slide-snapshot",
+                Background = new System.Windows.Media.VisualBrush(outgoingGrid)
+                {
+                    Stretch = System.Windows.Media.Stretch.None,
+                    TileMode = System.Windows.Media.TileMode.None,
+                    AlignmentX = System.Windows.Media.AlignmentX.Left,
+                    AlignmentY = System.Windows.Media.AlignmentY.Top
+                }
+            };
+            System.Windows.Controls.Panel.SetZIndex(snapshot, 0);
+            var snapshotTransform = new System.Windows.Media.TranslateTransform(0, 0);
+            snapshot.RenderTransform = snapshotTransform;
+            SlideHost?.Children.Add(snapshot);
+            outgoingGrid.Visibility = Visibility.Collapsed;
+
+            // The incoming page is also rasterised ONCE. Its CacheMode is set on
+            // the grid itself, while the TRANSFORM is applied to a wrapper, so
+            // the transform change does not invalidate the cached texture (WPF
+            // re-rasterises a cached element when its own RenderTransform
+            // changes).
+            var incomingHost = new System.Windows.Controls.Border { IsHitTestVisible = true, Tag = "slide-host" };
+            // Ensure the incoming grid is not still parented to a leftover host.
+            if (incomingGrid.Parent is System.Windows.Controls.Decorator oldHost && oldHost != incomingHost)
+                oldHost.Child = null;
+            SlideHost?.Children.Remove(incomingGrid);
+            incomingHost.Child = incomingGrid;
+            SlideHost?.Children.Add(incomingHost);
+            incomingGrid.RenderTransform = null;
+            var incomingHostTransform = new System.Windows.Media.TranslateTransform(0, 0);
+            incomingHost.RenderTransform = incomingHostTransform;
+            incomingGrid.CacheMode = new System.Windows.Media.BitmapCache();
+
             var vizControl = FindVisualizerControl(incomingGrid);
             var vizControlOut = FindVisualizerControl(outgoingGrid);
             vizControl?.PauseRendering();
@@ -7154,26 +7302,39 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             double incomingStart = movingRight ? w : -w;
             double outgoingEnd = movingRight ? -w : w;
 
-            incomingTrans.X = incomingStart;
-            outgoingTrans.X = 0;
+            incomingHostTransform.X = incomingStart;
+            snapshotTransform.X = 0;
 
             var inAnim = new System.Windows.Media.Animation.DoubleAnimation(incomingStart, 0, dur) { EasingFunction = ease };
             var outAnim = new System.Windows.Media.Animation.DoubleAnimation(0, outgoingEnd, dur) { EasingFunction = ease };
 
             outAnim.Completed += (s, ev) =>
             {
+                // Stale transition: a newer transition superseded this one.
+                // Do not touch the visual tree.
+                if (myVersion != _pageTransitionVersion) return;
+
+                if (SlideHost != null) SlideHost.Children.Remove(snapshot);
+                if (SlideHost != null) SlideHost.Children.Remove(incomingHost);
+                incomingHost.Child = null;
+                SlideHost?.Children.Add(incomingGrid);
+                incomingGrid.RenderTransform = incomingTrans;
+                incomingGrid.CacheMode = null;
+                outgoingGrid.Visibility = Visibility.Collapsed;
                 if (ViewModel?.CurrentlyPlayingPage == targetPage)
                 {
                     outgoingGrid.Visibility = Visibility.Collapsed;
                     outgoingTrans.X = 0;
                     outgoingGrid.IsHitTestVisible = true;
-                    vizControlOut?.ResumeRendering();
-                    vizControl?.ResumeRendering();
+                    if (targetPage == CurrentlyPlayingPage.Visualizer)
+                    {
+                        vizControl?.ResumeRendering();
+                    }
                 }
             };
 
-            outgoingTrans.BeginAnimation(TranslateTransform.XProperty, outAnim);
-            incomingTrans.BeginAnimation(TranslateTransform.XProperty, inAnim);
+            snapshotTransform.BeginAnimation(TranslateTransform.XProperty, outAnim);
+            incomingHostTransform.BeginAnimation(TranslateTransform.XProperty, inAnim);
 
             if (SmallAlbumArtBorder != null)
             {
@@ -7191,6 +7352,12 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             if (VisualizerPageGrid != null) VisualizerPageGrid.Visibility = targetPage == CurrentlyPlayingPage.Visualizer ? Visibility.Visible : Visibility.Collapsed;
             if (AlbumArtPageGrid != null) AlbumArtPageGrid.Visibility = targetPage == CurrentlyPlayingPage.AlbumArt ? Visibility.Visible : Visibility.Collapsed;
             if (LyricsPageGrid != null) LyricsPageGrid.Visibility = targetPage == CurrentlyPlayingPage.Lyrics ? Visibility.Visible : Visibility.Collapsed;
+
+            var viz = VisualizerPageGrid == null ? null : FindVisualizerControl(VisualizerPageGrid);
+            if (targetPage == CurrentlyPlayingPage.Visualizer)
+                viz?.ResumeRendering();
+            else
+                viz?.PauseRendering();
 
             if (SmallAlbumArtBorder != null)
                 SmallAlbumArtBorder.Opacity = targetPage != CurrentlyPlayingPage.AlbumArt ? 1.0 : 0.0;
@@ -7486,12 +7653,12 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             var container = LyricsList.ItemContainerGenerator.ContainerFromIndex(idx) as FrameworkElement;
             if (container == null)
             {
-                LyricsList.UpdateLayout();
-                container = LyricsList.ItemContainerGenerator.ContainerFromIndex(idx) as FrameworkElement;
-                if (container == null) return;
+                if (LyricsList.ItemContainerGenerator.Status != System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
+                {
+                    Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(ScrollLyricsToCurrent));
+                }
+                return;
             }
-
-            container.UpdateLayout();
 
             var containerTop = container.TranslatePoint(new Point(0, 0), LyricsScrollViewer);
             var containerHeight = container.ActualHeight;
@@ -7712,7 +7879,15 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
         if (FpTitleText == null || FpTitleCanvas == null || FpTitleBorder == null) return;
 
-        FpTitleText.UpdateLayout();
+        // Ensure the title is visible even before the marquee starts: on the first
+        // entry the canvas height is 0 (it is only ever set inside this method),
+        // which clips the title to nothing until the animation finishes.
+        if (FpTitleCanvas.Height <= 0 && FpTitleText.ActualHeight > 0)
+            FpTitleCanvas.Height = FpTitleText.ActualHeight;
+        if (FpTitleText.ActualWidth <= 0)
+        {
+            FpTitleText.UpdateLayout();
+        }
         double textWidth = FpTitleText.ActualWidth;
         double containerWidth = FpTitleBorder.ActualWidth;
 

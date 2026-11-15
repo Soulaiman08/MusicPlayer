@@ -38,7 +38,7 @@
           <RowDefinition Height="108" />
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition x:Name="SidebarColumn" Width="Auto" />
           <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
         <!-- Unified identity glass TopBar: the same material continues from the app identity head and Sidebar -->
@@ -54,23 +54,29 @@
                 <DataTrigger Binding="{Binding CurrentView}" Value="home">
                   <Setter Property="Visibility" Value="Collapsed" />
                 </DataTrigger>
-                <DataTrigger Binding="{Binding ShowFullPlayer}" Value="True">
-                  <Setter Property="Visibility" Value="Collapsed" />
-                </DataTrigger>
+                <!-- ShowFullPlayer trigger removed: TopBar visibility is now animated in sync with FullPlayer in code-behind -->
               </Style.Triggers>
             </Style>
           </Border.Style>
           <Grid>
-            <!-- Live Backdrop Glass Blur Sampling Surface: shared clean wallpaper sample (edge-faded like the tints) -->
-            <Border x:Name="HeaderGlassSurface" Background="Transparent" IsHitTestVisible="False" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" />
-            <!-- TopBar-only dark tint: smokes down from full strength away from the Sidebar; edge-faded toward the junction -->
-            <Border Background="{StaticResource DS_TopBarGlassTint}" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" IsHitTestVisible="False" />
-            <!-- TopBar identity tint: same edge fade so the junction is one smooth ramp, not two films -->
-            <Border Background="{StaticResource DS_IdentityGlassTint}" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" IsHitTestVisible="False" />
-            <!-- Soft glass sheen that lifts the header without adding a panel edge -->
-            <Border Background="{StaticResource DS_IdentityTopSheen}" IsHitTestVisible="False" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" />
-            <!-- Hairline edge that dissolves at both ends instead of cutting the page -->
-            <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource DS_IdentityHeaderEdge}" IsHitTestVisible="False" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" />
+            <!-- Live Backdrop Glass Blur Sampling Surface: shared clean wallpaper sample (edge-faded like the tints).
+                 The edge fade is applied once to the opaque glass sample; the tint stack below carries
+                 the same fade on a single parent, so the header needs two alpha-composite passes instead
+                 of one per layer (five passes on a full-width bar, redrawn on every header change). -->
+            <Border x:Name="HeaderGlassSurface" Background="Transparent" IsHitTestVisible="False" OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" SizeChanged="SidebarGlassSurface_SizeChanged" />
+            <!-- TopBar darkening, identity tint, top sheen and the hairline edge fade together:
+                 they stack over the glass sample, so one shared mask keeps the exact same
+                 "one smooth ramp, not two films" junction the per-layer masks produced. -->
+            <Grid OpacityMask="{StaticResource DS_TopBarGlassEdgeFade}" IsHitTestVisible="False">
+              <!-- TopBar-only dark tint: smokes down from full strength away from the Sidebar; edge-faded toward the junction -->
+              <Border Background="{StaticResource DS_TopBarGlassTint}" IsHitTestVisible="False" />
+              <!-- TopBar identity tint: same edge fade so the junction is one smooth ramp, not two films -->
+              <Border Background="{StaticResource DS_IdentityGlassTint}" IsHitTestVisible="False" />
+              <!-- Soft glass sheen that lifts the header without adding a panel edge -->
+              <Border Background="{StaticResource DS_IdentityTopSheen}" IsHitTestVisible="False" />
+              <!-- Hairline edge that dissolves at both ends instead of cutting the page -->
+              <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource DS_IdentityHeaderEdge}" IsHitTestVisible="False" />
+            </Grid>
           </Grid>
         </Border>
 
@@ -78,7 +84,7 @@
              The TopBar's dark tint simply dissolves toward the Sidebar (DS_TopBarGlassEdgeFade). -->
 
         <!-- 2. Interactive Header Controls Layer: Houses all controls with isolated, direct hit testing -->
-        <Grid Grid.Row="0" Grid.Column="1" MinHeight="70">
+        <Grid x:Name="TopBarControls" Grid.Row="0" Grid.Column="1" MinHeight="70">
           <Grid.Style>
             <Style TargetType="Grid">
               <Setter Property="Visibility" Value="Visible" />
@@ -87,10 +93,7 @@
                 <DataTrigger Binding="{Binding CurrentView}" Value="home">
                   <Setter Property="Visibility" Value="Collapsed" />
                 </DataTrigger>
-                <!-- Hide on Full Player -->
-                <DataTrigger Binding="{Binding ShowFullPlayer}" Value="True">
-                  <Setter Property="Visibility" Value="Collapsed" />
-                </DataTrigger>
+                <!-- ShowFullPlayer trigger removed: TopBar visibility is now animated in sync with FullPlayer in code-behind -->
               </Style.Triggers>
             </Style>
           </Grid.Style>
@@ -162,12 +165,17 @@
                       <DataTrigger Binding="{Binding CurrentView}" Value="hidden_files">
                         <Setter Property="Visibility" Value="Visible" />
                       </DataTrigger>
-                      <!-- Always hide on Home page and when Full Player is shown -->
+                      <!-- Always hide on Home page. During FullPlayer use Hidden (NOT Collapsed):
+                           the button sits before the page title in the same StackPanel, so
+                           collapsing it would reflow the title/track-count/sub-tabs by ~50px
+                           the moment the player opens (and again on close). Hidden keeps the
+                           slot occupied — no reflow — while staying invisible and non-hittable;
+                           the FullPlayer surface covers the whole bar anyway. -->
                       <DataTrigger Binding="{Binding CurrentView}" Value="home">
                         <Setter Property="Visibility" Value="Collapsed" />
                       </DataTrigger>
                       <DataTrigger Binding="{Binding ShowFullPlayer}" Value="True">
-                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Setter Property="Visibility" Value="Hidden" />
                       </DataTrigger>
                     </Style.Triggers>
                   </Style>
@@ -516,7 +524,7 @@
                The element is kept (named) because the existing glass brush pipeline assigns
                its runtime background; zero opacity removes that plate from the visual result
                without touching the protected code-behind. -->
-          <Border x:Name="SidebarBrandGlass" Grid.Column="0" Grid.Row="0"
+          <Border x:Name="SidebarBrandGlass" Grid.Column="0" Grid.Row="0" Panel.ZIndex="10"
                   Width="{Binding ActualWidth, ElementName=SidebarBrandButton}"
                   Height="44" Margin="8,6,6,0"
                   HorizontalAlignment="Left" VerticalAlignment="Top"
@@ -525,7 +533,7 @@
                   IsHitTestVisible="False" SnapsToDevicePixels="True" />
 
           <!-- App identity: Independent brand identity directly integrated with Sidebar -->
-          <Button x:Name="SidebarBrandButton" Grid.Column="0" Grid.Row="0" Width="50" Height="40" Margin="8,8,6,0" Padding="0" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalAlignment="Left" VerticalAlignment="Top" ToolTip="Toggle Navigation Menu" Command="{Binding ToggleDrawerCommand}" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="SidebarBrandButton" Grid.Column="0" Grid.Row="0" Panel.ZIndex="10" Width="50" Height="40" Margin="8,8,6,0" Padding="0" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalAlignment="Left" VerticalAlignment="Top" ToolTip="Toggle Navigation Menu" AutomationProperties.Name="Toggle Navigation Menu" Command="{Binding ToggleDrawerCommand}" WindowChrome.IsHitTestVisibleInChrome="True">
             <Button.Template>
               <ControlTemplate TargetType="{x:Type Button}">
                 <!-- Chrome-free host: the icon/label render alone; no plate, border or state fill. -->
@@ -560,7 +568,7 @@
           </Button>
 
           <!-- Persistent Sidebar (Column 0: Compact Rail / Expanded Drawer) -->
-          <Border x:Name="SidebarBorder" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Width="50" Margin="8,64,6,8" ClipToBounds="True" Background="Transparent" BorderBrush="{StaticResource DS_SidebarOuterGlassReflection}" BorderThickness="1" SnapsToDevicePixels="True" SizeChanged="SidebarGlassSurface_SizeChanged">
+          <Border x:Name="SidebarBorder" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Panel.ZIndex="10" Width="50" Margin="8,64,6,8" HorizontalAlignment="Left" ClipToBounds="True" Background="Transparent" BorderBrush="{StaticResource DS_SidebarOuterGlassReflection}" BorderThickness="1" SnapsToDevicePixels="True" SizeChanged="SidebarGlassSurface_SizeChanged">
             <Border.Style>
               <Style TargetType="{x:Type Border}">
                 <Setter Property="CornerRadius" Value="20" />
@@ -578,9 +586,12 @@
                 <Binding Path="IsDrawerOpen" />
               </MultiBinding>
             </Border.Clip>
-            <Border.Effect>
-              <DropShadowEffect BlurRadius="14" ShadowDepth="1" Direction="0" Opacity="0.16" Color="#000000" RenderingBias="Performance" />
-            </Border.Effect>
+            <!-- No DropShadowEffect here: the rounded clip above already discards every
+                 pixel of a blurred shadow (a clip is applied AFTER the effect, so the
+                 shadow is cut away with the rest of the rounded rectangle). The effect
+                 only forced WPF to re-render and re-blur the whole 50xN sidebar surface
+                 on every repaint, for a result that was never visible. The depth cue
+                 comes from the glass border + inner edge reflection below, which stay. -->
             <Grid>
               <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
@@ -1229,7 +1240,7 @@
                             <StackPanel HorizontalAlignment="Center">
                               <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}">
                                 <UIElement.Clip>
-                                  <EllipseGeometry Center="{Binding ItemWidth, Converter={StaticResource HalfPointConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusX="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusY="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" />
+                                  <Binding Path="ItemWidth" RelativeSource="{RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}" Converter="{StaticResource CircleClipConverter}" />
                                 </UIElement.Clip>
                                 <Border Background="#28FFFFFF" />
                                 <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="LowQuality" RenderOptions.CachingHint="Cache" />
@@ -1783,7 +1794,7 @@
                       <StackPanel HorizontalAlignment="Center">
                         <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}">
                           <UIElement.Clip>
-                            <EllipseGeometry Center="{Binding ItemWidth, Converter={StaticResource HalfPointConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusX="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" RadiusY="{Binding ItemWidth, Converter={StaticResource HalfConverter}, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" />
+                            <Binding Path="ItemWidth" RelativeSource="{RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}" Converter="{StaticResource CircleClipConverter}" />
                           </UIElement.Clip>
                           <Border Background="#28FFFFFF" />
                           <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="LowQuality" RenderOptions.CachingHint="Cache" />
@@ -4397,6 +4408,15 @@
           </Canvas>
         </Grid>
         <!-- Mini Player Bar -->
+        <!-- The DropShadowEffect below is deliberately left exactly as it was.
+             Two restructurings were built and measured for this bar:
+               (a) a static "shadow caster" sibling that carries the fill + the blur,
+               (b) removing the effect altogether.
+             Both measured a ~12ms REGRESSION on the click-to-first-frame of the songs
+             tab, because the bar's rounded clip is re-evaluated on every layout pass
+             and re-invalidates the bar's render surface either way. The bar was
+             therefore restored to the original structure - see the report for the
+             measurements. -->
         <Border Grid.Row="2" Grid.ColumnSpan="2" Margin="8,0,8,8" CornerRadius="18" ClipToBounds="True" Background="#3810131B" BorderBrush="#30FFFFFF" BorderThickness="1" SnapsToDevicePixels="True">
           <Border.Clip>
             <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="18">
@@ -4550,7 +4570,7 @@
             </StackPanel>
           </Grid>
         </Border>
-        <Grid Name="FullPlayerGrid" Grid.Row="0" Grid.RowSpan="3" Grid.Column="0" Grid.ColumnSpan="2" Background="#FF0D121A" Visibility="Collapsed">
+        <Grid Name="FullPlayerGrid" Grid.Row="0" Grid.RowSpan="3" Grid.Column="0" Grid.ColumnSpan="2" Background="#FF0D121A" Visibility="Collapsed" Panel.ZIndex="20">
           <UIElement.RenderTransform>
             <TranslateTransform Y="0" />
           </UIElement.RenderTransform>
@@ -4579,10 +4599,10 @@
                       </LinearGradientBrush>
                     </Panel.Background>
                     <Border Margin="24,16" MaxWidth="560" MaxHeight="560" CornerRadius="16" ClipToBounds="True" HorizontalAlignment="Center" VerticalAlignment="Center">
-                      <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" UseLayoutRounding="True" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" />
+                      <Image x:Name="FpAlbumArtImage" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" UseLayoutRounding="True" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" />
                     </Border>
                   </Grid>
-                  <Grid Name="LyricsPageGrid" CacheMode="BitmapCache" Visibility="Collapsed">
+                  <Grid Name="LyricsPageGrid" Visibility="Collapsed">
                     <UIElement.RenderTransform>
                       <TranslateTransform x:Name="LyricsTransform" X="0" />
                     </UIElement.RenderTransform>
@@ -4644,7 +4664,7 @@
                       </Grid>
                     </Grid>
                   </Grid>
-                  <Grid Name="VisualizerPageGrid" CacheMode="BitmapCache" Visibility="Collapsed">
+                  <Grid Name="VisualizerPageGrid" Visibility="Collapsed">
                     <UIElement.RenderTransform>
                       <TranslateTransform x:Name="VisualizerTransform" X="0" />
                     </UIElement.RenderTransform>
@@ -4673,12 +4693,14 @@
               <Grid Row="1">
                 <!-- Small album art shown on Visualizer / Lyrics pages -->
                 <Border Name="SmallAlbumArtBorder" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,20,0,0"
-                        Width="148" Height="148" CornerRadius="14" ClipToBounds="True" Opacity="0">
+                        Width="148" Height="148" CornerRadius="14" Opacity="0">
                   <Border.Effect>
                     <DropShadowEffect Color="#000000" BlurRadius="28" ShadowDepth="6" Opacity="0.5" Direction="270" />
                   </Border.Effect>
-                  <Image RenderOptions.BitmapScalingMode="HighQuality" Stretch="UniformToFill"
-                         Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" />
+                  <Border CornerRadius="14" ClipToBounds="True">
+                    <Image RenderOptions.BitmapScalingMode="HighQuality" Stretch="UniformToFill"
+                           Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" />
+                  </Border>
                 </Border>
 
                 <StackPanel VerticalAlignment="Bottom" Margin="24,0,24,24">
@@ -4687,7 +4709,7 @@
                   <StackPanel Margin="0,0,0,16">
                     <!-- Title marquee -->
                     <Border Name="FpTitleBorder" ClipToBounds="True" Margin="0,0,0,4">
-                      <Canvas Name="FpTitleCanvas">
+                      <Canvas Name="FpTitleCanvas" Height="{Binding ActualHeight, ElementName=FpTitleText, Mode=OneWay}">
                         <UIElement.RenderTransform>
                           <TranslateTransform x:Name="FpTitleTransform" X="0" />
                         </UIElement.RenderTransform>
@@ -5973,7 +5995,7 @@
             </StackPanel>
           </Border>
         </Grid>
-        <Border Name="LoadingOverlay" Grid.RowSpan="3" Grid.ColumnSpan="2" Background="Transparent" Visibility="Visible">
+        <Border Name="LoadingOverlay" Grid.RowSpan="3" Grid.ColumnSpan="2" Background="Transparent" Visibility="Visible" Panel.ZIndex="100">
           <Grid>
             <Grid.RowDefinitions>
               <RowDefinition Height="42" />

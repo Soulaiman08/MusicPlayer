@@ -1,4 +1,4 @@
-﻿﻿using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -401,6 +401,13 @@ private void SongsScroller_ScrollChanged(object sender, ScrollChangedEventArgs e
     private void SyncHeaderToViewportCore(HeaderSync st)
     {
         if (st.List is null || st.Header is null) return;
+        // A table that is not on screen cannot be mis-aligned: its header only has to
+        // match its rows once the page is shown, and every table hooks IsVisibleChanged
+        // (or SizeChanged / Loaded) to re-sync itself at that moment. Skipping the
+        // hidden tables removes one visual-tree hit-test and one dispatcher post per
+        // hidden table for EVERY scroll tick of the table that IS on screen - the songs
+        // list used to sync all eleven tables on every single tick.
+        if (!st.List.IsVisible) return;
         st.Scroller ??= FindVisualChild<ScrollViewer>(st.List);
         if (st.Scroller is null)
         {
@@ -708,8 +715,15 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
     public TrackTableState GenreDetailTable { get; } =
         new("GenreDetail", StandardColumns, StandardWeights, StandardMinimums);
 
-    /// <summary>All track tables, so navigation and layout changes can reach each one.</summary>
-    public IEnumerable<TrackTableState> TrackTables => new[]
+    /// <summary>
+    /// All track tables, so navigation and layout changes can reach each one.
+    /// The array is built once and reused: <see cref="ClearColumnSelection"/> runs on
+    /// every scroll tick of the visible list, and handing out a fresh array each time
+    /// made the UI thread allocate an eleven-element array per tick.
+    /// </summary>
+    private TrackTableState[]? _trackTables;
+
+    public IEnumerable<TrackTableState> TrackTables => _trackTables ??= new[]
     {
         SongsTable, AlbumTable, RecentPlayTable, RecentAddTable, MostPlayedTable,
         FavoritesTable, ArtistDetailTable, FolderDetailTable, AlbumMusicTable,

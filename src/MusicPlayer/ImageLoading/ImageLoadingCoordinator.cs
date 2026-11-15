@@ -27,6 +27,7 @@ public sealed class ImageLoadingCoordinator : IDisposable
     private ImageSource? _defaultArt;
     private static volatile bool _scrollingActive;
     private bool _disposed;
+    private Timer? _metricsTimer;
 
     public static ImageLoadingCoordinator? Instance { get; internal set; }
 
@@ -55,6 +56,46 @@ public sealed class ImageLoadingCoordinator : IDisposable
             logger);
 
         Instance = this;
+
+        StartMetricsTimer();
+    }
+
+    /// <summary>
+    /// Emits the image-pipeline counters to the log while a performance run is
+    /// active. The counters themselves are always on; only the periodic dump is
+    /// gated, so a normal session pays nothing but the increments.
+    /// </summary>
+    private void StartMetricsTimer()
+    {
+        if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") != "1")
+            return;
+
+        try
+        {
+            _metricsTimer = new Timer(_ => DumpMetrics(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        }
+        catch { }
+    }
+
+    private void DumpMetrics()
+    {
+        try
+        {
+            if (_disposed) return;
+            LogHelper.LogInfo(ImageDecodeMetrics.FormatSnapshot());
+
+            var duplicates = ImageDecodeMetrics.GetDuplicateDecodes(5);
+            if (duplicates.Count > 0)
+            {
+                var sb = new System.Text.StringBuilder("PERF-IMAGE-DUP");
+                foreach (var d in duplicates)
+                {
+                    sb.Append(' ').Append(d.Source).Append(' ').Append(d.Rendition).Append('=').Append(d.Count);
+                }
+                LogHelper.LogInfo(sb.ToString());
+            }
+        }
+        catch { }
     }
 
     public AlbumArtProvider AlbumArt => _albumArtProvider;
@@ -202,6 +243,9 @@ public sealed class ImageLoadingCoordinator : IDisposable
         {
             Instance = null;
         }
+
+        try { _metricsTimer?.Dispose(); } catch { }
+        try { _metricsTimer = null; } catch { }
 
         try { _lifetimeCts.Cancel(); } catch { }
 
