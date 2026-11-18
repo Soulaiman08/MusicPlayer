@@ -21,7 +21,6 @@
   <Border Name="RootBorder" Background="Transparent" ClipToBounds="True" Margin="{Binding Padding, RelativeSource={RelativeSource AncestorType=Window}}" Loaded="RootBorder_Loaded" SizeChanged="RootBorder_SizeChanged">
     <Grid>
       <Image Name="BackgroundImage" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" />
-      <Border Background="#FF000000" Opacity="{Binding WallpaperAlphaOpacity}" />
       <Border IsHitTestVisible="False">
         <Border.Background>
           <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -249,35 +248,35 @@
             <!-- Row 1: Sub-Tabs for All Songs -->
             <Border Grid.Row="1" Margin="0,8,0,0" Visibility="{Binding IsTrackListView, Converter={StaticResource BoolToVisibilityConverter}}">
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabSongs_Click">
+                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabSongs_Click" AutomationProperties.AutomationId="TabSongsButton">
                   <StackPanel>
                     <TextBlock Text="TRACKS" FontSize="13.5" FontWeight="Bold" Foreground="{Binding CurrentTab, Converter={StaticResource EqualityToBrushConverter}, ConverterParameter=songs}" />
                     <Border Height="3" CornerRadius="1.5" Background="{StaticResource APK_YellowBrush}" Margin="0,4,0,0"
                             Visibility="{Binding CurrentTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=songs}" />
                   </StackPanel>
                 </Button>
-                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabArtists_Click">
+                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabArtists_Click" AutomationProperties.AutomationId="TabArtistsButton">
                   <StackPanel>
                     <TextBlock Text="ARTISTS" FontSize="13.5" FontWeight="Bold" Foreground="{Binding CurrentTab, Converter={StaticResource EqualityToBrushConverter}, ConverterParameter=artists}" />
                     <Border Height="3" CornerRadius="1.5" Background="{StaticResource APK_YellowBrush}" Margin="0,4,0,0"
                             Visibility="{Binding CurrentTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=artists}" />
                   </StackPanel>
                 </Button>
-                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabAlbums_Click">
+                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabAlbums_Click" AutomationProperties.AutomationId="TabAlbumsButton">
                   <StackPanel>
                     <TextBlock Text="ALBUMS" FontSize="13.5" FontWeight="Bold" Foreground="{Binding CurrentTab, Converter={StaticResource EqualityToBrushConverter}, ConverterParameter=albums}" />
                     <Border Height="3" CornerRadius="1.5" Background="{StaticResource APK_YellowBrush}" Margin="0,4,0,0"
                             Visibility="{Binding CurrentTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=albums}" />
                   </StackPanel>
                 </Button>
-                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabGenres_Click">
+                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabGenres_Click" AutomationProperties.AutomationId="TabGenresButton">
                   <StackPanel>
                     <TextBlock Text="GENRES" FontSize="13.5" FontWeight="Bold" Foreground="{Binding CurrentTab, Converter={StaticResource EqualityToBrushConverter}, ConverterParameter=genres}" />
                     <Border Height="3" CornerRadius="1.5" Background="{StaticResource APK_YellowBrush}" Margin="0,4,0,0"
                             Visibility="{Binding CurrentTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=genres}" />
                   </StackPanel>
                 </Button>
-                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabFolders_Click">
+                <Button Style="{StaticResource APK_TabButton}" Padding="14,8" Margin="0,0,8,0" Click="TabFolders_Click" AutomationProperties.AutomationId="TabFoldersButton">
                   <StackPanel>
                     <TextBlock Text="FOLDERS" FontSize="13.5" FontWeight="Bold" Foreground="{Binding CurrentTab, Converter={StaticResource EqualityToBrushConverter}, ConverterParameter=folders}" />
                     <Border Height="3" CornerRadius="1.5" Background="{StaticResource APK_YellowBrush}" Margin="0,4,0,0"
@@ -313,7 +312,7 @@
                     <TextBlock Text="Sort" Foreground="{StaticResource APK_YellowBrush}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
                   </StackPanel>
                 </Button>
-                <Button Width="36" Height="36" Click="ToggleSongsLayout_Click" Margin="0,0,6,0">
+                <Button Width="36" Height="36" Click="ToggleSongsLayout_Click" Margin="0,0,6,0" AutomationProperties.AutomationId="ToggleSongsLayoutButton">
                   <Button.Style>
                     <Style TargetType="Button" BasedOn="{StaticResource APK_IconButton}">
                       <Setter Property="Visibility" Value="Collapsed" />
@@ -1266,7 +1265,7 @@
                   </ScrollViewer>
                 </Grid>
                 <Grid Name="TabContent_Albums" Visibility="Collapsed">
-                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                  <ScrollViewer x:Name="AlbumsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                     <ItemsControl ItemsSource="{Binding DisplayedAlbums}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -1291,7 +1290,7 @@
                   </ScrollViewer>
                 </Grid>
                 <Grid Name="TabContent_Genres" Visibility="Collapsed">
-                  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">
+                  <ScrollViewer x:Name="GenresScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">
                     <ItemsControl ItemsSource="{Binding DisplayedGenres}" VerticalAlignment="Top">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -1319,7 +1318,7 @@
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
-                  <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">
+                  <ScrollViewer x:Name="FoldersScroll" Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">
                     <ItemsControl ItemsSource="{Binding Folders}" VerticalAlignment="Top">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>

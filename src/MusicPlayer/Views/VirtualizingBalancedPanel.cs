@@ -47,6 +47,8 @@ namespace MusicPlayer.Views
         private int _cols;
         private double _rowHeight = 0;
         private const double RowHeightEstimate = 200;
+        private readonly TranslateTransform _scrollTranslation = new();
+        private double _arrangedOffset;
 
         // Solve() only depends on the available width and the three sizing DPs.
         // It used to run twice per measure and once per arrange even when nothing
@@ -67,6 +69,7 @@ namespace MusicPlayer.Views
 
         public VirtualizingBalancedPanel()
         {
+            RenderTransform = _scrollTranslation;
             Loaded += (_, _) => InvalidateMeasure();
         }
 
@@ -124,6 +127,26 @@ namespace MusicPlayer.Views
 
         internal static double ResolveGenerationOffset(bool usesScrollInfo, double panelOffset, double scrollViewerOffset) =>
             usesScrollInfo ? panelOffset : scrollViewerOffset;
+
+        internal static bool IsRealizedRangeCovered(
+            VisibleRange range,
+            int firstRealizedIndex,
+            int lastRealizedIndex,
+            int realizedCount)
+        {
+            if (range.LastIndex < range.FirstIndex)
+                return true;
+
+            return realizedCount > 0
+                && firstRealizedIndex >= 0
+                && lastRealizedIndex >= firstRealizedIndex
+                && realizedCount == lastRealizedIndex - firstRealizedIndex + 1
+                && firstRealizedIndex <= range.FirstIndex
+                && lastRealizedIndex >= range.LastIndex;
+        }
+
+        internal static double GetScrollTranslation(double arrangedOffset, double currentOffset) =>
+            arrangedOffset - currentOffset;
 
         private static double GetExtentHeight(int itemCount, int cols, double rowHeight, double gap)
         {
@@ -241,7 +264,40 @@ namespace MusicPlayer.Views
             if (Math.Abs(offset - _offset.Y) > 0.001)
             {
                 _offset.Y = offset;
-                InvalidateMeasure();
+                bool needsMeasure = true;
+                var owner = Owner;
+                if (_scrollOwner != null
+                    && owner != null
+                    && _cols > 0
+                    && IsFinitePositive(_viewport.Height))
+                {
+                    VisibleRange targetRange = CalculateVisibleRange(
+                        owner.Items.Count, _cols, offset, _viewport.Height, _rowHeight, Gap, CacheRows);
+                    int firstRealizedIndex = int.MaxValue;
+                    int lastRealizedIndex = -1;
+                    int realizedCount = 0;
+                    bool hasInvalidIndex = false;
+                    foreach (UIElement child in InternalChildren)
+                    {
+                        int index = owner.ItemContainerGenerator.IndexFromContainer(child);
+                        if (index < 0)
+                        {
+                            hasInvalidIndex = true;
+                            break;
+                        }
+
+                        firstRealizedIndex = Math.Min(firstRealizedIndex, index);
+                        lastRealizedIndex = Math.Max(lastRealizedIndex, index);
+                        realizedCount++;
+                    }
+
+                    needsMeasure = hasInvalidIndex || !IsRealizedRangeCovered(
+                        targetRange, firstRealizedIndex, lastRealizedIndex, realizedCount);
+                }
+
+                _scrollTranslation.Y = GetScrollTranslation(_arrangedOffset, offset);
+                if (needsMeasure)
+                    InvalidateMeasure();
                 _scrollOwner?.InvalidateScrollInfo();
             }
         }
@@ -469,6 +525,9 @@ namespace MusicPlayer.Views
                 double y = row * (rowHeight + GetSafeGap(Gap)) - offset;
                 child.Arrange(new Rect(x, y, slot, rowHeight));
             }
+
+            _arrangedOffset = _scrollOwner == null ? 0 : _offset.Y;
+            _scrollTranslation.Y = 0;
 
             double viewportWidth = ResolveWidth(finalSize.Width);
             double viewportHeight = ResolveViewportHeight(

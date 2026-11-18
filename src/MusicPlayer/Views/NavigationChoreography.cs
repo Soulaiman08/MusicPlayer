@@ -11,7 +11,7 @@ namespace MusicPlayer.Views;
 // behavior 1:1 — unifying them changes nothing visually, it only centralizes.
 public static class MotionTokens
 {
-    public static TimeSpan PageEnter => TimeSpan.FromMilliseconds(280);
+    public static TimeSpan PageEnter => TimeSpan.FromMilliseconds(130);
     public static TimeSpan HeroMorph => TimeSpan.FromMilliseconds(260);
     public static TimeSpan TabSlide => TimeSpan.FromMilliseconds(260);
     public static TimeSpan ReverseRevealLead => TimeSpan.FromMilliseconds(40);

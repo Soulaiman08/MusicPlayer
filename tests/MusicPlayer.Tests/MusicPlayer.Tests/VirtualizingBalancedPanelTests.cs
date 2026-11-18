@@ -112,6 +112,44 @@ public class VirtualizingBalancedPanelTests
         Assert.InRange(range.LastIndex, range.FirstIndex, 999);
     }
 
+    [Fact]
+    public void IsRealizedRangeCovered_AllowsArrangeOnlyWhileTargetRangeIsRealized()
+    {
+        var target = new VirtualizingBalancedPanel.VisibleRange(
+            VisibleRows: 3, FirstIndex: 8, LastIndex: 19, Offset: 500);
+
+        Assert.True(VirtualizingBalancedPanel.IsRealizedRangeCovered(
+            target, firstRealizedIndex: 4, lastRealizedIndex: 23, realizedCount: 20));
+        Assert.False(VirtualizingBalancedPanel.IsRealizedRangeCovered(
+            target, firstRealizedIndex: 12, lastRealizedIndex: 31, realizedCount: 20));
+        Assert.False(VirtualizingBalancedPanel.IsRealizedRangeCovered(
+            target, firstRealizedIndex: 0, lastRealizedIndex: 23, realizedCount: 19));
+    }
+
+    [Fact]
+    public void IsRealizedRangeCovered_AllowsAnEmptyTargetRangeWithoutContainers()
+    {
+        var target = new VirtualizingBalancedPanel.VisibleRange(
+            VisibleRows: 0, FirstIndex: 0, LastIndex: -1, Offset: 0);
+
+        Assert.True(VirtualizingBalancedPanel.IsRealizedRangeCovered(
+            target, firstRealizedIndex: int.MaxValue, lastRealizedIndex: -1, realizedCount: 0));
+    }
+
+    [Fact]
+    public void GetScrollTranslationKeepsItemsAtTheRequestedViewportOffset()
+    {
+        const double itemTop = 1000;
+        const double arrangedOffset = 400;
+        const double currentOffset = 460;
+
+        double translatedItemTop = itemTop - arrangedOffset
+            + VirtualizingBalancedPanel.GetScrollTranslation(arrangedOffset, currentOffset);
+
+        Assert.Equal(itemTop - currentOffset, translatedItemTop);
+        Assert.Equal(0d, VirtualizingBalancedPanel.GetScrollTranslation(600, 600));
+    }
+
     /// <summary>
     /// The panel realises the containers between FirstIndex and LastIndex and
     /// removes every container outside that range. A range that does not cover

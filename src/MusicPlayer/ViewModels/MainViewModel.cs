@@ -5655,7 +5655,6 @@ public partial class MainViewModel : ViewModelBase
 		// backs — the ghost empty page. Mirrors Navigate().
 		if (!string.Equals(CurrentView, "folder_detail", StringComparison.OrdinalIgnoreCase))
 			_viewHistory.Push(CurrentView);
-		BeginTabLoad("view:folder_detail");
 		CurrentView = "folder_detail";
 		MusicPlayer.Diagnostics.NavigationProbe.RecordViewModelStateUpdated();
 		IsDrawerOpen = false;
@@ -5707,39 +5706,6 @@ public partial class MainViewModel : ViewModelBase
 		if (!string.Equals(CurrentView, page, StringComparison.OrdinalIgnoreCase))
 		{
 			_viewHistory.Push(CurrentView);
-		}
-		switch (page)
-		{
-		case "favorites":
-			if (!IsInitializing && FavoriteTracks.Count == 0)
-			{
-				BeginTabLoad("view:favorites");
-			}
-			break;
-		case "recent":
-			if (!IsInitializing && RecentPlayTracks.Count == 0)
-			{
-				BeginTabLoad("view:recent");
-			}
-			break;
-		case "recent_add":
-			if (!IsInitializing && RecentAddTracks.Count == 0)
-			{
-				BeginTabLoad("view:recent_add");
-			}
-			break;
-		case "most_played":
-			if (!IsInitializing && MostPlayedTracks.Count == 0)
-			{
-				BeginTabLoad("view:most_played");
-			}
-			break;
-		case "folders":
-			if (Folders.Count == 0)
-			{
-				BeginTabLoad("tab:folders");
-			}
-			break;
 		}
 		CurrentView = page;
 		MusicPlayer.Diagnostics.NavigationProbe.RecordViewModelStateUpdated();
@@ -6630,6 +6596,7 @@ public async Task LoadLibraryAsync()
 		LogSortTrace("tracks", tracks, sortOrder, sortDescending);
 		await DispatchAsync(delegate
 		{
+			MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("songs");
 			Tracks.ReplaceAll(tracks);
 			if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("songs");
 			MarkLibrarySortApplied("songs");
@@ -6642,11 +6609,19 @@ public async Task LoadLibraryAsync()
 				HomeCards[4].Count = counts.RecentAddCount.ToString();
 				HomeCards[5].Count = counts.MostPlayedCount.ToString();
 			}
-		});
-		await _albumArt.WarmUpArtCacheAsync(tracks, _uiOps.Token);
-		await DispatchAsync(delegate
-		{
 			OnPropertyChanged("DisplayedTracks");
+			MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("songs");
+			if (MusicPlayer.Diagnostics.NavigationProbe.Enabled)
+				LogHelper.LogInfo($"[DISPLAYED-TRACKS-STEP] step=1-ReplaceAllAndDisplayedTracks count={tracks.Count}");
+		});
+
+		// Defer thumbnail preloading to background idle time to prevent GC and UI thread contention
+		StartTrackedBackgroundTask("WarmUpLibraryArt", async ct =>
+		{
+			await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
+				quietMs: 1500, minAgeMs: 2000, maxWaitMs: 60000, ct);
+			if (ct.IsCancellationRequested) return;
+			await _albumArt.WarmUpArtCacheAsync(tracks.Take(128), ct);
 		});
 	}
 	catch (Exception ex)
@@ -7515,11 +7490,14 @@ private async Task LoadArtistsAsync()
 			await DispatchAsync(delegate
 			{
 				if (token.IsCancellationRequested) return;
+				if (!string.Equals(CurrentView, "favorites", StringComparison.OrdinalIgnoreCase)) return;
+				var publishStart = Stopwatch.GetTimestamp();
 				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("favorites");
 				FavoriteTracks.ReplaceAll(tracks);
 				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("favorites");
 				MarkLibrarySortApplied("favorites");
 				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("favorites");
+				LogHelper.LogInfo($"[NAV-PUBLISH] favorites count={tracks.Count} publishMs={(Stopwatch.GetTimestamp() - publishStart) * 1000.0 / Stopwatch.Frequency:0.00}");
 			});
 		}
 		catch (OperationCanceledException) { }
@@ -7554,11 +7532,14 @@ private async Task LoadArtistsAsync()
 			await DispatchAsync(delegate
 			{
 				if (token.IsCancellationRequested) return;
+				if (!string.Equals(CurrentView, "recent", StringComparison.OrdinalIgnoreCase)) return;
+				var publishStart = Stopwatch.GetTimestamp();
 				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("recent");
 				RecentPlayTracks.ReplaceAll(tracks);
 				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("recent_play");
 				MarkLibrarySortApplied("recent_play");
 				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("recent");
+				LogHelper.LogInfo($"[NAV-PUBLISH] recent count={tracks.Count} publishMs={(Stopwatch.GetTimestamp() - publishStart) * 1000.0 / Stopwatch.Frequency:0.00}");
 			});
 		}
 		catch (OperationCanceledException) { }
@@ -7593,11 +7574,14 @@ private async Task LoadArtistsAsync()
 			await DispatchAsync(delegate
 			{
 				if (token.IsCancellationRequested) return;
+				if (!string.Equals(CurrentView, "recent_add", StringComparison.OrdinalIgnoreCase)) return;
+				var publishStart = Stopwatch.GetTimestamp();
 				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("recent_add");
 				RecentAddTracks.ReplaceAll(tracks);
 				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("recent_add");
 				MarkLibrarySortApplied("recent_add");
 				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("recent_add");
+				LogHelper.LogInfo($"[NAV-PUBLISH] recent_add count={tracks.Count} publishMs={(Stopwatch.GetTimestamp() - publishStart) * 1000.0 / Stopwatch.Frequency:0.00}");
 			});
 		}
 		catch (OperationCanceledException) { }
@@ -7632,11 +7616,14 @@ private async Task LoadArtistsAsync()
 			await DispatchAsync(delegate
 			{
 				if (token.IsCancellationRequested) return;
+				if (!string.Equals(CurrentView, "most_played", StringComparison.OrdinalIgnoreCase)) return;
+				var publishStart = Stopwatch.GetTimestamp();
 				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishStarted("most_played");
 				MostPlayedTracks.ReplaceAll(tracks);
 				if (LibrarySortVersion != sortVersion) ApplyLibrarySortForScope("most_played");
 				MarkLibrarySortApplied("most_played");
 				MusicPlayer.Diagnostics.NavigationProbe.RecordCollectionPublishCompleted("most_played");
+				LogHelper.LogInfo($"[NAV-PUBLISH] most_played count={tracks.Count} publishMs={(Stopwatch.GetTimestamp() - publishStart) * 1000.0 / Stopwatch.Frequency:0.00}");
 			});
 		}
 		catch (OperationCanceledException) { }

@@ -186,6 +186,7 @@ namespace MusicPlayer.Views
     public MainWindow()
     {
 InitializeComponent();
+   MusicPlayer.Diagnostics.ScrollProbe.Attach(this);
    SourceInitialized += OnWindowSourceInitialized;
    SmoothScrollHelper.Initialize();
    DataContextChanged += OnDataContextChanged;
@@ -344,8 +345,7 @@ InitializeComponent();
         }
         else if (e.PropertyName == nameof(MainViewModel.WallpaperAlpha))
         {
-            // Alpha only affects the glass tint; rebuild the glass cache now
-            // (synchronously on the UI thread) so it tracks without debounce.
+            _ = ApplyWallpaperAlphaToBackgroundAsync();
             if (Dispatcher.CheckAccess())
             {
                 RebuildGlassBackdropCache();
@@ -386,6 +386,7 @@ InitializeComponent();
     private bool _startupPresentationCompleted;
     private ImageSource? _glassWallpaperSource;
     private ImageSource? _glassCacheSource;
+    private ImageSource? _wallpaperDisplaySource;
     private BitmapSource? _glassBackdropCache;
     private ImageBrush? _headerGlassBrush;
     private ImageBrush? _sidebarGlassBrush;
@@ -395,6 +396,7 @@ InitializeComponent();
     private double _glassCacheDpiX;
     private double _glassCacheDpiY;
     private double _glassCacheAlpha = double.NaN;
+    private long _wallpaperAlphaApplyGeneration;
 
     private void MarkGlassBackdropDirty()
     {
@@ -436,7 +438,8 @@ InitializeComponent();
 
     private void SetWallpaperSources(ImageSource displaySource, ImageSource glassSource)
     {
-        BackgroundImage.Source = displaySource;
+        _wallpaperDisplaySource = displaySource;
+        _ = ApplyWallpaperAlphaToBackgroundAsync();
         if (!ReferenceEquals(_glassWallpaperSource, glassSource))
         {
             _glassWallpaperSource = glassSource;
@@ -472,6 +475,52 @@ InitializeComponent();
         }
 
 
+    }
+
+    private async Task ApplyWallpaperAlphaToBackgroundAsync()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            var operation = Dispatcher.InvokeAsync(ApplyWallpaperAlphaToBackgroundAsync);
+            await operation.Task.Unwrap();
+            return;
+        }
+
+        var source = _wallpaperDisplaySource;
+        if (source == null) return;
+
+        long generation = ++_wallpaperAlphaApplyGeneration;
+        double alpha = ViewModel?.WallpaperAlphaOpacity ?? 0;
+        if (alpha <= 0)
+        {
+            BackgroundImage.Source = source;
+            return;
+        }
+
+        if (source is not BitmapSource bitmap)
+        {
+            LogHelper.LogError(
+                "[Wallpaper] alpha composition requires a bitmap source",
+                new InvalidOperationException($"Unsupported wallpaper source type: {source.GetType().FullName}"));
+            return;
+        }
+
+        try
+        {
+            var composited = await Task.Run(() => WallpaperAlphaCompositor.Apply(bitmap, alpha));
+            if (generation != _wallpaperAlphaApplyGeneration ||
+                !ReferenceEquals(source, _wallpaperDisplaySource) ||
+                Math.Abs(alpha - (ViewModel?.WallpaperAlphaOpacity ?? 0)) > 0.000001)
+            {
+                return;
+            }
+
+            BackgroundImage.Source = composited;
+        }
+        catch (Exception ex)
+        {
+            LogHelper.LogError("[Wallpaper] failed to apply wallpaper alpha", ex);
+        }
     }
 
     private void RebuildGlassBackdropCache()
@@ -1715,6 +1764,17 @@ InitializeComponent();
                         catch (Exception ex) { LogHelper.LogError("NAV-CAMPAIGN", ex); }
                     };
                     navTimer.Start();
+                }
+                else if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_ALLSONGS") == "1")
+                {
+                    var allSongsTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                    allSongsTimer.Tick += async (_, _) =>
+                    {
+                        allSongsTimer.Stop();
+                        try { await RunAllSongsCampaignAsync(); }
+                        catch (Exception ex) { LogHelper.LogError("ALLSONGS-CAMPAIGN", ex); }
+                    };
+                    allSongsTimer.Start();
                 }
 
                 var probeTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
@@ -6494,8 +6554,8 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             if (cv != "artist_detail") _artistDetailEnteredViaHero = false;
             if (cv != "album_detail") _albumDetailEnteredViaHero = false;
 
-            EnsureDetailPageOpacity();
             var enteredView = ViewModel?.CurrentView;
+            long pageEnterPrepStart = Stopwatch.GetTimestamp();
             if (!_heroTransitionPending && !_isBackTransitioning)
             {
                 if (enteredView == "songs")
@@ -6503,7 +6563,10 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
                 else
                     RunPageZoomChoreography();
             }
+            EnsureDetailPageOpacity();
             MusicPlayer.Diagnostics.NavigationProbe.ScheduleLayoutAndCompletion(Dispatcher);
+            if (MusicPlayer.Diagnostics.NavigationProbe.Enabled)
+                LogHelper.LogInfo($"PAGE-ENTER-PREP ms={(Stopwatch.GetTimestamp() - pageEnterPrepStart) * 1000.0 / Stopwatch.Frequency:0.00} view={enteredView}");
             if (!_heroTransitionPending)
             {
                 Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
@@ -6513,6 +6576,18 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
                     t.Tick += (_, _) => { t.Stop(); DumpNavState("settled-p800"); };
                     t.Start();
                 }));
+            }
+        }
+        else if (e.PropertyName == "DisplayedTracks")
+        {
+            if (MusicPlayer.Diagnostics.NavigationProbe.Enabled)
+            {
+                var ctrl = FindTracksItemsControl(IsSongsGridView ? "grid" : "list");
+                int gen = ctrl != null ? CountGeneratedContainers(ctrl) : 0;
+                int pnl = ctrl != null ? GetItemsPanelChildCount(ctrl) : 0;
+                string status = ctrl?.ItemContainerGenerator.Status.ToString() ?? "none";
+                int hash = ctrl?.ItemsSource?.GetHashCode() ?? 0;
+                LogHelper.LogInfo($"[DISPLAYED-TRACKS-INVESTIGATION] itemsSourceHash={hash} genContainers={gen} panelChildren={pnl} generatorStatus={status} isGrid={IsSongsGridView}");
             }
         }
         else if (e.PropertyName == nameof(MainViewModel.ShowOverflowMenu))
@@ -6996,6 +7071,103 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         Dispatcher.BeginInvoke(new Action(() => Application.Current.Shutdown()));
     }
 
+    private async System.Threading.Tasks.Task RunAllSongsCampaignAsync()
+    {
+        LogHelper.LogInfo("[ALLSONGS-CAMPAIGN] Starting automated All Songs campaign...");
+        var initDeadline = DateTime.UtcNow.AddSeconds(25);
+        while ((ViewModel?.IsInitializing == true || (ViewModel?.Tracks.Count ?? 0) == 0) && DateTime.UtcNow < initDeadline)
+        {
+            await System.Threading.Tasks.Task.Delay(200);
+        }
+        await System.Threading.Tasks.Task.Delay(1000);
+
+        string winSizeStr = Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_WINDOW_SIZE") ?? "medium";
+        if (winSizeStr.Equals("small", StringComparison.OrdinalIgnoreCase))
+        {
+            WindowState = WindowState.Normal;
+            Width = 1116;
+            Height = 650;
+        }
+        else if (winSizeStr.Equals("maximized", StringComparison.OrdinalIgnoreCase))
+        {
+            WindowState = WindowState.Maximized;
+        }
+        else
+        {
+            WindowState = WindowState.Normal;
+            Width = 1280;
+            Height = 720;
+        }
+
+        string mode = Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_ALLSONGS_MODE") ?? "list";
+        IsSongsGridView = mode.Equals("grid", StringComparison.OrdinalIgnoreCase);
+
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(1000);
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        LogHelper.LogInfo($"[ALLSONGS-SETUP] windowMode={winSizeStr} actualSize={ActualWidth:0.0}x{ActualHeight:0.0} state={WindowState} clientRect={RootBorder.ActualWidth:0.0}x{RootBorder.ActualHeight:0.0} dpi={dpi.DpiScaleX:0.00} viewMode={mode}");
+
+        // Scenario 1: Cold Entry (Home -> Songs)
+        LogHelper.LogInfo($"[ALLSONGS-CAMPAIGN] Scenario 1: Cold Entry -> songs ({mode})");
+        MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", "songs", "Enter");
+        ViewModel?.NavigateCommand.Execute("songs");
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(1200);
+
+        var itemsCtrl = FindTracksItemsControl(mode);
+        int genCount = itemsCtrl != null ? CountGeneratedContainers(itemsCtrl) : 0;
+        int pnlCount = itemsCtrl != null ? GetItemsPanelChildCount(itemsCtrl) : 0;
+        double vpW = (itemsCtrl as ListBox)?.ActualWidth ?? SongsGridScroller.ViewportWidth;
+        double vpH = (itemsCtrl as ListBox)?.ActualHeight ?? SongsGridScroller.ViewportHeight;
+        LogHelper.LogInfo($"[ALLSONGS-SNAPSHOT] phase=cold mode={mode} source={itemsCtrl?.Items.Count ?? 0} generated={genCount} panelChildren={pnlCount} vpWidth={vpW:0.0} vpHeight={vpH:0.0}");
+
+        // Return to home
+        MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("songs", "home", "Back");
+        ViewModel?.GoBackCommand.Execute(null);
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(600);
+
+        // Scenario 2: Warm Entry (5 iterations)
+        LogHelper.LogInfo($"[ALLSONGS-CAMPAIGN] Scenario 2: Warm Entry -> songs ({mode})");
+        for (int i = 0; i < 5; i++)
+        {
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", "songs", "Enter");
+            ViewModel?.NavigateCommand.Execute("songs");
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(600);
+
+            var ctrl = FindTracksItemsControl(mode);
+            int gen = ctrl != null ? CountGeneratedContainers(ctrl) : 0;
+            int pnl = ctrl != null ? GetItemsPanelChildCount(ctrl) : 0;
+            LogHelper.LogInfo($"[ALLSONGS-SNAPSHOT] phase=warm iter={i + 1} mode={mode} generated={gen} panelChildren={pnl}");
+
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("songs", "home", "Back");
+            ViewModel?.GoBackCommand.Execute(null);
+            await WaitForDispatcherIdleAsync();
+            await System.Threading.Tasks.Task.Delay(600);
+        }
+
+        // Scenario 3: Rapid Switch (5 transitions)
+        LogHelper.LogInfo($"[ALLSONGS-CAMPAIGN] Scenario 3: Rapid Switch (5 transitions) ({mode})");
+        for (int i = 0; i < 5; i++)
+        {
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("home", "songs", "Enter");
+            ViewModel?.NavigateCommand.Execute("songs");
+            await System.Threading.Tasks.Task.Delay(80);
+
+            MusicPlayer.Diagnostics.NavigationProbe.BeginNavigation("songs", "home", "Back");
+            ViewModel?.GoBackCommand.Execute(null);
+            await System.Threading.Tasks.Task.Delay(80);
+        }
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(1000);
+
+        LogHelper.LogInfo("[ALLSONGS-CAMPAIGN] complete");
+        LogHelper.Flush();
+        Dispatcher.BeginInvoke(new Action(() => Application.Current.Shutdown()));
+    }
+
     private void RunPendingNavigation()
     {
         var nav = _pendingNavAction;
@@ -7139,14 +7311,25 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             if (fe != ArtistDetailView && fe != AlbumDetailView) continue;
             fe.BeginAnimation(OpacityProperty, null);
             fe.Opacity = 1;
-            var imgs = new List<Image>();
-            CollectImages(fe, imgs);
-            foreach (var img in imgs)
-            {
-                img.BeginAnimation(OpacityProperty, null);
-                img.Opacity = 1;
-            }
         }
+        // Defer the recursive image-opacity reset so it cannot block the
+        // Page Enter Animation's first frames. Visual correctness is preserved
+        // because ContentGrid opacity animation still runs synchronously.
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () =>
+        {
+            foreach (var child in ContentGrid.Children)
+            {
+                if (child is not FrameworkElement fe) continue;
+                if (fe != ArtistDetailView && fe != AlbumDetailView) continue;
+                var imgs = new List<Image>();
+                CollectImages(fe, imgs);
+                foreach (var img in imgs)
+                {
+                    img.BeginAnimation(OpacityProperty, null);
+                    img.Opacity = 1;
+                }
+            }
+        });
         // CacheMode was removed from AnimatePageEnter; guard left for safety only.
         if (ContentGrid != null && ContentGrid.CacheMode != null)
             ContentGrid.CacheMode = null;
@@ -7181,29 +7364,53 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
     // Full zoom + fade entrance â€” camera pulls out (1.05 -> 1.0) with smooth fade-in (0.55 -> 1.0).
     // Zero BitmapCache backing ensures GPU never stalls on Intel HD Graphics.
+    private long _pageEnterAnimStart;
+    private int _pageEnterFrameCount;
+    private EventHandler? _pageEnterRenderingHandler;
+
     private void AnimatePageEnterZoom()
     {
         if (ContentGrid == null) return;
-        var st   = EnsureZoomTransform();
         var dur  = MotionTokens.PageEnter;
         var ease = MotionTokens.EaseOut;
 
-        ContentGrid.ClipToBounds = true;
-        st.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-        st.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-        st.ScaleX = 1.05;
-        st.ScaleY = 1.05;
-        ContentGrid.BeginAnimation(OpacityProperty, null);
-        ContentGrid.Opacity = 0.55;
+        if (MusicPlayer.Diagnostics.NavigationProbe.Enabled)
+        {
+            _pageEnterAnimStart = Stopwatch.GetTimestamp();
+            _pageEnterFrameCount = 0;
+            _pageEnterRenderingHandler = (_, _) => _pageEnterFrameCount++;
+            System.Windows.Media.CompositionTarget.Rendering += _pageEnterRenderingHandler;
+        }
 
-        st.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.05, 1.0, dur) { EasingFunction = ease });
-        st.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.05, 1.0, dur) { EasingFunction = ease });
-        var fade = new DoubleAnimation(0.55, 1.0, dur) { EasingFunction = ease };
+        // Reset scale transform if present so GPU avoids rasterization/resizing stalls
+        if (ContentGrid.RenderTransform is ScaleTransform st && (st.ScaleX != 1.0 || st.ScaleY != 1.0))
+        {
+            st.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            st.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            st.ScaleX = 1.0;
+            st.ScaleY = 1.0;
+        }
+
+        ContentGrid.BeginAnimation(OpacityProperty, null);
+        ContentGrid.Opacity = 0.85;
+
+        var fade = new DoubleAnimation(0.85, 1.0, dur) { EasingFunction = ease };
         long gen = _navGen;
         fade.Completed += (_, _) =>
         {
+            if (_pageEnterRenderingHandler != null)
+            {
+                System.Windows.Media.CompositionTarget.Rendering -= _pageEnterRenderingHandler;
+                _pageEnterRenderingHandler = null;
+            }
+            if (MusicPlayer.Diagnostics.NavigationProbe.Enabled)
+            {
+                double ms = (Stopwatch.GetTimestamp() - _pageEnterAnimStart) * 1000.0 / Stopwatch.Frequency;
+                int expected = (int)Math.Ceiling(MotionTokens.PageEnter.TotalMilliseconds / 16.67);
+                LogHelper.LogInfo($"PAGE-ENTER-ANIM animMs={ms:0.00} renderCallbacks={_pageEnterFrameCount} expectedFrames~={expected} droppedEst={Math.Max(0, expected - _pageEnterFrameCount)} (render callbacks are not proof of on-screen frames)");
+            }
             if (!NavGate.IsCurrent(gen)) return;
-            ContentGrid.ClipToBounds = false;
+            ContentGrid.Opacity = 1.0;
         };
         ContentGrid.BeginAnimation(OpacityProperty, fade);
     }

@@ -45,9 +45,17 @@ public static class Program
         "Ember", "Frequency", "Horizon", "Tide"
     ];
 
-    private static readonly string[] Genres =
+    private static readonly string[] GenreRoots =
     [
-        "Electronic", "Indie", "Hip-Hop", "Rock", "Ambient", "Jazz", "Pop", "Folk", "Soul", "Techno"
+        "Electronic", "Indie", "Hip-Hop", "Rock", "Ambient", "Jazz", "Pop", "Folk", "Soul", "Techno",
+        "Classical", "Metal", "Reggae", "Blues", "Country", "Funk", "Disco", "House", "Trance", "Drum & Bass",
+        "Trip-Hop", "Shoegaze", "Post-Rock", "Synthwave", "Lo-Fi", "Gospel", "Opera", "Ska", "Punk", "Grunge"
+    ];
+
+    private static readonly string[] GenreQualifiers =
+    [
+        "", " Revival", " Fusion", " Experimental", " Alternative", " Modern", " Classic", " Underground",
+        " Instrumental", " Live", " Acoustic", " Electric"
     ];
 
     public static int Main(string[] args)
@@ -70,6 +78,7 @@ public static class Program
         int artistCount = int.TryParse(GetOption(args, "--artists"), out int artists) ? artists : 0;
         bool withArt = !HasFlag(args, "--no-art");
         int extraFolders = int.TryParse(GetOption(args, "--extra-folders"), out int folders) ? folders : 0;
+        int genreCount = int.TryParse(GetOption(args, "--genres"), out int genres) ? genres : 10;
 
         if (artistCount <= 0)
             artistCount = Math.Max(1, tracks / 8);
@@ -78,6 +87,9 @@ public static class Program
         string libraryDir = Path.Combine(outputDir, "library");
         string artistImagesDir = Path.Combine(dataDir, "ArtistImages");
         string albumArtDir = Path.Combine(dataDir, "FixtureAlbumArt");
+
+        if (HasFlag(args, "--count"))
+            return PrintCounts(dataDir);
 
         Directory.CreateDirectory(dataDir);
         Directory.CreateDirectory(libraryDir);
@@ -89,6 +101,7 @@ public static class Program
 
         var sw = Stopwatch.StartNew();
         var artistNames = BuildArtistNames(artistCount);
+        var genreNames = BuildGenreNames(genreCount);
         var albumArtPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         var trackRows = new List<FixtureTrack>(trackCount);
@@ -98,7 +111,7 @@ public static class Program
             int albumsForArtist = Math.Max(1, (int)Math.Ceiling(trackCount / (double)artistNames.Count) / 3);
             string album = $"{artist} — {AlbumWords[(i / albumsForArtist) % AlbumWords.Length]} {i / albumsForArtist + 1}";
             string title = $"Track {i + 1:00000}";
-            string genre = Genres[i % Genres.Length];
+            string genre = genreNames[i % genreNames.Count];
 
             string albumDir = Path.Combine(libraryDir, Sanitize(artist), Sanitize(album));
             Directory.CreateDirectory(albumDir);
@@ -166,12 +179,16 @@ public static class Program
             });
 
             // Extra managed folders make the folder list big enough to sort.
+            // The directories are created so the scanner treats them as real roots
+            // and never removes the rows; they contain no tracks by design.
             for (int i = 0; i < extraFolders; i++)
             {
+                string extraPath = Path.Combine(libraryDir, $"Extra {i + 1:000}");
+                Directory.CreateDirectory(extraPath);
                 db.Insert(new FixtureManagedFolder
                 {
-                    Path = Path.Combine(libraryDir, $"Extra {i + 1}"),
-                    Name = $"Extra Library {i + 1}",
+                    Path = extraPath,
+                    Name = $"Extra Library {i + 1:000}",
                     Enabled = true,
                     AddedDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                 });
@@ -196,6 +213,8 @@ public static class Program
         Console.WriteLine($"  tracks     : {trackRows.Count}");
         Console.WriteLine($"  artists    : {artistNames.Count}");
         Console.WriteLine($"  albums     : {albumArtPaths.Count}");
+        Console.WriteLine($"  genres     : {genreNames.Count}");
+        Console.WriteLine($"  folders    : {1 + extraFolders}");
         Console.WriteLine($"  artist imgs: {Directory.GetFiles(artistImagesDir).Length}");
         Console.WriteLine($"  db         : {dbPath}");
         Console.WriteLine();
@@ -222,6 +241,61 @@ public static class Program
         }
 
         return names;
+    }
+
+    private static List<string> BuildGenreNames(int count)
+    {
+        if (count <= 0) count = 1;
+        var names = new List<string>(count);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Roots first (so a small request stays natural), then root+qualifier combinations.
+        foreach (string root in GenreRoots)
+        {
+            if (names.Count >= count) break;
+            if (seen.Add(root)) names.Add(root);
+        }
+        foreach (string root in GenreRoots)
+        {
+            foreach (string qualifier in GenreQualifiers)
+            {
+                if (names.Count >= count) break;
+                string name = root + qualifier;
+                if (seen.Add(name)) names.Add(name);
+            }
+            if (names.Count >= count) break;
+        }
+        while (names.Count < count)
+        {
+            string name = $"Genre {names.Count + 1:000}";
+            if (seen.Add(name)) names.Add(name);
+        }
+        return names;
+    }
+
+    /// <summary>Prints the real row counts the app will see, without the UI.</summary>
+    private static int PrintCounts(string dataDir)
+    {
+        string dbPath = Path.Combine(dataDir, "music.db");
+        if (!File.Exists(dbPath))
+        {
+            Console.Error.WriteLine($"database not found: {dbPath}");
+            return 2;
+        }
+
+        SQLitePCL.Batteries_V2.Init();
+        using var db = new SQLiteConnection(dbPath, SQLiteOpenFlags.ReadOnly);
+        int tracks = db.ExecuteScalar<int>("SELECT COUNT(*) FROM tracks");
+        int artists = db.ExecuteScalar<int>("SELECT COUNT(DISTINCT Artist) FROM tracks WHERE Artist IS NOT NULL AND TRIM(Artist) <> ''");
+        int albums = db.ExecuteScalar<int>("SELECT COUNT(DISTINCT Album) FROM tracks WHERE Album IS NOT NULL AND TRIM(Album) <> ''");
+        int genres = db.ExecuteScalar<int>("SELECT COUNT(DISTINCT Genre) FROM tracks WHERE Genre IS NOT NULL AND TRIM(Genre) <> ''");
+        int folders = db.ExecuteScalar<int>("SELECT COUNT(*) FROM managed_folders WHERE Enabled = 1");
+        Console.WriteLine($"tracks={tracks}");
+        Console.WriteLine($"artists={artists}");
+        Console.WriteLine($"albums={albums}");
+        Console.WriteLine($"genres={genres}");
+        Console.WriteLine($"folders={folders}");
+        Console.WriteLine($"db={dbPath}");
+        return 0;
     }
 
     private static string Sanitize(string value)
