@@ -21,7 +21,7 @@
   <Border Name="RootBorder" Background="Transparent" ClipToBounds="True" Margin="{Binding Padding, RelativeSource={RelativeSource AncestorType=Window}}" Loaded="RootBorder_Loaded" SizeChanged="RootBorder_SizeChanged">
     <Grid>
       <Image Name="BackgroundImage" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" />
-      <Border IsHitTestVisible="False">
+      <Border x:Name="BackgroundGradientOverlay" IsHitTestVisible="False">
         <Border.Background>
           <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="#4D15181F" Offset="0" />
@@ -53,7 +53,6 @@
                 <DataTrigger Binding="{Binding CurrentView}" Value="home">
                   <Setter Property="Visibility" Value="Collapsed" />
                 </DataTrigger>
-                <!-- ShowFullPlayer trigger removed: TopBar visibility is now animated in sync with FullPlayer in code-behind -->
               </Style.Triggers>
             </Style>
           </Border.Style>
@@ -92,7 +91,6 @@
                 <DataTrigger Binding="{Binding CurrentView}" Value="home">
                   <Setter Property="Visibility" Value="Collapsed" />
                 </DataTrigger>
-                <!-- ShowFullPlayer trigger removed: TopBar visibility is now animated in sync with FullPlayer in code-behind -->
               </Style.Triggers>
             </Style>
           </Grid.Style>
@@ -4416,7 +4414,7 @@
              and re-invalidates the bar's render surface either way. The bar was
              therefore restored to the original structure - see the report for the
              measurements. -->
-        <Border Grid.Row="2" Grid.ColumnSpan="2" Margin="8,0,8,8" CornerRadius="18" ClipToBounds="True" Background="#3810131B" BorderBrush="#30FFFFFF" BorderThickness="1" SnapsToDevicePixels="True">
+        <Border x:Name="MiniPlayerBorder" Grid.Row="2" Grid.ColumnSpan="2" Margin="8,0,8,8" CornerRadius="18" ClipToBounds="True" Background="#3810131B" BorderBrush="#30FFFFFF" BorderThickness="1" SnapsToDevicePixels="True">
           <Border.Clip>
             <MultiBinding Converter="{StaticResource RoundedClipConverter}" ConverterParameter="18">
               <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" />

@@ -6599,10 +6599,33 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             AnimateOverlay(RenamePlaylistOverlay, RenamePlaylistPanel, ViewModel?.ShowRenamePlaylistOverlay ?? false);
     }
 
+    private static readonly System.Windows.Media.BitmapCache _fpBitmapCache = new();
+    private static readonly System.Windows.Media.BitmapCache _fpTransitionCache = new() { RenderAtScale = 1.0, SnapsToDevicePixels = true };
     private bool _fullPlayerTransitionInProgress;
     private long _fullPlayerTransitionVersion;
     private long _pageTransitionVersion;
 
+    private void EnableTransitionBitmapCaching()
+    {
+        if (BackgroundImage != null) BackgroundImage.CacheMode = _fpTransitionCache;
+        if (BackgroundGradientOverlay != null) BackgroundGradientOverlay.CacheMode = _fpTransitionCache;
+        if (HeaderGlassLayer != null) HeaderGlassLayer.CacheMode = _fpTransitionCache;
+        if (SidebarBorder != null) SidebarBorder.CacheMode = _fpTransitionCache;
+        if (ContentGrid != null && ContentGrid.Visibility == Visibility.Visible) ContentGrid.CacheMode = _fpTransitionCache;
+        if (MiniPlayerBorder != null) MiniPlayerBorder.CacheMode = _fpTransitionCache;
+        if (FullPlayerGrid != null) FullPlayerGrid.CacheMode = _fpBitmapCache;
+    }
+
+    private void DisableTransitionBitmapCaching()
+    {
+        if (BackgroundImage != null) BackgroundImage.CacheMode = null;
+        if (BackgroundGradientOverlay != null) BackgroundGradientOverlay.CacheMode = null;
+        if (HeaderGlassLayer != null) HeaderGlassLayer.CacheMode = null;
+        if (SidebarBorder != null) SidebarBorder.CacheMode = null;
+        if (ContentGrid != null) ContentGrid.CacheMode = null;
+        if (MiniPlayerBorder != null) MiniPlayerBorder.CacheMode = null;
+        if (FullPlayerGrid != null) FullPlayerGrid.CacheMode = null;
+    }
 
     private AudioVisualizerControl? GetFpVisualizer() =>
         VisualizerPageGrid == null ? null : FindVisualizerControl(VisualizerPageGrid);
@@ -6628,6 +6651,10 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         FullPlayerGrid.BeginAnimation(OpacityProperty, null);
         FullPlayerGrid.Opacity = 1;
 
+        // Ensure occluded layers are visible and cached into GPU textures during slide
+        ShowOccludedBackgroundLayers();
+        EnableTransitionBitmapCaching();
+
         FullPlayerGrid.Visibility = Visibility.Visible;
         FullPlayerGrid.IsHitTestVisible = false;
 
@@ -6645,6 +6672,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             if (transitionVersion != _fullPlayerTransitionVersion) return;
             tt.BeginAnimation(TranslateTransform.YProperty, null);
             tt.Y = 0;
+            DisableTransitionBitmapCaching();
             FullPlayerGrid.IsHitTestVisible = true;
             _fullPlayerTransitionInProgress = false;
             StartFpTitleMarquee();
@@ -6693,7 +6721,6 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         StopFpTitleMarquee();
         _fullPlayerTransitionInProgress = true;
         FullPlayerGrid.IsHitTestVisible = false;
-        ShowOccludedBackgroundLayers();
 
         bool slide = !_closeFullPlayerFadeOnly;
         _closeFullPlayerFadeOnly = false;
@@ -6715,6 +6742,8 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         {
             _fullPlayerTransitionInProgress = false;
             FullPlayerGrid.Visibility = Visibility.Hidden;
+            DisableTransitionBitmapCaching();
+            ShowOccludedBackgroundLayers();
             Dispatcher.BeginInvoke(
                 System.Windows.Threading.DispatcherPriority.Background,
                 new Action(StartMiniTitleMarquee));
@@ -6722,8 +6751,11 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             return;
         }
 
-        var dur = TimeSpan.FromMilliseconds(260);
-        var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
+        ShowOccludedBackgroundLayers();
+        EnableTransitionBitmapCaching();
+
+        var dur = TimeSpan.FromMilliseconds(slide ? 280 : 220);
+        var ease = new CubicEase { EasingMode = slide ? EasingMode.EaseIn : EasingMode.EaseInOut };
 
         ResetTopBarTransitionState();
 
@@ -6734,6 +6766,8 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         {
             if (transitionVersion != _fullPlayerTransitionVersion) return;
             _fullPlayerTransitionInProgress = false;
+            DisableTransitionBitmapCaching();
+            ShowOccludedBackgroundLayers();
             FullPlayerGrid.BeginAnimation(OpacityProperty, null);
             FullPlayerGrid.Visibility = Visibility.Hidden;
             // Now that the grid is Hidden, reset pages to default state.
@@ -6771,77 +6805,34 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     }
 
     // ── Background Occlusion Helpers ──
-    // When FullPlayer is fully resting at Y=0, it covers the entire window with an
-    // opaque background (#FF0D121A). WPF does NOT perform occlusion culling — it
-    // composites every visible layer regardless of overlap. On Intel HD 4400, the
-    // 4K wallpaper + glass blur surfaces + gradient overlays + sidebar + content
-    // grid consume the entire fill-rate budget. Hiding them while they are covered
-    // gives the page-slide and lyrics-scroll animations a clean 60Hz budget.
-    private bool _backgroundLayersHidden;
-
+    // When FullPlayer is fully open (Y=0, covering 100% of the window), the background
+    // layers (Wallpaper, TopBar, Sidebar, ContentGrid, MiniPlayer) are hidden so that
+    // GPU fill-rate on low-spec Intel HD Graphics 4400 is not wasted rendering occluded
+    // content during FullPlayer page switches (AlbumArt <-> Lyrics <-> Visualizer).
+    // Before FullPlayer begins sliding down to exit (or entering), the layers are made
+    // visible and cached into GPU textures for a 60 FPS fluid transition.
     private void HideOccludedBackgroundLayers()
     {
-        if (_backgroundLayersHidden) return;
-        _backgroundLayersHidden = true;
-
-        if (BackgroundImage != null)
-            BackgroundImage.Visibility = Visibility.Hidden;
-
-        if (RootBorder?.Child is Grid rootGrid && rootGrid.Children.Count > 1
-            && rootGrid.Children[1] is Border gradientOverlay)
-        {
-            gradientOverlay.Visibility = Visibility.Hidden;
-        }
-
-        if (ContentGrid != null)
-            ContentGrid.Visibility = Visibility.Hidden;
-
-        if (SidebarBorder != null)
-            SidebarBorder.Visibility = Visibility.Hidden;
-        if (SidebarBrandGlass != null)
-            SidebarBrandGlass.Visibility = Visibility.Hidden;
-
-        // Use Hidden (not Collapsed) so the DataTrigger local value is overridden
-        // but can be restored correctly via ClearValue in ShowOccludedBackgroundLayers.
-        // We set the local value directly which takes precedence over Style DataTriggers.
-        if (HeaderGlassLayer != null)
-            HeaderGlassLayer.Visibility = Visibility.Hidden;
-        if (TopBarControls != null)
-            TopBarControls.Visibility = Visibility.Hidden;
-
-        StopMiniTitleMarquee();
+        if (BackgroundImage != null) BackgroundImage.Visibility = Visibility.Hidden;
+        if (BackgroundGradientOverlay != null) BackgroundGradientOverlay.Visibility = Visibility.Hidden;
+        if (ContentGrid != null) ContentGrid.Visibility = Visibility.Hidden;
+        if (HeaderGlassLayer != null) HeaderGlassLayer.Visibility = Visibility.Hidden;
+        if (TopBarControls != null) TopBarControls.Visibility = Visibility.Hidden;
+        if (SidebarBorder != null) SidebarBorder.Visibility = Visibility.Hidden;
+        if (MiniPlayerBorder != null) MiniPlayerBorder.Visibility = Visibility.Hidden;
     }
 
     private void ShowOccludedBackgroundLayers()
     {
-        if (!_backgroundLayersHidden) return;
-        _backgroundLayersHidden = false;
-
-        if (BackgroundImage != null)
-            BackgroundImage.Visibility = Visibility.Visible;
-
-        if (RootBorder?.Child is Grid rootGrid && rootGrid.Children.Count > 1
-            && rootGrid.Children[1] is Border gradientOverlay)
-        {
-            gradientOverlay.Visibility = Visibility.Visible;
-        }
-
-        if (ContentGrid != null && ViewModel != null)
-            ContentGrid.Visibility = Visibility.Visible;
-
-        if (SidebarBorder != null)
-            SidebarBorder.Visibility = Visibility.Visible;
-        if (SidebarBrandGlass != null)
-            SidebarBrandGlass.Visibility = Visibility.Visible;
-
-        // ⚠️ CRITICAL FIX: HeaderGlassLayer and TopBarControls both have XAML DataTriggers
-        // that set Visibility=Collapsed when CurrentView=="home". Setting Visibility=Visible
-        // here overrides those triggers and breaks the home page (shows top bar unexpectedly).
-        // The correct fix: use ClearValue to remove our code-behind override and let the
-        // DataTrigger re-evaluate naturally. If the view is "home", the trigger re-collapses it;
-        // if any other view, it stays visible — which is exactly what we want.
+        if (BackgroundImage != null) BackgroundImage.Visibility = Visibility.Visible;
+        if (BackgroundGradientOverlay != null) BackgroundGradientOverlay.Visibility = Visibility.Visible;
+        if (ContentGrid != null) ContentGrid.Visibility = Visibility.Visible;
         HeaderGlassLayer?.ClearValue(VisibilityProperty);
         TopBarControls?.ClearValue(VisibilityProperty);
+        SidebarBorder?.ClearValue(VisibilityProperty);
+        MiniPlayerBorder?.ClearValue(VisibilityProperty);
+        if (RootBorder != null && RootBorder.Background != System.Windows.Media.Brushes.Transparent)
+            RootBorder.Background = System.Windows.Media.Brushes.Transparent;
     }
 
     private void RunFullPlayerTransitionProbe()
@@ -7644,8 +7635,8 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             outgoingGrid.Visibility = Visibility.Visible;
             incomingGrid.Visibility = Visibility.Visible;
 
-            outgoingGrid.CacheMode = null;
-            incomingGrid.CacheMode = null;
+            if (outgoingGrid != VisualizerPageGrid) outgoingGrid.CacheMode = _fpTransitionCache;
+            if (incomingGrid != VisualizerPageGrid) incomingGrid.CacheMode = _fpTransitionCache;
 
             outgoingGrid.IsHitTestVisible = false;
             incomingGrid.IsHitTestVisible = true;
