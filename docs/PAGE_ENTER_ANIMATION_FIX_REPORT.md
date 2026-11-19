@@ -49,3 +49,44 @@
 - Publish (`ReplaceAll`) still runs on UI thread at normal priority via `DispatchAsync`; only guarded, not deferred to after animation. Need runtime measurement (`publishMs`) to decide if deferral to post-animation is required.
 - No A/B with PageZoom disabled yet.
 - Dropped-frame estimate based on render callbacks; not proof of on-screen presentation.<|end|><|start|>write to=assistant<|channel|>analysis<|message|>Created file successfully: docs/PAGE_ENTER_ANIMATION_FIX_REPORT.md
+
+## 5. إعادة التحقق على نسخة Release الحالية — 2026-11-18
+
+### هوية النسخة
+
+تم تشغيل الملف الموجود في:
+`src/MusicPlayer/bin/Release/net8.0-windows10.0.19041.0/win-x64/`
+
+| الملف | SHA-256 | وقت تعديل الملف (UTC) |
+|---|---|---|
+| `MusicPlayer.exe` | `F391E329A469D23DF59D939B5A0A5F6BDA2967E8F9AAC1A21EEEFB90543FF766` | 2026-11-18 17:07:11 |
+| `MusicPlayer.dll` | `BCC6FCA323A5C64699B05856574F74324C24C9724A4C58C97BD02A5449F2816E` | 2026-11-18 17:07:11 |
+
+### مراجعة مسارات النشر الحالية
+
+- `Navigate` يغيّر `CurrentView` أولًا؛ يعالج `MainWindow` هذا التغيير ويبدأ حركة الدخول المتزامنة، ثم يبدأ تحميل الصفحة. مدة `MotionTokens.PageEnter` هي 280ms.
+- المجموعات المخصصة لـFavorites وRecent وRecent Add وMost Played تُجهّز وتُرتّب خارج UI thread، ثم تنشر عبر `DispatchAsync` بنداء `ReplaceAll` واحد. حارس Cancellation Token وحارس `CurrentView` موجودان داخل callback. لذلك نتيجة تحميل صفحة سابقة من هذه المسارات لا تُنشر بعد إلغاء تنقلها.
+- Folder Details يجلب البيانات في `Task.Run` ثم ينفذ `ReplaceAll` واحدًا على UI thread بعد فحص الـtoken. `GoBack` يبدأ token تنقل جديدًا ويلغي العمل السابق.
+- `ReplaceAll` يصدر Reset دائمًا، حتى إن كانت القائمة فارغة أو مساوية للقائمة الحالية. هذا يثبت حدوث إشعار CollectionChanged، لكنه لا يقيس زمن Layout الناتج عنه.
+- مسارات Albums وArtists وGenres تستخدم مسارات نشر أخرى؛ بعضها لا يستقبل navigation token. لا يوجد دليل في هذه الجولة على أن تحديث المجموعة المخفية منها يسبب تقطعًا، لذلك لم أغيرها.
+
+### نتيجة التشغيل والقياس
+
+| المشاهدة | النافذة | عدد العناصر | مدة callback الذي ينفذ النشر |
+|---|---|---:|---:|
+| دخول Favorites | Maximized، حدود النافذة 1382×754 | 7 | 0.84ms |
+| دخول Favorites | عادية، حدود النافذة 1116×650 | 7 | 0.90ms |
+
+سُجل `ContentGrid.Opacity=0.85` في `arrived-favorites` ثم `Opacity=1.00` في `settled-p800`. وسُجل نشر Favorites في الثانية نفسها التي سُجل فيها الوصول إلى الصفحة؛ هذا يتفق مع وقوع النشر أثناء نافذة الحركة، لكنه لا يحدد التوقيت بدقة كافية لإثبات التداخل مع إطاراتها. كما أن `publishMs` يقيس جسم callback فقط ولا يشمل Layout/Measure/Arrange اللاحق.
+
+النسخة المعروضة للمكتبة أظهرت 201 مسارًا و7 Favorites وبطاقة واحدة للمجلدات. لم تُفعّل `MUSICPLAYER_PERFTEST`، لذلك لم تتوفر أزمنة `PAGE-ENTER-PREP` أو ملخصات `NAV-SUMMARY` في هذه الجولة. لا تُعامل callbacks على أنها إطارات معروضة.
+
+### الاختبار البصري وما لم يكتمل
+
+- أمكن التحقق من شجرة عناصر الواجهة وحمولة Favorites في النافذتين، لكن أداة Computer Use فشلت في التقاط صورة للنافذة؛ لذلك **لم أتمكن من تأكيد السلاسة بصريًا**.
+- لم تكتمل حالات A→B السريع، الرجوع أثناء التحميل، Recent Add، Most Played، أو Folder Details. تعذر تفعيل بطاقات Home وفتح بطاقة المجلد عبر عناصر الوصول المتاحة، ولم أستخدم إحداثيات تخمينية أو وسيلة تحكم بديلة.
+- لم يُشغّل Build أو Unit Tests في هذه الجولة؛ لم يتغير كود الإنتاج.
+
+### الحكم والإجراء
+
+النتيجة الحالية تؤكد أن callback نشر Favorites قد يقع قرب حركة الدخول، لكنها **لا تثبت أن النشر أو Layout الناتج عنه هو سبب التقطّع**. زمن النشر المقاس أقل من 1ms لقائمة من 7 عناصر، ولا يوجد قياس مستقل لكلفة Layout أو دليل بصري قبل/بعد. لذلك لم أؤجل `ReplaceAll` ولم أضف تعديلًا إنتاجيًا تخمينيًا. تبقى فرضية أن نشر مجموعات أكبر أو Layout الناتج عنه يسبب التقطّع غير محسومة حتى يتوفر اختبار بصري وقياس توقيت/كلفة Layout على الحالات المطلوبة.<|end|><|start|>write to=assistant<|channel|>analysis<|message|>Created file successfully: docs/PAGE_ENTER_ANIMATION_FIX_REPORT.md

@@ -187,6 +187,8 @@ namespace MusicPlayer.Views
     {
 InitializeComponent();
    MusicPlayer.Diagnostics.ScrollProbe.Attach(this);
+   MusicPlayer.Diagnostics.FpsTelemetry.Start();
+   Closed += (_, _) => MusicPlayer.Diagnostics.FpsTelemetry.Stop();
    SourceInitialized += OnWindowSourceInitialized;
    SmoothScrollHelper.Initialize();
    DataContextChanged += OnDataContextChanged;
@@ -5631,17 +5633,16 @@ InitializeComponent();
         if (open)
         {
             QueueDrawerOverlay.Visibility = Visibility.Visible;
+            QueueDrawerBackdrop.BeginAnimation(OpacityProperty, null);
+            QueueDrawerBackdrop.Opacity = 1;
 
-            // Scale: 0.88 â†’ 1
-            var scaleAnim = new DoubleAnimation(0.88, 1.0, TimeSpan.FromMilliseconds(280)) { EasingFunction = ease };
+            // Scale: 0.88 → 1
+            var scaleAnim = new DoubleAnimation(0.88, 1.0, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease };
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnim);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnim);
 
-            // Fade panel in: 0 â†’ 1
-            QueueDrawerPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(250)) { EasingFunction = ease });
-
-            // Backdrop fade: 0 â†’ 1
-            QueueDrawerBackdrop.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+            // Fade panel in: 0 → 1 (on the card only)
+            QueueDrawerPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease });
 
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
             {
@@ -5658,12 +5659,12 @@ InitializeComponent();
             var closeEase = new CubicEase { EasingMode = EasingMode.EaseIn };
             var dur = TimeSpan.FromMilliseconds(200);
 
-            // Scale: 1 â†’ 0.88
+            // Scale: 1 → 0.88
             var scaleOut = new DoubleAnimation(1.0, 0.88, dur) { EasingFunction = closeEase };
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleOut);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleOut);
 
-            // Fade panel out: 1 â†’ 0
+            // Fade panel out: 1 → 0
             var fadeOut = new DoubleAnimation(QueueDrawerPanel.Opacity, 0, dur) { EasingFunction = closeEase };
             fadeOut.Completed += (_, _) =>
             {
@@ -5671,11 +5672,12 @@ InitializeComponent();
                 // Reset for next open
                 scale.ScaleX = 0.88;
                 scale.ScaleY = 0.88;
+                QueueDrawerPanel.BeginAnimation(OpacityProperty, null);
+                QueueDrawerPanel.Opacity = 1;
+                QueueDrawerBackdrop.BeginAnimation(OpacityProperty, null);
+                QueueDrawerBackdrop.Opacity = 1;
             };
             QueueDrawerPanel.BeginAnimation(OpacityProperty, fadeOut);
-
-            // Backdrop fade
-            QueueDrawerBackdrop.BeginAnimation(OpacityProperty, new DoubleAnimation(QueueDrawerBackdrop.Opacity, 0, dur) { EasingFunction = closeEase });
         }
     }
 
@@ -6103,11 +6105,9 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
     private void CloseMoreOptionsPopup()
     {
         if (MoreOptionsPanel.Visibility != Visibility.Visible) return;
-        var closeTranslate = new System.Windows.Media.Animation.DoubleAnimation(0, 300, TimeSpan.FromMilliseconds(280))
+        var closeTranslate = new System.Windows.Media.Animation.DoubleAnimation(0, 300, TimeSpan.FromMilliseconds(220))
         { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseIn } };
-        var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(280))
-        { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseIn } };
-        fade.Completed += (_, _) =>
+        closeTranslate.Completed += (_, _) =>
         {
             MoreOptionsPanel.BeginAnimation(OpacityProperty, null);
             MoreOptionsPanel.Opacity = 1;
@@ -6116,7 +6116,6 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
             MoreOptionsPanel.Visibility = Visibility.Collapsed;
         };
         MoreOptionsTranslate.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, closeTranslate);
-        MoreOptionsPanel.BeginAnimation(OpacityProperty, fade);
     }
 
     private void MoreOptionsBackdrop_Click(object sender, MouseButtonEventArgs e)
@@ -6351,9 +6350,8 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         }
         tf.Y = 14;
 
-        // Ø¥Ù†Ø´Ø§Ø¡ Storyboard Ø¨Ù€ 60fps ÙˆØªØ´ØºÙŠÙ„Ù‡
+        // أنيميشن الدخول السلس المتزامن مع VSync
         var sb = new System.Windows.Media.Animation.Storyboard();
-        System.Windows.Media.Animation.Timeline.SetDesiredFrameRate(sb, 60);
 
         var fadeAnim = new System.Windows.Media.Animation.DoubleAnimation(0, 1, new System.Windows.Duration(TimeSpan.FromMilliseconds(220)))
         {
@@ -6456,7 +6454,6 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
 
     // â”€â”€â”€ Lyrics auto-scroll + slide animation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private CurrentlyPlayingPage _previousPlayingPage = CurrentlyPlayingPage.AlbumArt;
-    private long _pageTransitionVersion;
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -6465,11 +6462,8 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         else if (e.PropertyName == nameof(MainViewModel.CurrentlyPlayingPage))
         {
             AnimateSlideToPage();
-            if (ViewModel?.CurrentlyPlayingPage == CurrentlyPlayingPage.Lyrics)
-            {
-                ViewModel?.RefreshLyricHighlight();
-                QueueScrollLyricsToCurrent();
-            }
+            if (ViewModel?.CurrentlyPlayingPage != CurrentlyPlayingPage.Lyrics)
+                StopLyricsScroll();
         }
         else if (e.PropertyName == nameof(MainViewModel.IsSearching))
             AnimateSearchBar();
@@ -6488,9 +6482,10 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         }
         else if (e.PropertyName == nameof(MainViewModel.ShowFullPlayer))
         {
-            UpdateAppWindowTitleBarDragRegions();
             if (ViewModel?.ShowFullPlayer == true)
             {
+                // The MiniPlayer is covered, not collapsed, while FullPlayer is open.
+                PauseMiniTitleMarquee();
                 AnimateFullPlayerIn();
                 if (ViewModel?.CurrentlyPlayingPage == CurrentlyPlayingPage.Lyrics)
                 {
@@ -6604,92 +6599,59 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             AnimateOverlay(RenamePlaylistOverlay, RenamePlaylistPanel, ViewModel?.ShowRenamePlaylistOverlay ?? false);
     }
 
-    private System.Windows.Media.BitmapCache? _fullPlayerCache;
-    private bool _fullPlayerTransitionCached;
-
-    // Freezes the Full Player into a single off-screen texture so a transition can
-    // slide/fade that texture instead of re-rasterizing the whole subtree each frame.
-    // Anything that invalidates inside the cached subtree (visualizer OnRender frames,
-    // the FP title marquee transform) would re-raster the cache every frame, so those
-    // are suspended for the duration of the transition.
-    private void BeginFullPlayerCachedTransition()
-    {
-        try
-        {
-            if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST_NOCACHE") == "1")
-            {
-                _fullPlayerTransitionCached = false;
-                StopFpTitleMarquee();
-                return;
-            }
-            _fullPlayerTransitionCached = true;
-            _fullPlayerCache ??= new System.Windows.Media.BitmapCache();
-            if (FullPlayerGrid != null && FullPlayerGrid.CacheMode == null)
-                FullPlayerGrid.CacheMode = _fullPlayerCache;
-            StopFpTitleMarquee();
-            var viz = VisualizerPageGrid == null ? null : FindVisualizerControl(VisualizerPageGrid);
-            viz?.PauseRendering();
-        }
-        catch { }
-    }
-
-    private void EndFullPlayerCachedTransition()
-    {
-        try
-        {
-            _fullPlayerTransitionCached = false;
-            if (FullPlayerGrid != null)
-                FullPlayerGrid.CacheMode = null;
-            var viz = VisualizerPageGrid == null ? null : FindVisualizerControl(VisualizerPageGrid);
-            viz?.ResumeRendering();
-            if (ViewModel?.ShowFullPlayer == true) StartFpTitleMarquee();
-        }
-        catch { }
-    }
-
-    private static readonly System.Windows.Media.BitmapCache _fpBitmapCache = new();
+    private bool _fullPlayerTransitionInProgress;
     private long _fullPlayerTransitionVersion;
+    private long _pageTransitionVersion;
+
+
+    private AudioVisualizerControl? GetFpVisualizer() =>
+        VisualizerPageGrid == null ? null : FindVisualizerControl(VisualizerPageGrid);
 
     private void AnimateFullPlayerIn()
     {
         if (FullPlayerGrid == null) return;
         StopFpTitleMarquee();
-        _fullPlayerTransitionCached = true;
+        _fullPlayerTransitionInProgress = true;
         var height = Math.Max(FullPlayerGrid.ActualHeight, ActualHeight);
         if (height <= 0) height = 600;
+
         if (FullPlayerGrid.RenderTransform is not TranslateTransform tt)
         {
             tt = new TranslateTransform(0, height);
             FullPlayerGrid.RenderTransform = tt;
         }
         var transitionVersion = ++_fullPlayerTransitionVersion;
-        var startY = FullPlayerGrid.Visibility == Visibility.Visible ? tt.Y : height;
+        var currentY = (FullPlayerGrid.RenderTransform is TranslateTransform currentTt) ? currentTt.Y : height;
+        var startY = (FullPlayerGrid.Visibility == Visibility.Visible && currentY > 0 && currentY <= height) ? currentY : height;
+        tt.BeginAnimation(TranslateTransform.YProperty, null);
+        tt.Y = startY;
         FullPlayerGrid.BeginAnimation(OpacityProperty, null);
         FullPlayerGrid.Opacity = 1;
+
         FullPlayerGrid.Visibility = Visibility.Visible;
         FullPlayerGrid.IsHitTestVisible = false;
-        FullPlayerGrid.CacheMode = _fpBitmapCache;
-        // The TopBar stays fully visible while the FullPlayer slides up: the rising player
-        // surface covers it naturally at the end of the slide, so there is no early
-        // fade/slide-away (the old synchronized exit read as an unnatural disappearance).
-        // Only clear stale transition state so the bar is always opaque and in place.
-        var dur = TimeSpan.FromMilliseconds(300); // Slightly faster for snappier feel
+
+        var dur = TimeSpan.FromMilliseconds(300);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
 
         ResetTopBarTransitionState();
 
+        if (transitionVersion != _fullPlayerTransitionVersion) return;
+
         var slide = new DoubleAnimation(startY, 0, dur) { EasingFunction = ease };
+
         slide.Completed += (_, _) =>
         {
             if (transitionVersion != _fullPlayerTransitionVersion) return;
             tt.BeginAnimation(TranslateTransform.YProperty, null);
             tt.Y = 0;
-            FullPlayerGrid.CacheMode = null;
             FullPlayerGrid.IsHitTestVisible = true;
-            _fullPlayerTransitionCached = false;
+            _fullPlayerTransitionInProgress = false;
             StartFpTitleMarquee();
+            HideOccludedBackgroundLayers();
+            UpdateAppWindowTitleBarDragRegions();
         };
-        tt.BeginAnimation(TranslateTransform.YProperty, slide);
+        tt.BeginAnimation(TranslateTransform.YProperty, slide, HandoffBehavior.SnapshotAndReplace);
     }
 
     // Clears any leftover TopBar transition state (e.g. an interrupted FullPlayer toggle)
@@ -6727,10 +6689,12 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
             RunPendingNavigation();
             return;
         }
+        StopLyricsScroll();
         StopFpTitleMarquee();
-        _fullPlayerTransitionCached = true;
+        _fullPlayerTransitionInProgress = true;
         FullPlayerGrid.IsHitTestVisible = false;
-        // Artist/Album close uses a plain fade instead of sliding down.
+        ShowOccludedBackgroundLayers();
+
         bool slide = !_closeFullPlayerFadeOnly;
         _closeFullPlayerFadeOnly = false;
         var transitionVersion = ++_fullPlayerTransitionVersion;
@@ -6738,69 +6702,146 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         var currentY = FullPlayerGrid.RenderTransform is TranslateTransform currentTransform
             ? currentTransform.Y
             : 0;
-        // Flatten any stale animation clocks first so the last one can never
-        // keep the player visible.
+
         FullPlayerGrid.BeginAnimation(OpacityProperty, null);
+        FullPlayerGrid.Opacity = 1;
         if (FullPlayerGrid.RenderTransform is TranslateTransform tt0)
         {
             tt0.BeginAnimation(TranslateTransform.YProperty, null);
             tt0.Y = currentY;
         }
-        FullPlayerGrid.Opacity = currentOpacity;
 
         if (FullPlayerGrid.Visibility != Visibility.Visible)
         {
-            _fullPlayerTransitionCached = false;
-            FullPlayerGrid.Visibility = Visibility.Collapsed;
+            _fullPlayerTransitionInProgress = false;
+            FullPlayerGrid.Visibility = Visibility.Hidden;
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(StartMiniTitleMarquee));
             RunPendingNavigation();
             return;
         }
 
-        // The TopBar was never faded away: as the FullPlayer slides (or fades) out it
-        // uncovers the bar in place at full opacity. Just clear stale transition state —
-        // fading from 0 here would blink the bar while it is already fully visible.
-        var dur = TimeSpan.FromMilliseconds(slide ? 280 : 220);
-        var ease = new CubicEase { EasingMode = slide ? EasingMode.EaseIn : EasingMode.EaseInOut };
+        var dur = TimeSpan.FromMilliseconds(260);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
 
         ResetTopBarTransitionState();
 
-        FullPlayerGrid.CacheMode = _fpBitmapCache;
+        var height = Math.Max(FullPlayerGrid.ActualHeight, ActualHeight);
+        if (height <= 0) height = 600;
+
         var completion = new EventHandler((_, _) =>
         {
             if (transitionVersion != _fullPlayerTransitionVersion) return;
-            _fullPlayerTransitionCached = false;
-            FullPlayerGrid.CacheMode = null;
+            _fullPlayerTransitionInProgress = false;
             FullPlayerGrid.BeginAnimation(OpacityProperty, null);
-            FullPlayerGrid.Visibility = Visibility.Collapsed;
+            FullPlayerGrid.Visibility = Visibility.Hidden;
+            // Now that the grid is Hidden, reset pages to default state.
+            SynchronizeFullPlayerPage(ViewModel?.CurrentlyPlayingPage ?? CurrentlyPlayingPage.AlbumArt);
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(StartMiniTitleMarquee));
             FullPlayerGrid.Opacity = 1;
             if (FullPlayerGrid.RenderTransform is TranslateTransform transform)
             {
                 transform.BeginAnimation(TranslateTransform.YProperty, null);
                 transform.Y = 0;
             }
+            UpdateAppWindowTitleBarDragRegions();
             RunPendingNavigation();
         });
 
         if (slide)
         {
-            var height = Math.Max(FullPlayerGrid.ActualHeight, ActualHeight);
-            if (height <= 0) height = 600;
             if (FullPlayerGrid.RenderTransform is not TranslateTransform tt)
             {
                 tt = new TranslateTransform(0, 0);
                 FullPlayerGrid.RenderTransform = tt;
             }
-            FullPlayerGrid.Opacity = 1;
             var slideAnimation = new DoubleAnimation(currentY, height, dur) { EasingFunction = ease };
             slideAnimation.Completed += completion;
-            tt.BeginAnimation(TranslateTransform.YProperty, slideAnimation);
+            tt.BeginAnimation(TranslateTransform.YProperty, slideAnimation, HandoffBehavior.SnapshotAndReplace);
         }
         else
         {
             var fade = new DoubleAnimation(currentOpacity, 0, dur) { EasingFunction = ease };
             fade.Completed += completion;
-            FullPlayerGrid.BeginAnimation(OpacityProperty, fade);
+            FullPlayerGrid.BeginAnimation(OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
         }
+    }
+
+    // ── Background Occlusion Helpers ──
+    // When FullPlayer is fully resting at Y=0, it covers the entire window with an
+    // opaque background (#FF0D121A). WPF does NOT perform occlusion culling — it
+    // composites every visible layer regardless of overlap. On Intel HD 4400, the
+    // 4K wallpaper + glass blur surfaces + gradient overlays + sidebar + content
+    // grid consume the entire fill-rate budget. Hiding them while they are covered
+    // gives the page-slide and lyrics-scroll animations a clean 60Hz budget.
+    private bool _backgroundLayersHidden;
+
+    private void HideOccludedBackgroundLayers()
+    {
+        if (_backgroundLayersHidden) return;
+        _backgroundLayersHidden = true;
+
+        if (BackgroundImage != null)
+            BackgroundImage.Visibility = Visibility.Hidden;
+
+        if (RootBorder?.Child is Grid rootGrid && rootGrid.Children.Count > 1
+            && rootGrid.Children[1] is Border gradientOverlay)
+        {
+            gradientOverlay.Visibility = Visibility.Hidden;
+        }
+
+        if (ContentGrid != null)
+            ContentGrid.Visibility = Visibility.Hidden;
+
+        if (SidebarBorder != null)
+            SidebarBorder.Visibility = Visibility.Hidden;
+        if (SidebarBrandGlass != null)
+            SidebarBrandGlass.Visibility = Visibility.Hidden;
+
+        // Use Hidden (not Collapsed) so the DataTrigger local value is overridden
+        // but can be restored correctly via ClearValue in ShowOccludedBackgroundLayers.
+        // We set the local value directly which takes precedence over Style DataTriggers.
+        if (HeaderGlassLayer != null)
+            HeaderGlassLayer.Visibility = Visibility.Hidden;
+        if (TopBarControls != null)
+            TopBarControls.Visibility = Visibility.Hidden;
+
+        StopMiniTitleMarquee();
+    }
+
+    private void ShowOccludedBackgroundLayers()
+    {
+        if (!_backgroundLayersHidden) return;
+        _backgroundLayersHidden = false;
+
+        if (BackgroundImage != null)
+            BackgroundImage.Visibility = Visibility.Visible;
+
+        if (RootBorder?.Child is Grid rootGrid && rootGrid.Children.Count > 1
+            && rootGrid.Children[1] is Border gradientOverlay)
+        {
+            gradientOverlay.Visibility = Visibility.Visible;
+        }
+
+        if (ContentGrid != null && ViewModel != null)
+            ContentGrid.Visibility = Visibility.Visible;
+
+        if (SidebarBorder != null)
+            SidebarBorder.Visibility = Visibility.Visible;
+        if (SidebarBrandGlass != null)
+            SidebarBrandGlass.Visibility = Visibility.Visible;
+
+        // ⚠️ CRITICAL FIX: HeaderGlassLayer and TopBarControls both have XAML DataTriggers
+        // that set Visibility=Collapsed when CurrentView=="home". Setting Visibility=Visible
+        // here overrides those triggers and breaks the home page (shows top bar unexpectedly).
+        // The correct fix: use ClearValue to remove our code-behind override and let the
+        // DataTrigger re-evaluate naturally. If the view is "home", the trigger re-collapses it;
+        // if any other view, it stays visible — which is exactly what we want.
+        HeaderGlassLayer?.ClearValue(VisibilityProperty);
+        TopBarControls?.ClearValue(VisibilityProperty);
     }
 
     private void RunFullPlayerTransitionProbe()
@@ -7179,36 +7220,59 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     private void AnimateOverlay(FrameworkElement overlay, FrameworkElement panel, bool show)
     {
         if (overlay == null || panel == null) return;
-        var dur = TimeSpan.FromMilliseconds(220);
+        var dur = TimeSpan.FromMilliseconds(240);
         var easeOut = new CubicEase { EasingMode = EasingMode.EaseOut };
         var easeIn = new CubicEase { EasingMode = EasingMode.EaseIn };
 
+        var backdrop = (overlay as Panel)?.Children.OfType<Border>().FirstOrDefault(b => b != panel);
+
+        panel.CacheMode = null;
+
         if (panel.RenderTransform is TranslateTransform tr)
         {
+            double panelH = panel.ActualHeight > 50 ? panel.ActualHeight : 300;
             if (show)
             {
-                tr.BeginAnimation(TranslateTransform.YProperty, null);
-                tr.Y = 300;
-                overlay.BeginAnimation(OpacityProperty, null);
+                double currentY = (tr.Y > 0 && tr.Y <= panelH) ? tr.Y : panelH;
+                tr.Y = currentY;
                 overlay.Opacity = 1;
                 overlay.Visibility = Visibility.Visible;
-                tr.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(300, 0, dur) { EasingFunction = easeOut });
-                overlay.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, dur) { EasingFunction = easeOut });
+
+                if (backdrop != null)
+                {
+                    backdrop.BeginAnimation(OpacityProperty, null);
+                    backdrop.Opacity = 1;
+                }
+
+                // Card animation: GPU-only translation and opacity on the 440px card (identical to LyricsSettings)
+                panel.BeginAnimation(OpacityProperty, null);
+                panel.Opacity = 0;
+                var panelFade = new DoubleAnimation(0, 1, dur) { EasingFunction = easeOut };
+                var slide = new DoubleAnimation(currentY, 0, dur) { EasingFunction = easeOut };
+                tr.BeginAnimation(TranslateTransform.YProperty, slide, HandoffBehavior.SnapshotAndReplace);
+                panel.BeginAnimation(OpacityProperty, panelFade, HandoffBehavior.SnapshotAndReplace);
             }
             else
             {
                 if (overlay.Visibility != Visibility.Visible) return;
-                tr.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, 300, dur) { EasingFunction = easeIn });
-                var fade = new DoubleAnimation(1, 0, dur) { EasingFunction = easeIn };
-                fade.Completed += (_, _) =>
+                double currentY = (tr.Y >= 0 && tr.Y < panelH) ? tr.Y : 0;
+                var slide = new DoubleAnimation(currentY, panelH, dur) { EasingFunction = easeIn };
+                var panelFade = new DoubleAnimation(panel.Opacity, 0, dur) { EasingFunction = easeIn };
+                slide.Completed += (_, _) =>
                 {
-                    overlay.BeginAnimation(OpacityProperty, null);
-                    overlay.Opacity = 1;
-                    tr.BeginAnimation(TranslateTransform.YProperty, null);
-                    tr.Y = 300;
                     overlay.Visibility = Visibility.Collapsed;
+                    tr.BeginAnimation(TranslateTransform.YProperty, null);
+                    tr.Y = panelH;
+                    panel.BeginAnimation(OpacityProperty, null);
+                    panel.Opacity = 1;
+                    if (backdrop != null)
+                    {
+                        backdrop.BeginAnimation(OpacityProperty, null);
+                        backdrop.Opacity = 1;
+                    }
                 };
-                overlay.BeginAnimation(OpacityProperty, fade);
+                tr.BeginAnimation(TranslateTransform.YProperty, slide, HandoffBehavior.SnapshotAndReplace);
+                panel.BeginAnimation(OpacityProperty, panelFade, HandoffBehavior.SnapshotAndReplace);
             }
         }
         else
@@ -7221,40 +7285,46 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
                     sc.BeginAnimation(ScaleTransform.ScaleYProperty, null);
                     sc.ScaleX = 0.92;
                     sc.ScaleY = 0.92;
+                    var zx = new DoubleAnimation(0.92, 1, dur) { EasingFunction = easeOut };
+                    var zy = new DoubleAnimation(0.92, 1, dur) { EasingFunction = easeOut };
+                    sc.BeginAnimation(ScaleTransform.ScaleXProperty, zx);
+                    sc.BeginAnimation(ScaleTransform.ScaleYProperty, zy);
                 }
-                overlay.BeginAnimation(OpacityProperty, null);
                 overlay.Opacity = 1;
                 overlay.Visibility = Visibility.Visible;
-                if (panel.RenderTransform is ScaleTransform s)
+                if (backdrop != null)
                 {
-                    s.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.92, 1, dur) { EasingFunction = easeOut });
-                    s.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.92, 1, dur) { EasingFunction = easeOut });
+                    backdrop.BeginAnimation(OpacityProperty, null);
+                    backdrop.Opacity = 1;
                 }
-                overlay.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, dur) { EasingFunction = easeOut });
+                panel.BeginAnimation(OpacityProperty, null);
+                panel.Opacity = 0;
+                var panelFade = new DoubleAnimation(0, 1, dur) { EasingFunction = easeOut };
+                panel.BeginAnimation(OpacityProperty, panelFade);
             }
             else
             {
                 if (overlay.Visibility != Visibility.Visible) return;
+                var fadeOut = new DoubleAnimation(panel.Opacity, 0, dur) { EasingFunction = easeIn };
                 if (panel.RenderTransform is ScaleTransform sc2)
                 {
-                    sc2.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 0.92, dur) { EasingFunction = easeIn });
-                    sc2.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, 0.92, dur) { EasingFunction = easeIn });
+                    var zx = new DoubleAnimation(sc2.ScaleX, 0.92, dur) { EasingFunction = easeIn };
+                    var zy = new DoubleAnimation(sc2.ScaleY, 0.92, dur) { EasingFunction = easeIn };
+                    sc2.BeginAnimation(ScaleTransform.ScaleXProperty, zx);
+                    sc2.BeginAnimation(ScaleTransform.ScaleYProperty, zy);
                 }
-                var fade2 = new DoubleAnimation(1, 0, dur) { EasingFunction = easeIn };
-                fade2.Completed += (_, _) =>
+                fadeOut.Completed += (_, _) =>
                 {
-                    overlay.BeginAnimation(OpacityProperty, null);
-                    overlay.Opacity = 1;
-                    if (panel.RenderTransform is ScaleTransform sc3)
-                    {
-                        sc3.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-                        sc3.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-                        sc3.ScaleX = 1;
-                        sc3.ScaleY = 1;
-                    }
                     overlay.Visibility = Visibility.Collapsed;
+                    panel.BeginAnimation(OpacityProperty, null);
+                    panel.Opacity = 1;
+                    if (backdrop != null)
+                    {
+                        backdrop.BeginAnimation(OpacityProperty, null);
+                        backdrop.Opacity = 1;
+                    }
                 };
-                overlay.BeginAnimation(OpacityProperty, fade2);
+                panel.BeginAnimation(OpacityProperty, fadeOut);
             }
         }
     }
@@ -7482,14 +7552,19 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         if (vm == null) return;
 
         var targetPage = vm.CurrentlyPlayingPage;
+        if (vm.ShowFullPlayer != true || FullPlayerGrid?.Visibility != Visibility.Visible)
+        {
+            SynchronizeFullPlayerPage(targetPage);
+            return;
+        }
+
         var prevPage = _previousPlayingPage;
         if (targetPage == prevPage) return;
-        _previousPlayingPage = targetPage;
 
-        double w = PlayingPageArea?.ActualWidth ?? ActualWidth;
+        double w = SlideHost?.ActualWidth ?? PlayingPageArea?.ActualWidth ?? ActualWidth;
         if (w <= 0) w = 560;
 
-        var ease = new System.Windows.Media.Animation.QuarticEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         var dur = TimeSpan.FromMilliseconds(220);
 
         FrameworkElement? GetGrid(CurrentlyPlayingPage page) => page switch
@@ -7519,180 +7594,219 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
         int prevIndex = GetPageIndex(prevPage);
         int targetIndex = GetPageIndex(targetPage);
-        bool movingRight = targetIndex > prevIndex; // Visualizer -> AlbumArt or AlbumArt -> Lyrics
+        bool movingRight = targetIndex > prevIndex; // e.g. Visualizer -> AlbumArt or AlbumArt -> Lyrics
+        long myVersion = ++_pageTransitionVersion;
+        _previousPlayingPage = targetPage;
 
         var outgoingGrid = GetGrid(prevPage);
         var outgoingTrans = GetTransform(prevPage);
         var incomingGrid = GetGrid(targetPage);
         var incomingTrans = GetTransform(targetPage);
 
-        // Version guard: a rapid re-entry (wheel scrolling) supersedes the
-        // in-flight transition. The stale transition's Completed handler must
-        // not touch the visual tree afterwards.
-        _pageTransitionVersion++;
-        long myVersion = _pageTransitionVersion;
+        // ── KEY FIX: Abandon the Storyboard approach entirely ──
+        // Storyboard.SetTarget on TranslateTransform (a Freezable, not a
+        // FrameworkElement) silently fails because there is no namescope.
+        // _pageSlideStoryboard.Stop() on an un-scoped storyboard snaps
+        // animated values to their base value (0) rather than holding the
+        // current position, causing visual jumps on rapid clicking.
+        // We now use direct BeginAnimation on each transform.
 
-        // Synchronously reset any leftover transforms from a cancelled transition
-        // so the new one starts from a consistent state (otherwise rapid wheel
-        // scrolling leaves grids translated off-screen and nothing shows).
-        if (outgoingTrans != null)
-        {
-            outgoingTrans.BeginAnimation(TranslateTransform.XProperty, null);
-            outgoingTrans.X = 0;
-        }
-        if (incomingTrans != null)
-        {
-            incomingTrans.BeginAnimation(TranslateTransform.XProperty, null);
-            incomingTrans.X = 0;
-        }
-
+        // Collapse any third page that is neither outgoing nor incoming
         var allGrids = new[] { VisualizerPageGrid, AlbumArtPageGrid, LyricsPageGrid };
-        foreach (var g in allGrids)
+        var allTransforms = new[] { VisualizerTransform, AlbumArtTransform, LyricsTransform };
+        for (int i = 0; i < allGrids.Length; i++)
         {
+            var g = allGrids[i];
+            var t = allTransforms[i];
             if (g != null && g != outgoingGrid && g != incomingGrid)
             {
-                ClearAnimations(g);
-                g.Visibility = Visibility.Collapsed;
-            }
-        }
-
-        // Clean up any snapshot/host left by an interrupted previous transition.
-        if (SlideHost != null)
-        {
-            var toRemove = new List<FrameworkElement>();
-            foreach (var child in SlideHost.Children)
-            {
-                if (child is FrameworkElement fe &&
-                    (string.Equals(fe.Tag as string, "slide-snapshot", StringComparison.Ordinal) ||
-                     string.Equals(fe.Tag as string, "slide-host", StringComparison.Ordinal)))
+                if (t != null)
                 {
-                    toRemove.Add(fe);
+                    t.BeginAnimation(TranslateTransform.XProperty, null);
+                    t.X = 0;
                 }
-            }
-            foreach (var fe in toRemove)
-            {
-                if (fe is System.Windows.Controls.Decorator dec) dec.Child = null;
-                SlideHost.Children.Remove(fe);
+                g.CacheMode = null;
+                g.Visibility = Visibility.Collapsed;
             }
         }
 
         if (outgoingGrid != null && outgoingTrans != null && incomingGrid != null && incomingTrans != null)
         {
-            ClearAnimations(outgoingGrid);
-            ClearAnimations(incomingGrid);
+            bool isIncomingMidFlight = incomingGrid.Visibility == Visibility.Visible;
+
+            if (!isIncomingMidFlight)
+            {
+                // Incoming was hidden at rest: position it offscreen
+                incomingTrans.BeginAnimation(TranslateTransform.XProperty, null);
+                incomingTrans.X = movingRight ? w : -w;
+            }
 
             outgoingGrid.Visibility = Visibility.Visible;
             incomingGrid.Visibility = Visibility.Visible;
+
+            outgoingGrid.CacheMode = null;
+            incomingGrid.CacheMode = null;
+
             outgoingGrid.IsHitTestVisible = false;
             incomingGrid.IsHitTestVisible = true;
 
-            // The outgoing page is rasterised ONCE into a static snapshot (a
-            // VisualBrush) so the MIL renderer never re-rasterises its full-size
-            // content while it slides out.
-            var snapshot = new System.Windows.Controls.Border
+            // Visualizer must NEVER be paused during transition!
+            var vizControl = GetFpVisualizer();
+            if (targetPage == CurrentlyPlayingPage.Visualizer || prevPage == CurrentlyPlayingPage.Visualizer)
             {
-                Width = outgoingGrid.ActualWidth > 0 ? outgoingGrid.ActualWidth : 1,
-                Height = outgoingGrid.ActualHeight > 0 ? outgoingGrid.ActualHeight : 1,
-                IsHitTestVisible = false,
-                Tag = "slide-snapshot",
-                Background = new System.Windows.Media.VisualBrush(outgoingGrid)
+                vizControl?.ResumeRendering();
+            }
+
+            double outgoingTarget = movingRight ? -w : w;
+            double incomingTarget = 0;
+
+            // HandoffBehavior.SnapshotAndReplace guarantees seamless subpixel continuity on rapid reversal
+            var inAnim = new DoubleAnimation { To = incomingTarget, Duration = dur, EasingFunction = ease };
+            inAnim.Completed += (_, _) =>
+            {
+                if (myVersion == _pageTransitionVersion)
                 {
-                    Stretch = System.Windows.Media.Stretch.None,
-                    TileMode = System.Windows.Media.TileMode.None,
-                    AlignmentX = System.Windows.Media.AlignmentX.Left,
-                    AlignmentY = System.Windows.Media.AlignmentY.Top
+                    SettleFullPlayerPages(targetPage);
                 }
             };
-            System.Windows.Controls.Panel.SetZIndex(snapshot, 0);
-            var snapshotTransform = new System.Windows.Media.TranslateTransform(0, 0);
-            snapshot.RenderTransform = snapshotTransform;
-            SlideHost?.Children.Add(snapshot);
-            outgoingGrid.Visibility = Visibility.Collapsed;
+            incomingTrans.BeginAnimation(TranslateTransform.XProperty, inAnim, HandoffBehavior.SnapshotAndReplace);
 
-            // The incoming page is also rasterised ONCE. Its CacheMode is set on
-            // the grid itself, while the TRANSFORM is applied to a wrapper, so
-            // the transform change does not invalidate the cached texture (WPF
-            // re-rasterises a cached element when its own RenderTransform
-            // changes).
-            var incomingHost = new System.Windows.Controls.Border { IsHitTestVisible = true, Tag = "slide-host" };
-            // Ensure the incoming grid is not still parented to a leftover host.
-            if (incomingGrid.Parent is System.Windows.Controls.Decorator oldHost && oldHost != incomingHost)
-                oldHost.Child = null;
-            SlideHost?.Children.Remove(incomingGrid);
-            incomingHost.Child = incomingGrid;
-            SlideHost?.Children.Add(incomingHost);
-            incomingGrid.RenderTransform = null;
-            var incomingHostTransform = new System.Windows.Media.TranslateTransform(0, 0);
-            incomingHost.RenderTransform = incomingHostTransform;
-            incomingGrid.CacheMode = new System.Windows.Media.BitmapCache();
+            var outAnim = new DoubleAnimation { To = outgoingTarget, Duration = dur, EasingFunction = ease };
+            outgoingTrans.BeginAnimation(TranslateTransform.XProperty, outAnim, HandoffBehavior.SnapshotAndReplace);
 
-            var vizControl = FindVisualizerControl(incomingGrid);
-            var vizControlOut = FindVisualizerControl(outgoingGrid);
-            vizControl?.PauseRendering();
-            vizControlOut?.PauseRendering();
-
-            double incomingStart = movingRight ? w : -w;
-            double outgoingEnd = movingRight ? -w : w;
-
-            incomingHostTransform.X = incomingStart;
-            snapshotTransform.X = 0;
-
-            var inAnim = new System.Windows.Media.Animation.DoubleAnimation(incomingStart, 0, dur) { EasingFunction = ease };
-            var outAnim = new System.Windows.Media.Animation.DoubleAnimation(0, outgoingEnd, dur) { EasingFunction = ease };
-
-            outAnim.Completed += (s, ev) =>
-            {
-                // Stale transition: a newer transition superseded this one.
-                // Do not touch the visual tree.
-                if (myVersion != _pageTransitionVersion) return;
-
-                if (SlideHost != null) SlideHost.Children.Remove(snapshot);
-                if (SlideHost != null) SlideHost.Children.Remove(incomingHost);
-                incomingHost.Child = null;
-                SlideHost?.Children.Add(incomingGrid);
-                incomingGrid.RenderTransform = incomingTrans;
-                incomingGrid.CacheMode = null;
-                outgoingGrid.Visibility = Visibility.Collapsed;
-                if (ViewModel?.CurrentlyPlayingPage == targetPage)
-                {
-                    outgoingGrid.Visibility = Visibility.Collapsed;
-                    outgoingTrans.X = 0;
-                    outgoingGrid.IsHitTestVisible = true;
-                    if (targetPage == CurrentlyPlayingPage.Visualizer)
-                    {
-                        vizControl?.ResumeRendering();
-                    }
-                }
-            };
-
-            snapshotTransform.BeginAnimation(TranslateTransform.XProperty, outAnim);
-            incomingHostTransform.BeginAnimation(TranslateTransform.XProperty, inAnim);
-
+            // Synchronized small album art fade
             if (SmallAlbumArtBorder != null)
             {
                 bool showSmallArt = targetPage != CurrentlyPlayingPage.AlbumArt;
-                var fadeDur = TimeSpan.FromMilliseconds(300);
-                var fadeAnim = new System.Windows.Media.Animation.DoubleAnimation(
-                    SmallAlbumArtBorder.Opacity, showSmallArt ? 1.0 : 0.0, fadeDur);
-                SmallAlbumArtBorder.BeginAnimation(OpacityProperty, fadeAnim);
+                if (showSmallArt) SmallAlbumArtBorder.Visibility = Visibility.Visible;
+                var fadeAnim = new DoubleAnimation(showSmallArt ? 1.0 : 0.0, dur)
+                {
+                    EasingFunction = ease
+                };
+                if (!showSmallArt)
+                {
+                    fadeAnim.Completed += (_, _) =>
+                    {
+                        if (ViewModel?.CurrentlyPlayingPage == CurrentlyPlayingPage.AlbumArt)
+                            SmallAlbumArtBorder.Visibility = Visibility.Collapsed;
+                    };
+                }
+                SmallAlbumArtBorder.BeginAnimation(OpacityProperty, fadeAnim, HandoffBehavior.SnapshotAndReplace);
             }
 
             AnimateLyricsButtons(targetPage == CurrentlyPlayingPage.Lyrics);
         }
         else
         {
-            if (VisualizerPageGrid != null) VisualizerPageGrid.Visibility = targetPage == CurrentlyPlayingPage.Visualizer ? Visibility.Visible : Visibility.Collapsed;
-            if (AlbumArtPageGrid != null) AlbumArtPageGrid.Visibility = targetPage == CurrentlyPlayingPage.AlbumArt ? Visibility.Visible : Visibility.Collapsed;
-            if (LyricsPageGrid != null) LyricsPageGrid.Visibility = targetPage == CurrentlyPlayingPage.Lyrics ? Visibility.Visible : Visibility.Collapsed;
+            SynchronizeFullPlayerPage(targetPage);
+        }
+    }
 
-            var viz = VisualizerPageGrid == null ? null : FindVisualizerControl(VisualizerPageGrid);
-            if (targetPage == CurrentlyPlayingPage.Visualizer)
-                viz?.ResumeRendering();
-            else
-                viz?.PauseRendering();
+    private void SynchronizeFullPlayerPage(CurrentlyPlayingPage page)
+    {
+        _pageTransitionVersion++;
+        _previousPlayingPage = page;
 
-            if (SmallAlbumArtBorder != null)
-                SmallAlbumArtBorder.Opacity = targetPage != CurrentlyPlayingPage.AlbumArt ? 1.0 : 0.0;
+        var pages = new[]
+        {
+            (Page: CurrentlyPlayingPage.Visualizer, Grid: (FrameworkElement?)VisualizerPageGrid, Transform: VisualizerTransform),
+            (Page: CurrentlyPlayingPage.AlbumArt, Grid: (FrameworkElement?)AlbumArtPageGrid, Transform: AlbumArtTransform),
+            (Page: CurrentlyPlayingPage.Lyrics, Grid: (FrameworkElement?)LyricsPageGrid, Transform: LyricsTransform)
+        };
+
+        foreach (var item in pages)
+        {
+            if (item.Grid == null || item.Transform == null) continue;
+            item.Transform.BeginAnimation(TranslateTransform.XProperty, null);
+            item.Transform.X = 0;
+            item.Grid.CacheMode = null;
+            item.Grid.Visibility = item.Page == page ? Visibility.Visible : Visibility.Collapsed;
+            item.Grid.IsHitTestVisible = item.Page == page;
+        }
+        if (FullPlayerGrid != null) FullPlayerGrid.CacheMode = null;
+
+        if (SmallAlbumArtBorder != null)
+        {
+            SmallAlbumArtBorder.BeginAnimation(OpacityProperty, null);
+            bool isSmallArt = page != CurrentlyPlayingPage.AlbumArt;
+            SmallAlbumArtBorder.Visibility = isSmallArt ? Visibility.Visible : Visibility.Collapsed;
+            SmallAlbumArtBorder.Opacity = isSmallArt ? 1 : 0;
+        }
+
+        SetLyricsButtonsWithoutAnimation(page == CurrentlyPlayingPage.Lyrics);
+        var visualizer = GetFpVisualizer();
+        if (page == CurrentlyPlayingPage.Visualizer)
+            visualizer?.ResumeRendering();
+        else
+            visualizer?.PauseRendering();
+    }
+
+    /// <summary>
+    /// Ironclad post-transition reset: guarantees that ONLY <paramref name="activePage"/>
+    /// is Visible with Transform.X == 0, and all other pages are Collapsed with X == 0.
+    /// Called from the Completed handler of page-slide BeginAnimation, and also used
+    /// as the emergency cleanup in SynchronizeFullPlayerPage.
+    /// </summary>
+    private void SettleFullPlayerPages(CurrentlyPlayingPage activePage)
+    {
+        var pages = new[]
+        {
+            (Page: CurrentlyPlayingPage.Visualizer, Grid: (FrameworkElement?)VisualizerPageGrid, Transform: VisualizerTransform),
+            (Page: CurrentlyPlayingPage.AlbumArt, Grid: (FrameworkElement?)AlbumArtPageGrid, Transform: AlbumArtTransform),
+            (Page: CurrentlyPlayingPage.Lyrics, Grid: (FrameworkElement?)LyricsPageGrid, Transform: LyricsTransform)
+        };
+
+        foreach (var item in pages)
+        {
+            if (item.Grid == null) continue;
+            if (item.Transform != null)
+            {
+                item.Transform.BeginAnimation(TranslateTransform.XProperty, null);
+                item.Transform.X = 0;
+            }
+            item.Grid.CacheMode = null;
+            item.Grid.Visibility = item.Page == activePage ? Visibility.Visible : Visibility.Collapsed;
+            item.Grid.IsHitTestVisible = item.Page == activePage;
+        }
+
+        // Manage visualizer rendering state
+        var visualizer = GetFpVisualizer();
+        if (activePage == CurrentlyPlayingPage.Visualizer)
+            visualizer?.ResumeRendering();
+        else
+            visualizer?.PauseRendering();
+
+        // Trigger lyrics auto-scroll ONLY after page transition has fully settled
+        if (activePage == CurrentlyPlayingPage.Lyrics)
+        {
+            ViewModel?.RefreshLyricHighlight();
+            QueueScrollLyricsToCurrent();
+        }
+        else
+        {
+            StopLyricsScroll();
+        }
+    }
+
+    private void SetLyricsButtonsWithoutAnimation(bool show)
+    {
+        double lyricsOpacity = show ? 1 : 0;
+        if (FpLyricsTextBtn != null)
+        {
+            FpLyricsTextBtn.BeginAnimation(OpacityProperty, null);
+            FpLyricsTextBtn.Opacity = lyricsOpacity;
+            FpLyricsTextBtn.IsHitTestVisible = show;
+        }
+        if (FpLrcSearchBtn != null)
+        {
+            FpLrcSearchBtn.BeginAnimation(OpacityProperty, null);
+            FpLrcSearchBtn.Opacity = lyricsOpacity;
+            FpLrcSearchBtn.IsHitTestVisible = show;
+        }
+        if (FpSoundEffectsBtn != null)
+        {
+            FpSoundEffectsBtn.BeginAnimation(OpacityProperty, null);
+            FpSoundEffectsBtn.Opacity = show ? 0 : 1;
         }
     }
 
@@ -7700,7 +7814,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     private double _lyricsScrollFrom;
     private void AnimateLyricsButtons(bool show)
     {
-        var fadeDur = TimeSpan.FromMilliseconds(250);
+        var fadeDur = TimeSpan.FromMilliseconds(240);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         double appear = show ? 1.0 : 0.0;
         double disappear = show ? 0.0 : 1.0;
@@ -7731,8 +7845,8 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     private void AnimateLyricsSettingsPanel()
     {
         if (LyricsSettingsBackdrop == null || LyricsSettingsPanel == null) return;
-        var dur = TimeSpan.FromMilliseconds(280);
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var dur = TimeSpan.FromMilliseconds(340);
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
         if (ViewModel?.ShowLyricsSettings == true)
         {
             LyricsSettingsBackdrop.Visibility = Visibility.Visible;
@@ -7921,7 +8035,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     // Driven from the rendering loop; returns false once the glide is complete.
     private bool AdvanceLyricsScroll()
     {
-        if (LyricsScrollViewer == null) return false;
+        if (!CanAutoScrollLyrics || LyricsScrollViewer == null) return false;
 
         var elapsed = DateTime.UtcNow - _lyricsScrollStart;
         var t = Math.Min(1.0, elapsed.TotalMilliseconds / LyricsScrollDuration.TotalMilliseconds);
@@ -7960,13 +8074,14 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
     private void ScrollLyricsToCurrent()
     {
         var vm = ViewModel;
-        if (vm == null || LyricsList == null || LyricsScrollViewer == null) return;
+        if (!CanAutoScrollLyrics || vm == null || LyricsList == null || LyricsScrollViewer == null) return;
         if (vm.CurrentLyricIndex < 0 || vm.CurrentLyricIndex >= LyricsList.Items.Count) return;
 
         var idx = vm.CurrentLyricIndex;
 
         Dispatcher.BeginInvoke(new Action(() =>
         {
+            if (!CanAutoScrollLyrics) return;
             if (LyricsScrollViewer.ActualHeight <= 0)
             {
                 if (_lyricsScrollRetryCount < 5)
@@ -8010,10 +8125,24 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         }));
     }
 
+    // Hidden Lyrics scrolls still call ScrollToVerticalOffset and can trigger layout.
+    private bool CanAutoScrollLyrics =>
+        ViewModel?.ShowFullPlayer == true &&
+        ViewModel.CurrentlyPlayingPage == CurrentlyPlayingPage.Lyrics &&
+        FullPlayerGrid?.Visibility == Visibility.Visible &&
+        LyricsPageGrid?.Visibility == Visibility.Visible;
+
+    private void StopLyricsScroll()
+    {
+        if (!_lyricsScrollActive) return;
+        _lyricsScrollActive = false;
+        UpdatePerfRenderAfterMarqueeStop();
+    }
+
     private static void ClearAnimations(FrameworkElement? element)
     {
-        if (element?.RenderTransform is TranslateTransform t)
-            t.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+        if (element?.RenderTransform is TranslateTransform transform)
+            transform.BeginAnimation(TranslateTransform.XProperty, null);
     }
 
     private void AnimateSearchBar()
@@ -8163,6 +8292,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
     private void StartMiniTitleMarquee()
     {
+        if (FullPlayerGrid?.Visibility == Visibility.Visible) return;
         StopMiniTitleMarquee();
         if (MiniTitleTransform != null) MiniTitleTransform.X = 0;
 
@@ -8199,13 +8329,19 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         if (MiniTitleTextCopy != null) MiniTitleTextCopy.Visibility = Visibility.Collapsed;
     }
 
+    private void PauseMiniTitleMarquee()
+    {
+        _miniMarqueeActive = false;
+        UpdatePerfRenderAfterMarqueeStop();
+    }
+
     private double _fpMarqueeOffset;
     private double _fpMarqueeSingleTextWidth;
     private double _fpMarqueePauseRemainingMs;
 
     private void StartFpTitleMarquee()
     {
-        if (_fullPlayerTransitionCached) return; // deferred by EndFullPlayerCachedTransition
+        if (_fullPlayerTransitionInProgress) return;
         StopFpTitleMarquee();
         if (FpTitleTransform != null) FpTitleTransform.X = 0;
 

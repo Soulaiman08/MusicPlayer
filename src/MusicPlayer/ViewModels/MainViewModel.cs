@@ -82,6 +82,8 @@ public partial class MainViewModel : ViewModelBase
 
 	private DispatcherTimer? _lyricAdvanceTimer;
 	private CancellationTokenSource? _lyricsLoadCts;
+	private string? _lyricsLoadTrackPath;
+	private string? _lyricsResolvedTrackPath;
 	private CancellationTokenSource? _lyricsBrowserCts;
 	private long _lyricsLoadGeneration;
 	private long _lyricsBrowserGeneration;
@@ -5267,9 +5269,25 @@ public partial class MainViewModel : ViewModelBase
 	}
 	private void OpenFullPlayer()
 	{
-		LoadLyrics(CurrentTrack);
+		var currentTrackPath = CurrentTrack?.FilePath;
+		var trackToLoad = CurrentTrack;
+		bool needsLyrics = !string.IsNullOrEmpty(currentTrackPath) &&
+			(!string.Equals(_lyricsLoadTrackPath, currentTrackPath, StringComparison.OrdinalIgnoreCase) &&
+			 !string.Equals(_lyricsResolvedTrackPath, currentTrackPath, StringComparison.OrdinalIgnoreCase));
 		CurrentlyPlayingPage = CurrentlyPlayingPage.AlbumArt;
 		ShowFullPlayer = true;
+		// Defer lyrics loading so the UI thread is free for the entrance slide animation.
+		// LoadLyrics adds items one-by-one to an ObservableCollection on the UI thread,
+		// flooding it with CollectionChanged events. Delaying 400ms lets the 280ms slide
+		// finish first.
+		if (needsLyrics)
+		{
+			_ = System.Threading.Tasks.Task.Run(async () =>
+			{
+				await System.Threading.Tasks.Task.Delay(400).ConfigureAwait(false);
+				DispatchAsync(() => LoadLyrics(trackToLoad)).ConfigureAwait(false);
+			});
+		}
 	}
 	private void CloseFullPlayer()
 	{
@@ -7651,6 +7669,8 @@ private async Task LoadArtistsAsync()
 		LyricsSourcePath = string.Empty;
 		TryCancel(_lyricsLoadCts);
 		_lyricsLoadCts = null;
+		_lyricsLoadTrackPath = null;
+		_lyricsResolvedTrackPath = null;
 		long generation = Interlocked.Increment(ref _lyricsLoadGeneration);
 		if (track == null || string.IsNullOrEmpty(track.FilePath))
 		{
@@ -7659,11 +7679,13 @@ private async Task LoadArtistsAsync()
 
 		var loadCts = new CancellationTokenSource();
 		_lyricsLoadCts = loadCts;
+		_lyricsLoadTrackPath = track.FilePath;
 		if (!_backgroundTaskRegistry.TryStart(
 			"LoadLyrics",
 			lifetimeToken => LoadLyricsAsync(track, generation, loadCts, lifetimeToken)))
 		{
 			_lyricsLoadCts = null;
+			_lyricsLoadTrackPath = null;
 			loadCts.Dispose();
 		}
 	}
@@ -7681,7 +7703,19 @@ private async Task LoadArtistsAsync()
 				track.FilePath,
 				linked.Token).ConfigureAwait(false);
 			linked.Token.ThrowIfCancellationRequested();
-			if (lyricParser == null) return;
+			if (lyricParser == null)
+			{
+				await DispatchAsync(() =>
+				{
+					if (!linked.IsCancellationRequested &&
+						generation == Interlocked.Read(ref _lyricsLoadGeneration) &&
+						string.Equals(CurrentTrack?.FilePath, track.FilePath, StringComparison.OrdinalIgnoreCase))
+					{
+						_lyricsResolvedTrackPath = track.FilePath;
+					}
+				}).ConfigureAwait(false);
+				return;
+			}
 
 			await DispatchAsync(() =>
 			{
@@ -7697,6 +7731,7 @@ private async Task LoadArtistsAsync()
 					Lyrics.Add(line);
 				}
 				LyricsSourcePath = Path.ChangeExtension(track.FilePath, ".lrc");
+				_lyricsResolvedTrackPath = track.FilePath;
 			}).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (linked.IsCancellationRequested)
@@ -7711,6 +7746,7 @@ private async Task LoadArtistsAsync()
 			if (ReferenceEquals(_lyricsLoadCts, loadCts))
 			{
 				_lyricsLoadCts = null;
+				_lyricsLoadTrackPath = null;
 			}
 			loadCts.Dispose();
 		}

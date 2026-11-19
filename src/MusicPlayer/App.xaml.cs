@@ -101,7 +101,7 @@ public partial class App : Application
         public string DeviceKey;
     }
 
-    private static void ForceHighPerformanceGpu()
+    private static void ForceIntegratedGpu()
     {
         try
         {
@@ -110,7 +110,12 @@ public partial class App : Application
 
             using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(
                 @"Software\Microsoft\DirectX\UserGpuPreferences");
-            key?.SetValue(exePath, "GpuPreference=2",
+            // GpuPreference=1 forces the app onto the Integrated GPU (Intel HD Graphics).
+            // On dual-GPU laptops (Intel + NVIDIA Optimus), forcing WPF onto the discrete
+            // secondary GPU (GpuPreference=2) causes severe performance degradation because
+            // Direct3D 9 has to copy every frame across PCIe from NVIDIA VRAM to the Intel
+            // frame buffer for DWM composition, bottlenecking the entire app at 2-14 FPS.
+            key?.SetValue(exePath, "GpuPreference=1",
                 Microsoft.Win32.RegistryValueKind.String);
         }
         catch { }
@@ -118,7 +123,15 @@ public partial class App : Application
 
     public App()
     {
-        ForceHighPerformanceGpu();
+        // Disable WPF D3D9 dirty-rectangle optimization to prevent back-buffer desync,
+        // tile tearing, and rectangular visual distortion under high GPU load (Microsoft Issue #5441).
+        // The dirty-rect optimisation fills the back-buffer with an earlier frame's data when
+        // the GPU is under sustained load (Intel HD 4400 compositing 4K wallpaper + glass +
+        // animations). Disabling it forces WPF to redraw the full back-buffer every present,
+        // which is a small cost compared to the visual corruption it eliminates.
+        AppContext.SetSwitch("Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles", true);
+
+        ForceIntegratedGpu();
         RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.Default;
         // Raise scheduling priority so the UI thread gets CPU time ahead of background
         // services — reduces the OS-scheduler jitter that causes dropped frames on
