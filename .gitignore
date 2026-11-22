@@ -92,3 +92,7 @@ desktop.ini
 /video_analysis_*/
 /tools/perf/
 /extracted_frames/
+
+# Session-generated markdown + local fixture launcher (keep locally, never commit)
+/LaunchFixtureNoArt.bat
+/docs/*.md
