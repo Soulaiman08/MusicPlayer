@@ -140,6 +140,7 @@ public sealed class AsyncArtistImage : Image
         // Check VM cache first (fast path)
         if (vm.ArtistImageCache.TryGetValue(artist, out var cached))
         {
+            _pendingArtist = null;
             Source = cached;
             return;
         }
@@ -154,6 +155,7 @@ public sealed class AsyncArtistImage : Image
             {
                 var image = vm.ArtistImageCache.GetOrAdd(artist, coordCached);
                 vm.TrimArtistImageCache(artist);
+                _pendingArtist = null;
                 Source = image;
                 return;
             }
@@ -170,8 +172,8 @@ public sealed class AsyncArtistImage : Image
         _pendingArtist = artist;
         var requestCts = _requestCts.Token;
 
-        // Use Background priority for initial load; Visible priority would be used if we knew it was in viewport
-        var priority = ImagePriority.Background;
+        // Visible priority so artists in viewport decode and render promptly
+        var priority = ImagePriority.Visible;
 
         _ = coord.LoadArtistImageAsync(artist, isHighRes: false, priority, requestCts)
             .ContinueWith(task =>

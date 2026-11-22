@@ -28,6 +28,18 @@ public static class WallpaperDecodeCache
 
     private static long _usedBytes;
 
+    /// <summary>
+    /// Computes display-adapted decode width based on the primary screen resolution.
+    /// Eliminates loading oversized 4K textures on standard 768p / 1080p displays,
+    /// saving up to 85% of GPU texture memory and fillrate bus bandwidth.
+    /// </summary>
+    public static int GetDisplayDecodeWidth()
+    {
+        double screenW = System.Windows.SystemParameters.PrimaryScreenWidth;
+        if (screenW <= 0) screenW = 1366;
+        return Math.Clamp((int)Math.Ceiling(screenW), 1280, 1920);
+    }
+
     public static bool TryGet(string key, out BitmapImage? image)
     {
         image = null;

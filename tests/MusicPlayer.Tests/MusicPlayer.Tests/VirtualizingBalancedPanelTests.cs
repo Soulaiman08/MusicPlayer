@@ -137,6 +137,24 @@ public class VirtualizingBalancedPanelTests
     }
 
     [Fact]
+    public void CalculateVisibleRange_TracksGridCacheIsLimitedToOneRow()
+    {
+        var range = VirtualizingBalancedPanel.CalculateVisibleRange(
+            itemCount: 1000,
+            cols: 4,
+            offset: 2000,
+            viewportHeight: 600,
+            rowHeight: 200,
+            gap: 12,
+            cacheRows: 1);
+
+        Assert.InRange(range.FirstIndex, 0, 999);
+        Assert.InRange(range.LastIndex, range.FirstIndex, 999);
+        Assert.Equal(0, range.FirstIndex % 4);
+        Assert.Equal(3, range.LastIndex % 4);
+    }
+
+    [Fact]
     public void GetScrollTranslationKeepsItemsAtTheRequestedViewportOffset()
     {
         const double itemTop = 1000;

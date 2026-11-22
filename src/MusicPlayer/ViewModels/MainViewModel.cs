@@ -4664,9 +4664,25 @@ public partial class MainViewModel : ViewModelBase
 		}
 		LogHelper.LogInfo($"[StartupPerf] BuildArtistItemsAsync done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
+		List<KeyValuePair<string, string>>? preloadedArtistImages = _preloadedArtistResult?.CachedImages;
+		if (preloadedArtistImages != null && preloadedArtistImages.Count > 0)
+		{
+			statusCallback?.Invoke("Loading artist art...");
+			foreach (var item in preloadedArtistImages)
+			{
+				ArtistImages[item.Key] = item.Value;
+			}
+			await Task.Run(() => PreloadArtistImages(preloadedArtistImages, token), token);
+		}
+		LogHelper.LogInfo($"[StartupPerf] PreloadArtistImages done totalMs={_startupSw.ElapsedMilliseconds}");
+		if (token.IsCancellationRequested) return;
 		if (sortedTracks != null && sortedTracks.Count > 0)
 		{
-			await _albumArt.PreloadTrackArtwork(sortedTracks.Take(60), token);
+			statusCallback?.Invoke("Loading album art...");
+			var albumCards = await Task.Run(() => BuildAlbumCards(sortedTracks), token);
+			var preloadAlbumsTask = _albumArt.PreloadAlbumArtwork(albumCards, token);
+			var preloadTracksTask = _albumArt.PreloadTrackArtwork(sortedTracks.Take(150), token);
+			await Task.WhenAll(preloadAlbumsTask, preloadTracksTask);
 		}
 		LogHelper.LogInfo($"[StartupPerf] PreloadTrackArtwork done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
@@ -6791,6 +6807,13 @@ private async Task LoadArtistsAsync()
 			}
 			OnPropertyChanged("ArtistImages");
 		});
+		var undecoded = result.CachedImages
+			.Where(kv => !string.IsNullOrWhiteSpace(kv.Value) && !ArtistImageCache.ContainsKey(kv.Key))
+			.ToList();
+		if (undecoded.Count > 0)
+		{
+			await Task.Run(() => PreloadArtistImages(undecoded));
+		}
 		// Sort BEFORE inserting (single pass) and fill progressively so the
 		// WrapPanel never realizes all artist tiles inside one frame.
 		int sortVersion = LibrarySortVersion;
@@ -6999,6 +7022,41 @@ private async Task LoadArtistsAsync()
 		}
 	}
 
+	private void PreloadArtistImages(List<KeyValuePair<string, string>> cachedImages, CancellationToken cancellationToken = default)
+	{
+		try
+		{
+			var coord = ImageLoading.ImageLoadingCoordinator.Instance;
+			Parallel.ForEach(cachedImages, new ParallelOptions
+			{
+				MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 8),
+				CancellationToken = cancellationToken
+			}, item =>
+			{
+				if (string.IsNullOrWhiteSpace(item.Key) || string.IsNullOrWhiteSpace(item.Value)) return;
+				if (ArtistImageCache.ContainsKey(item.Key)) return;
+				try
+				{
+					var bi = ImageLoading.ImageDecoder.DecodeFromFile(item.Value, ImageLoading.ImageQuality.Medium);
+					if (bi != null)
+					{
+						ArtistImageCache[item.Key] = bi;
+						if (coord != null)
+						{
+							var key = ImageLoading.ArtistImageProvider.NormalizeKey(item.Key);
+							if (!string.IsNullOrEmpty(key))
+							{
+								coord.MemoryCache.Set(key, ImageLoading.ImageKind.Artist, ImageLoading.ImageQuality.Medium, bi);
+							}
+						}
+					}
+				}
+				catch { }
+			});
+		}
+		catch { }
+	}
+
 	private async Task FetchMissingArtistImagesAsync(List<MusicTrack> items, CancellationToken cancellationToken = default)
 	{
 		// PERFTEST GATE: Skip artist image background fetch if MUSICPLAYER_PERFTEST_NOARTISTWARMUP=1 or NOWARMUP=1
@@ -7041,6 +7099,24 @@ private async Task LoadArtistsAsync()
 							if (path != null)
 							{
 								cancellationToken.ThrowIfCancellationRequested();
+								try
+								{
+									var bi = ImageLoading.ImageDecoder.DecodeFromFile(path, ImageLoading.ImageQuality.Medium);
+									if (bi != null)
+									{
+										ArtistImageCache[track.Artist] = bi;
+										var coord = ImageLoading.ImageLoadingCoordinator.Instance;
+										if (coord != null)
+										{
+											var key = ImageLoading.ArtistImageProvider.NormalizeKey(track.Artist);
+											if (!string.IsNullOrEmpty(key))
+											{
+												coord.MemoryCache.Set(key, ImageLoading.ImageKind.Artist, ImageLoading.ImageQuality.Medium, bi);
+											}
+										}
+									}
+								}
+								catch { }
 								await DispatchAsync(delegate
 								{
 									if (!ArtistImages.ContainsKey(track.Artist))
@@ -9668,7 +9744,8 @@ private async Task LoadArtistsAsync()
 		try
 		{
 			await start.ConfigureAwait(false);
-			await MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(sources, 3840, cts.Token)
+			int targetDecodeWidth = MusicPlayer.Utilities.WallpaperDecodeCache.GetDisplayDecodeWidth();
+			await MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(sources, targetDecodeWidth, cts.Token)
 				.ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (cts.IsCancellationRequested)

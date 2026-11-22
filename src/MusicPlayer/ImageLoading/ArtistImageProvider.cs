@@ -101,10 +101,14 @@ public sealed class ArtistImageProvider : IDisposable
     {
         if (IsInvalidArtistName(artist)) return null;
         var key = NormalizeKey(artist);
-        var quality = isHighRes ? ImageQuality.Large : ImageQuality.Thumbnail;
+        var quality = isHighRes ? ImageQuality.Large : ImageQuality.Medium;
         if (_memoryCache.TryGet(key, ImageKind.Artist, quality, out var cached) && cached != null)
         {
             return cached;
+        }
+        if (!isHighRes && _memoryCache.TryGet(key, ImageKind.Artist, ImageQuality.Large, out var highCached) && highCached != null)
+        {
+            return highCached;
         }
         return null;
     }
@@ -138,7 +142,7 @@ public sealed class ArtistImageProvider : IDisposable
         var key = NormalizeKey(artist);
         if (string.IsNullOrEmpty(key)) return null;
 
-        var quality = isHighRes ? ImageQuality.Large : ImageQuality.Thumbnail;
+        var quality = isHighRes ? ImageQuality.Large : ImageQuality.Medium;
         if (_memoryCache.TryGet(key, ImageKind.Artist, quality, out var memCached) && memCached != null)
         {
             ImageDecodeMetrics.RecordMemoryHit();

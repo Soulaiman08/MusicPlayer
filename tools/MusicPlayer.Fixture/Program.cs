@@ -124,12 +124,15 @@ public static class Program
             File.WriteAllBytes(filePath, payload);
 
             var info = new FileInfo(filePath);
-            string albumArtPath;
-            if (!albumArtPaths.TryGetValue(album, out albumArtPath!))
+            string albumArtPath = string.Empty;
+            if (withArt)
             {
-                albumArtPath = Path.Combine(albumArtDir, $"art_{albumArtPaths.Count:00000}.png");
-                File.WriteAllBytes(albumArtPath, CreateImagePng(512, 512, (uint)(albumArtPaths.Count * 37 % 360), 0.55));
-                albumArtPaths[album] = albumArtPath;
+                if (!albumArtPaths.TryGetValue(album, out albumArtPath!))
+                {
+                    albumArtPath = Path.Combine(albumArtDir, $"art_{albumArtPaths.Count:00000}.png");
+                    File.WriteAllBytes(albumArtPath, CreateImagePng(512, 512, (uint)(albumArtPaths.Count * 37 % 360), 0.55));
+                    albumArtPaths[album] = albumArtPath;
+                }
             }
 
             trackRows.Add(new FixtureTrack
@@ -152,14 +155,17 @@ public static class Program
             });
         }
 
-        // Artist images so the Artists grid never has to hit the network.
-        foreach (string artist in artistNames)
+        if (withArt)
         {
-            string key = FixtureNameNormalizer.NormalizeKey(artist);
-            if (string.IsNullOrEmpty(key)) continue;
-            string path = Path.Combine(artistImagesDir, key + ".jpg");
-            if (File.Exists(path)) continue;
-            File.WriteAllBytes(path, CreateImagePng(256, 256, (uint)(key.GetHashCode(StringComparison.Ordinal) & 0xFFFF), 0.7));
+            // Artist images so the Artists grid never has to hit the network.
+            foreach (string artist in artistNames)
+            {
+                string key = FixtureNameNormalizer.NormalizeKey(artist);
+                if (string.IsNullOrEmpty(key)) continue;
+                string path = Path.Combine(artistImagesDir, key + ".jpg");
+                if (File.Exists(path)) continue;
+                File.WriteAllBytes(path, CreateImagePng(256, 256, (uint)(key.GetHashCode(StringComparison.Ordinal) & 0xFFFF), 0.7));
+            }
         }
 
         string dbPath = Path.Combine(dataDir, "music.db");

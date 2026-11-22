@@ -25,6 +25,7 @@ using MusicPlayer.Library;
 using MusicPlayer.Lyrics;
 using MusicPlayer.Models;
 using MusicPlayer.Services;
+using MusicPlayer.Diagnostics;
 using MusicPlayer.Utilities;
 using MusicPlayer.ViewModels;
 using MusicPlayer.Views.Controls;
@@ -255,8 +256,11 @@ InitializeComponent();
         SizeChanged += (_, _) =>
         {
             _resizeMarqueeTimer.Stop();
-            _resizeMarqueeTimer.Start();
-            MarkGlassBackdropDirty();
+            if (!_isInSizeMove)
+            {
+                _resizeMarqueeTimer.Start();
+                MarkGlassBackdropDirty();
+            }
         };
         LocationChanged += Window_LocationChanged;
 
@@ -400,8 +404,11 @@ InitializeComponent();
     private double _glassCacheAlpha = double.NaN;
     private long _wallpaperAlphaApplyGeneration;
 
+    private bool _isInSizeMove;
+
     private void MarkGlassBackdropDirty()
     {
+        if (_isInSizeMove) return;
         if (!Dispatcher.CheckAccess())
         {
             Dispatcher.BeginInvoke(new Action(MarkGlassBackdropDirty));
@@ -527,15 +534,18 @@ InitializeComponent();
 
     private void RebuildGlassBackdropCache()
     {
+        long probeStart = SidebarPerfProbe.BeginGlassRebuild();
         if (!Dispatcher.CheckAccess())
         {
             Dispatcher.BeginInvoke(new Action(RebuildGlassBackdropCache));
+            SidebarPerfProbe.EndGlassRebuild(probeStart, actual: false, skipped: true);
             return;
         }
 
         if (_glassWallpaperSource == null || RootBorder == null ||
             RootBorder.ActualWidth < 10 || RootBorder.ActualHeight < 10)
         {
+            SidebarPerfProbe.EndGlassRebuild(probeStart, actual: false, skipped: true);
             return;
         }
 
@@ -552,12 +562,14 @@ InitializeComponent();
             Math.Abs(_glassCacheAlpha - alpha) < 0.001)
         {
             UpdateGlassSurfaceBrushes();
+            SidebarPerfProbe.EndGlassRebuild(probeStart, actual: false, skipped: true);
             return;
         }
 
         if (_glassRebuildInProgress)
         {
             _glassRebuildQueued = true;
+            SidebarPerfProbe.EndGlassRebuild(probeStart, actual: false, skipped: true);
             return;
         }
         _glassRebuildInProgress = true;
@@ -585,6 +597,7 @@ InitializeComponent();
 
         var worker = new System.Threading.Thread(() =>
         {
+            long workerStart = SidebarPerfProbe.BeginGlassRebuildWorker();
             BitmapSource? rendered = null;
             try
             {
@@ -596,9 +609,11 @@ InitializeComponent();
             {
                 LogHelper.LogError("[Glass] background sampling failed", ex);
             }
+            SidebarPerfProbe.EndGlassRebuildWorker(workerStart);
 
             Dispatcher.BeginInvoke(new Action(() =>
             {
+                long applyStart = SidebarPerfProbe.BeginGlassRebuildApply();
                 if (gen == _bgGen && rendered != null)
                 {
                     _glassBackdropCache = rendered;
@@ -610,6 +625,7 @@ InitializeComponent();
                     _glassCacheAlpha = a;
                     UpdateGlassSurfaceBrushes();
                 }
+                SidebarPerfProbe.EndGlassRebuildApply(applyStart);
                 _glassRebuildInProgress = false;
                 if (_glassRebuildQueued)
                 {
@@ -620,6 +636,7 @@ InitializeComponent();
         });
         worker.SetApartmentState(System.Threading.ApartmentState.STA);
         worker.Start();
+        SidebarPerfProbe.EndGlassRebuild(probeStart, actual: true, skipped: false);
     }
 
     /// <summary>
@@ -661,6 +678,7 @@ InitializeComponent();
 
         var blurred = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
         blurred.Render(blurVisual);
+        SidebarPerfProbe.RecordRenderTargetPasses(2);
         blurred.Freeze();
         return blurred;
     }
@@ -682,6 +700,12 @@ InitializeComponent();
     {
         if (surface == null || !surface.IsLoaded || RootBorder == null || _glassBackdropCache == null) return;
 
+        string probeSurface = ReferenceEquals(surface, HeaderGlassSurface) ? "header"
+            : ReferenceEquals(surface, SidebarBorder) ? "sidebar"
+            : ReferenceEquals(surface, SidebarBrandGlass) ? "brand" : "other";
+        long probeStart = SidebarPerfProbe.BeginSurfaceUpdate(probeSurface);
+        long setupStart = probeStart != 0 ? Stopwatch.GetTimestamp() : 0;
+
         brush ??= new ImageBrush
         {
             Stretch = Stretch.Fill,
@@ -692,28 +716,64 @@ InitializeComponent();
         };
         if (!ReferenceEquals(surface.Background, brush))
             surface.Background = brush;
-        if (!ReferenceEquals(brush.ImageSource, _glassBackdropCache))
-            brush.ImageSource = _glassBackdropCache;
 
+        long imageStart = probeStart != 0 ? Stopwatch.GetTimestamp() : 0;
+        bool imageAssigned = false;
+        if (!ReferenceEquals(brush.ImageSource, _glassBackdropCache))
+        {
+            brush.ImageSource = _glassBackdropCache;
+            imageAssigned = true;
+        }
+        long imageTicks = imageStart != 0 ? Stopwatch.GetTimestamp() - imageStart : 0;
+        long setupTicks = (setupStart != 0 && imageStart != 0) ? imageStart - setupStart : 0;
+
+        long transformStart = probeStart != 0 ? Stopwatch.GetTimestamp() : 0;
         var origin = surface.TransformToAncestor(RootBorder).Transform(new Point(0, 0));
+        long transformTicks = transformStart != 0 ? Stopwatch.GetTimestamp() - transformStart : 0;
+
         double scaleX = _glassBackdropCache.Width / RootBorder.ActualWidth;
         double scaleY = _glassBackdropCache.Height / RootBorder.ActualHeight;
-        brush.Viewbox = new Rect(
+        var viewbox = new Rect(
             origin.X * scaleX,
             origin.Y * scaleY,
             surface.ActualWidth * scaleX,
             surface.ActualHeight * scaleY);
+
+        bool viewboxSet = false;
+        bool viewboxChanged = false;
+        long viewboxTicks = 0;
+        if (SidebarPerfProbe.FreezeGlassViewboxDuringMotion && SidebarPerfProbe.IsMotionActive)
+        {
+            // Diagnostic C only: keep the last valid glass sample mapping for the
+            // duration of the motion. The final UpdateGlassSurfaceBrushes() after
+            // EndMotion() restores the exact mapping.
+            SidebarPerfProbe.RecordViewboxSkipped();
+        }
+        else
+        {
+            viewboxChanged = brush.Viewbox != viewbox;
+            long viewboxStart = probeStart != 0 ? Stopwatch.GetTimestamp() : 0;
+            brush.Viewbox = viewbox;
+            viewboxSet = true;
+            viewboxTicks = viewboxStart != 0 ? Stopwatch.GetTimestamp() - viewboxStart : 0;
+        }
+
+        SidebarPerfProbe.EndSurfaceUpdate(probeStart, transformTicks, viewboxTicks,
+            imageTicks, setupTicks, viewboxChanged, viewboxSet, imageAssigned);
     }
 
     private void SidebarGlassSurface_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        if (_isInSizeMove) return;
         // Refresh the glass sample mapping whenever the sidebar (or the surfaces sharing
         // this pipeline) resizes — INCLUDING while the drawer width animation is running.
         // UpdateGlassSurfaceBrush only sets brush Viewbox/Background properties (no layout
         // invalidation), so per-frame refresh during the 280ms toggle is cheap and keeps
         // the frosted sample and its dark tint regions aligned with the animated surface
         // instead of stretching the stale region and snapping on completion.
+        long probeStart = SidebarPerfProbe.BeginGlassHandler(sender);
         UpdateGlassSurfaceBrushes();
+        SidebarPerfProbe.EndGlassHandler(probeStart);
     }
 
     private System.Windows.Media.ImageSource? _solidWallpaperFallback;
@@ -1345,14 +1405,12 @@ InitializeComponent();
         }
     }
 
-    // Display-sized decode target: actual background area Ã— DPI Ã— margin, capped
-    // so 8K sources stay bounded. Decoding beyond display size is invisible once
-    // stretched (UniformToFill downscales on GPU anyway); the decoder clamps to
-    // native size, so small files are unaffected.
+    // Display-sized decode target: actual background area clamped to screen size.
+    // Decoding beyond display size is invisible once stretched (UniformToFill downscales on GPU anyway);
+    // matching screen width saves up to 85% GPU texture bandwidth and avoids frame drops during scrolling.
     private int ComputeWallpaperDecodeWidth()
     {
-        // Decode at full resolution so preload and selection share one cache key.
-        return 3840;
+        return MusicPlayer.Utilities.WallpaperDecodeCache.GetDisplayDecodeWidth();
     }
 
     // Last-resort background: a tiny cached bitmap stretched to a solid theme
@@ -1610,6 +1668,7 @@ InitializeComponent();
 
     private void RootBorder_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        if (_isInSizeMove) return;
         UpdateNativeCaptionButtonCutout();
         MarkGlassBackdropDirty();
         UpdateGlassSurfaceBrushes();
@@ -1928,16 +1987,54 @@ InitializeComponent();
                 catch { }
             }
         }
+        else if (msg == WM_ENTERSIZEMOVE)
+        {
+            _isInSizeMove = true;
+            OnEnterSizeMove();
+        }
+        else if (msg == WM_EXITSIZEMOVE)
+        {
+            _isInSizeMove = false;
+            OnExitSizeMove();
+        }
         return IntPtr.Zero;
     }
 
     private const int WM_GETMINMAXINFO = 0x0024;
     private const int WM_NCHITTEST = 0x0084;
+    private const int WM_ENTERSIZEMOVE = 0x0231;
+    private const int WM_EXITSIZEMOVE = 0x0232;
+
+    private void OnEnterSizeMove()
+    {
+        if (ContentGrid != null && ContentGrid.Visibility == Visibility.Visible) ContentGrid.CacheMode = _fpTransitionCache;
+        if (HeaderGlassLayer != null) HeaderGlassLayer.CacheMode = _fpTransitionCache;
+        if (BackgroundImage != null) BackgroundImage.CacheMode = _fpTransitionCache;
+        if (BackgroundGradientOverlay != null) BackgroundGradientOverlay.CacheMode = _fpTransitionCache;
+        if (MiniPlayerBorder != null) MiniPlayerBorder.CacheMode = _fpTransitionCache;
+    }
+
+    private void OnExitSizeMove()
+    {
+        if (ContentGrid != null) ContentGrid.CacheMode = null;
+        if (HeaderGlassLayer != null) HeaderGlassLayer.CacheMode = null;
+        if (BackgroundImage != null) BackgroundImage.CacheMode = null;
+        if (BackgroundGradientOverlay != null) BackgroundGradientOverlay.CacheMode = null;
+        if (MiniPlayerBorder != null) MiniPlayerBorder.CacheMode = null;
+
+        UpdateNativeCaptionButtonCutout();
+        MarkGlassBackdropDirty();
+        UpdateGlassSurfaceBrushes();
+        UpdateTracksScrollbarInset();
+        _resizeMarqueeTimer.Stop();
+        _resizeMarqueeTimer.Start();
+    }
     private const int HTCLIENT = 1;
     private const int HTCAPTION = 2;
     private const int HTMAXBUTTON = 9;
     private const int MinimumWindowWidthDip = 1116;
     private const int MinimumWindowHeightDip = 650;
+    private static readonly bool _testMinMax = Environment.GetEnvironmentVariable("MUSICPLAYER_TEST_MINMAX") == "1";
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct POINT { public int x; public int y; }
@@ -1986,6 +2083,10 @@ InitializeComponent();
             try
             {
                 var mmi = System.Runtime.InteropServices.Marshal.PtrToStructure<MINMAXINFO>(lParam);
+                var rawMaxSize = mmi.ptMaxSize;
+                var rawMaxPos = mmi.ptMaxPosition;
+                var rawMinTrack = mmi.ptMinTrackSize;
+
                 // AppWindow's non-client implementation queries this message
                 // directly. Because this hook owns WM_GETMINMAXINFO, WPF's
                 // MinWidth/MinHeight are not applied unless we set the tracking
@@ -1994,19 +2095,28 @@ InitializeComponent();
                 if (dpi == 0) dpi = 96;
                 mmi.ptMinTrackSize.x = (int)Math.Ceiling(MinimumWindowWidthDip * dpi / 96.0);
                 mmi.ptMinTrackSize.y = (int)Math.Ceiling(MinimumWindowHeightDip * dpi / 96.0);
-                nint monitor = MonitorFromWindow(hwnd, 2);
-                if (monitor != nint.Zero)
+
+                if (_testMinMax)
                 {
-                    var mi = new MONITORINFO();
-                    mi.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(MONITORINFO));
-                    if (GetMonitorInfo(monitor, ref mi))
+                    LogHelper.LogInfo($"[MINMAX-B] rawMax={rawMaxSize.x}x{rawMaxSize.y} rawPos={rawMaxPos.x},{rawMaxPos.y} rawMin={rawMinTrack.x}x{rawMinTrack.y} appliedMin={mmi.ptMinTrackSize.x}x{mmi.ptMinTrackSize.y}");
+                }
+                else
+                {
+                    LogHelper.LogInfo($"[MINMAX-A] rawMax={rawMaxSize.x}x{rawMaxSize.y} rawPos={rawMaxPos.x},{rawMaxPos.y} rawMin={rawMinTrack.x}x{rawMinTrack.y}");
+                    nint monitor = MonitorFromWindow(hwnd, 2);
+                    if (monitor != nint.Zero)
                     {
-                        var work = mi.rcWork;
-                        var mon = mi.rcMonitor;
-                        mmi.ptMaxPosition.x = work.Left - mon.Left;
-                        mmi.ptMaxPosition.y = work.Top - mon.Top;
-                        mmi.ptMaxSize.x = work.Right - work.Left;
-                        mmi.ptMaxSize.y = work.Bottom - work.Top;
+                        var mi = new MONITORINFO();
+                        mi.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(MONITORINFO));
+                        if (GetMonitorInfo(monitor, ref mi))
+                        {
+                            var work = mi.rcWork;
+                            var mon = mi.rcMonitor;
+                            mmi.ptMaxPosition.x = work.Left - mon.Left;
+                            mmi.ptMaxPosition.y = work.Top - mon.Top;
+                            mmi.ptMaxSize.x = work.Right - work.Left;
+                            mmi.ptMaxSize.y = work.Bottom - work.Top;
+                        }
                     }
                 }
                 System.Runtime.InteropServices.Marshal.StructureToPtr(mmi, lParam, true);
@@ -6454,7 +6564,6 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
 
     // â”€â”€â”€ Lyrics auto-scroll + slide animation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private CurrentlyPlayingPage _previousPlayingPage = CurrentlyPlayingPage.AlbumArt;
-
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.CurrentLyricIndex))
@@ -7521,12 +7630,72 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         // animated border frame-by-frame, so the page content slides smoothly while opening
         // (identical to the already-smooth closing) instead of jumping ~180px the moment the
         // toggle starts. Auto always measures >= the animated border, so nothing clips.
+        //
+        // ── GPU Bitmap Caching during sidebar slide ──
+        // Animating SidebarBorder.Width causes the Auto SidebarColumn to re-measure
+        // every frame, which triggers a full layout + render pass on ContentGrid
+        // (songs table, home cards, etc.) and the 4K wallpaper. On Intel HD 4400
+        // this exceeds the fill-rate budget and drops to ~20 FPS.
+        // Freezing the heavy layers into GPU textures for the 280ms duration
+        // eliminates re-rasterization — the compositor just composites cached bitmaps.
+        //
+        // A/B diagnosis: the probe can disable these caches for the sidebar path only
+        // (MUSICPLAYER_SIDEBAR_CACHE=none|fixed) so the claim above is measured, not
+        // assumed. With the probe disabled CacheMode is All and the production path
+        // below is byte-for-byte the previous behaviour.
+        SidebarPerfProbe.BeginToggle(open, ViewModel?.CurrentView ?? "?",
+            SidebarBorder, HeaderGlassSurface, ContentGrid, SidebarColumn);
+
+        var cacheMode = SidebarPerfProbe.CacheMode;
+        bool cacheContent = cacheMode == SidebarCacheMode.All;
+        bool cacheFixed = cacheMode == SidebarCacheMode.All || cacheMode == SidebarCacheMode.FixedOnly;
+        bool cacheContentGrid = cacheContent && ContentGrid != null && ContentGrid.Visibility == Visibility.Visible;
+        bool cacheHeader = cacheContent && HeaderGlassLayer != null;
+        bool cacheBackground = cacheFixed && BackgroundImage != null;
+        bool cacheGradient = cacheFixed && BackgroundGradientOverlay != null;
+        bool cacheMiniPlayer = cacheFixed && MiniPlayerBorder != null;
+
+        long cacheApplyStart = SidebarPerfProbe.BeginCacheApply();
+        if (cacheContentGrid) ContentGrid!.CacheMode = _fpTransitionCache;
+        if (cacheHeader) HeaderGlassLayer!.CacheMode = _fpTransitionCache;
+        if (cacheBackground) BackgroundImage!.CacheMode = _fpTransitionCache;
+        if (cacheGradient) BackgroundGradientOverlay!.CacheMode = _fpTransitionCache;
+        if (cacheMiniPlayer) MiniPlayerBorder!.CacheMode = _fpTransitionCache;
+        SidebarPerfProbe.EndCacheApply(cacheApplyStart);
 
         var widthAnim = new DoubleAnimation(SidebarBorder.ActualWidth, targetWidth, duration) { EasingFunction = ease };
         widthAnim.Completed += (_, _) =>
         {
-            UpdateGlassSurfaceBrushes();
-            UpdateAppWindowTitleBarDragRegions();
+            SidebarPerfProbe.EndMotion();
+
+            // Release GPU caches — text is now razor-sharp again
+            long cacheReleaseStart = SidebarPerfProbe.BeginCacheRelease();
+            if (cacheContentGrid) ContentGrid!.CacheMode = null;
+            if (cacheHeader) HeaderGlassLayer!.CacheMode = null;
+            if (cacheBackground) BackgroundImage!.CacheMode = null;
+            if (cacheGradient) BackgroundGradientOverlay!.CacheMode = null;
+            if (cacheMiniPlayer) MiniPlayerBorder!.CacheMode = null;
+            SidebarPerfProbe.EndCacheRelease(cacheReleaseStart);
+
+            try
+            {
+                long finalGlassStart = SidebarPerfProbe.BeginFinalGlassUpdate();
+                UpdateGlassSurfaceBrushes();
+                SidebarPerfProbe.EndFinalGlassUpdate(finalGlassStart);
+
+                long titleBarStart = SidebarPerfProbe.BeginTitleBarUpdate();
+                UpdateAppWindowTitleBarDragRegions();
+                SidebarPerfProbe.EndTitleBarUpdate(titleBarStart);
+            }
+            finally
+            {
+                // Read the final widths after WPF has applied the animation's end
+                // value in a layout pass; reading inside Completed sees the last
+                // animated frame (e.g. 52 px instead of 50 px).
+                Dispatcher.BeginInvoke(
+                    new Action(() => SidebarPerfProbe.EndToggle("completed")),
+                    System.Windows.Threading.DispatcherPriority.Background);
+            }
         };
         SidebarBorder.BeginAnimation(FrameworkElement.WidthProperty, widthAnim);
         SidebarBrandButton.BeginAnimation(

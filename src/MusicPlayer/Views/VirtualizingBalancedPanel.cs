@@ -49,6 +49,9 @@ namespace MusicPlayer.Views
         private const double RowHeightEstimate = 200;
         private readonly TranslateTransform _scrollTranslation = new();
         private double _arrangedOffset;
+        private int _realizedFirstIndex = int.MaxValue;
+        private int _realizedLastIndex = -1;
+        private int _realizedCount;
 
         // Solve() only depends on the available width and the three sizing DPs.
         // It used to run twice per measure and once per arrange even when nothing
@@ -273,26 +276,12 @@ namespace MusicPlayer.Views
                 {
                     VisibleRange targetRange = CalculateVisibleRange(
                         owner.Items.Count, _cols, offset, _viewport.Height, _rowHeight, Gap, CacheRows);
-                    int firstRealizedIndex = int.MaxValue;
-                    int lastRealizedIndex = -1;
-                    int realizedCount = 0;
-                    bool hasInvalidIndex = false;
-                    foreach (UIElement child in InternalChildren)
-                    {
-                        int index = owner.ItemContainerGenerator.IndexFromContainer(child);
-                        if (index < 0)
-                        {
-                            hasInvalidIndex = true;
-                            break;
-                        }
-
-                        firstRealizedIndex = Math.Min(firstRealizedIndex, index);
-                        lastRealizedIndex = Math.Max(lastRealizedIndex, index);
-                        realizedCount++;
-                    }
-
-                    needsMeasure = hasInvalidIndex || !IsRealizedRangeCovered(
-                        targetRange, firstRealizedIndex, lastRealizedIndex, realizedCount);
+                    needsMeasure = _realizedCount == 0
+                        || !IsRealizedRangeCovered(
+                            targetRange,
+                            _realizedFirstIndex,
+                            _realizedLastIndex,
+                            _realizedCount);
                 }
 
                 _scrollTranslation.Y = GetScrollTranslation(_arrangedOffset, offset);
@@ -428,6 +417,9 @@ namespace MusicPlayer.Views
             }
 
             // Cleanup containers outside range
+            _realizedFirstIndex = int.MaxValue;
+            _realizedLastIndex = -1;
+            _realizedCount = 0;
             for (int i = InternalChildren.Count - 1; i >= 0; i--)
             {
                 var container = InternalChildren[i];
@@ -440,6 +432,12 @@ namespace MusicPlayer.Views
                         RemoveInternalChildRange(i, 1);
                     }
                     catch { }
+                }
+                else if (index >= 0)
+                {
+                    _realizedFirstIndex = Math.Min(_realizedFirstIndex, index);
+                    _realizedLastIndex = Math.Max(_realizedLastIndex, index);
+                    _realizedCount++;
                 }
             }
 

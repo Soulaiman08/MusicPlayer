@@ -737,6 +737,9 @@ public class RoundedClipConverter : IMultiValueConverter
 
     public object? Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
     {
+        long probeStart = parameter is "sidebar"
+            ? MusicPlayer.Diagnostics.SidebarPerfProbe.BeginClipConvert()
+            : 0;
         double r = 16;
         if (parameter is "sidebar")
         {
@@ -753,9 +756,11 @@ public class RoundedClipConverter : IMultiValueConverter
             {
                 var geom = new RectangleGeometry(new Rect(0, 0, w, h), r, r);
                 geom.Freeze();
+                MusicPlayer.Diagnostics.SidebarPerfProbe.EndClipConvert(probeStart);
                 return geom;
             }
         }
+        MusicPlayer.Diagnostics.SidebarPerfProbe.EndClipConvert(probeStart);
         return null;
     }
 

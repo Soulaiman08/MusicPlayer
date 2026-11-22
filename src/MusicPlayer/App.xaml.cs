@@ -129,7 +129,15 @@ public partial class App : Application
         // the GPU is under sustained load (Intel HD 4400 compositing 4K wallpaper + glass +
         // animations). Disabling it forces WPF to redraw the full back-buffer every present,
         // which is a small cost compared to the visual corruption it eliminates.
-        AppContext.SetSwitch("Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles", true);
+        // Dirty-rectangle A/B: preserve the baseline unless explicitly enabled.
+        bool enableDirtyRectangles =
+            string.Equals(
+                Environment.GetEnvironmentVariable("MUSICPLAYER_DIRTY_RECTANGLES"),
+                "enable",
+                StringComparison.OrdinalIgnoreCase);
+        AppContext.SetSwitch(
+            "Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles",
+            !enableDirtyRectangles);
 
         ForceIntegratedGpu();
         RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.Default;

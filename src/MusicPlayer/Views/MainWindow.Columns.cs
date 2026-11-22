@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -340,9 +340,18 @@ private void SongsScroller_ScrollChanged(object sender, ScrollChangedEventArgs e
 
     private void UpdateTracksScrollbarInset()
     {
-        SyncHeaderToViewport(_songsSync);
-        SyncHeaderToViewport(_albumSync);
-        foreach (var st in _sharedSyncs) SyncHeaderToViewport(st);
+        if (_isInSizeMove) return;
+        long probeStart = MusicPlayer.Diagnostics.SidebarPerfProbe.BeginInsetSync();
+        try
+        {
+            SyncHeaderToViewport(_songsSync);
+            SyncHeaderToViewport(_albumSync);
+            foreach (var st in _sharedSyncs) SyncHeaderToViewport(st);
+        }
+        finally
+        {
+            MusicPlayer.Diagnostics.SidebarPerfProbe.EndInsetSync(probeStart);
+        }
     }
 
     /// <summary>

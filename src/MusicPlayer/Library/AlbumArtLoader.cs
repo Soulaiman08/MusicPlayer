@@ -242,11 +242,9 @@ public class AlbumArtLoader : IDisposable
     private readonly bool _ownsCoordinator;
 
     // Direct in-memory cache mirrors for test inspection compatibility.
-    // They are deliberately bounded by byte budget: the coordinator's LRU only evicts its own
-    // map, so an unbounded mirror here pinned every decoded bitmap for the
-    // whole session (one of the main sources of the 550-650 MB private set).
-    private const long ThumbnailCacheBudgetBytes = 16L * 1024 * 1024; // 16 MB
-    private const long MediumCacheBudgetBytes = 32L * 1024 * 1024;   // 32 MB
+    // Generous budgets to avoid constant thrashing and re-extraction across library views.
+    private const long ThumbnailCacheBudgetBytes = 64L * 1024 * 1024; // 64 MB
+    private const long MediumCacheBudgetBytes = 64L * 1024 * 1024;   // 64 MB
     private const long FullCacheBudgetBytes = 64L * 1024 * 1024;     // 64 MB
 
     private readonly ConcurrentDictionary<string, ImageSource?> _cache = new();
@@ -727,6 +725,35 @@ public class AlbumArtLoader : IDisposable
                 {
                     var art = _coordinator.LoadAlbumArtAsync(track, track.FilePath, ImageQuality.Thumbnail, ImagePriority.Preload, cancellationToken).GetAwaiter().GetResult();
                     if (art != null) StoreBounded(_cache, _cacheSizes, ref _currentCacheBytes, ThumbnailCacheBudgetBytes, track.FilePath, art);
+                }
+                catch { }
+            });
+        }, cancellationToken);
+    }
+
+    public Task PreloadAlbumArtwork(
+        IEnumerable<MusicTrack> albums,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.Run(() =>
+        {
+            var list = albums.Where(t => t != null && !string.IsNullOrEmpty(t.FilePath)).ToList();
+            if (list.Count == 0) return;
+
+            Parallel.ForEach(list, new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 8),
+                CancellationToken = cancellationToken
+            }, album =>
+            {
+                try
+                {
+                    string path = ResolveTrackArtPath(album) ?? album.FilePath;
+                    if (string.IsNullOrEmpty(path)) return;
+
+                    var art = _coordinator.LoadAlbumArtAsync(album, path, ImageQuality.Medium, ImagePriority.Preload, cancellationToken).GetAwaiter().GetResult();
+                    if (art != null)
+                        StoreBounded(_mediumCache, _mediumCacheSizes, ref _currentMediumCacheBytes, MediumCacheBudgetBytes, path, art);
                 }
                 catch { }
             });

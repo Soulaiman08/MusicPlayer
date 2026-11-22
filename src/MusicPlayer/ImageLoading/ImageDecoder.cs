@@ -7,8 +7,8 @@ namespace MusicPlayer.ImageLoading;
 
 public static class ImageDecoder
 {
-    public const int ThumbnailPixelSize = 80;
-    public const int MediumPixelSize = 220;
+    public const int ThumbnailPixelSize = 100;
+    public const int MediumPixelSize = 256;
     public const int LargePixelSize = 512;
     public const int FullPixelSize = 1024;
 
