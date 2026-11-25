@@ -400,7 +400,7 @@ namespace MusicPlayer.Views
                         bool newlyRealized;
                         var container = generator.GenerateNext(out newlyRealized) as UIElement;
                         if (container == null) continue;
-                        if (newlyRealized)
+                        if (newlyRealized || !InternalChildren.Contains(container))
                         {
                             if (childIndex >= InternalChildren.Count)
                                 AddInternalChild(container);
@@ -416,10 +416,13 @@ namespace MusicPlayer.Views
                 }
             }
 
-            // Cleanup containers outside range
+            // Cleanup / recycle containers outside range
             _realizedFirstIndex = int.MaxValue;
             _realizedLastIndex = -1;
             _realizedCount = 0;
+            var recyclingGenerator = generator as IRecyclingItemContainerGenerator;
+            bool useRecycling = recyclingGenerator != null &&
+                (Owner == null || VirtualizingPanel.GetVirtualizationMode(Owner) == VirtualizationMode.Recycling);
             for (int i = InternalChildren.Count - 1; i >= 0; i--)
             {
                 var container = InternalChildren[i];
@@ -428,10 +431,20 @@ namespace MusicPlayer.Views
                 {
                     try
                     {
-                        generator.Remove(generator.GeneratorPositionFromIndex(index), 1);
+                        if (index >= 0)
+                        {
+                            var pos = generator.GeneratorPositionFromIndex(index);
+                            if (useRecycling)
+                                recyclingGenerator!.Recycle(pos, 1);
+                            else
+                                generator.Remove(pos, 1);
+                        }
                         RemoveInternalChildRange(i, 1);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        MusicPlayer.Utilities.LogHelper.LogError("VirtualizingBalancedPanel.Recycle", ex);
+                    }
                 }
                 else if (index >= 0)
                 {
@@ -466,6 +479,12 @@ namespace MusicPlayer.Views
                 _lastInfoOffset = _offset.Y;
                 _scrollOwner?.InvalidateScrollInfo();
             }
+
+            if (_scrollOwner != null && Math.Abs(_arrangedOffset - _offset.Y) > 0.001)
+                InvalidateArrange();
+
+            if (Environment.GetEnvironmentVariable("MUSICPLAYER_PERFTEST") == "1" && itemCount > 0 && InternalChildren.Count < (lastIndex - firstIndex + 1))
+                MusicPlayer.Utilities.LogHelper.LogInfo($"[VBP-MISMATCH] first={firstIndex} last={lastIndex} expected={lastIndex - firstIndex + 1} actualChildren={InternalChildren.Count} realized={_realizedCount} offset={_offset.Y:0.0}");
 
             return new Size(width, _extent.Height);
         }

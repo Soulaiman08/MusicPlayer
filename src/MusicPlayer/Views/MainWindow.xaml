@@ -20,16 +20,18 @@
 
   <Border Name="RootBorder" Background="Transparent" ClipToBounds="True" Margin="{Binding Padding, RelativeSource={RelativeSource AncestorType=Window}}" Loaded="RootBorder_Loaded" SizeChanged="RootBorder_SizeChanged">
     <Grid Background="#FF13161C">
-      <Image Name="BackgroundImage" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" />
-      <Border x:Name="BackgroundGradientOverlay" IsHitTestVisible="False">
-        <Border.Background>
-          <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#4D15181F" Offset="0" />
-            <GradientStop Color="#33181B24" Offset="0.5" />
-            <GradientStop Color="#59111318" Offset="1" />
-          </LinearGradientBrush>
-        </Border.Background>
-      </Border>
+      <Grid x:Name="WallpaperBackdropGrid" IsHitTestVisible="False">
+        <Image Name="BackgroundImage" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <Border x:Name="BackgroundGradientOverlay" IsHitTestVisible="False">
+          <Border.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+              <GradientStop Color="#4D15181F" Offset="0" />
+              <GradientStop Color="#33181B24" Offset="0.5" />
+              <GradientStop Color="#59111318" Offset="1" />
+            </LinearGradientBrush>
+          </Border.Background>
+        </Border>
+      </Grid>
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto" />
@@ -781,6 +783,17 @@
           </Border>
 
           <!-- ContentGrid placed in Grid.Column="1", spans Row 0 and Row 1 on home -->
+          <!-- IMPORTANT (dead-strip fix): ScrollViewers keep vertical Padding = 0 so content
+               can reach the bars while scrolling. The top/bottom breathing room belongs to
+               the SCROLLABLE CONTENT instead — ItemsControls use Padding="0,8,0,8", so the
+               8px gap appears only at the very start and the very end of the list and
+               scrolls away with the items. Do NOT move that spacing onto the ScrollViewer:
+               it becomes a fixed band that hides rows under the TopBar / above the
+               MiniPlayer. Keep this pattern when restyling either bar or adding pages.
+               Likewise keep the TopBar's own internal margins (tabs row top 8px, header
+               left grid bottom 10px) — zeroing those shrinks the header itself. The
+               Sidebar's bottom margin must stay 8px too, otherwise it touches the
+               MiniPlayer. -->
           <Grid Name="ContentGrid" Grid.Column="1" Visibility="Collapsed">
             <Grid.Style>
               <Style TargetType="Grid">
@@ -1158,7 +1171,7 @@
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="6" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="Linear" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" Foreground="#FFFFFFFF" FontSize="12.5" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
@@ -1174,9 +1187,9 @@
                     </ItemsControl.ItemTemplate>
                   </ListBox>
                   <Grid x:Name="AllSongsGridPanel" Grid.Row="0" Grid.RowSpan="2" Visibility="{Binding IsSongsGridView, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}">
-                    <ScrollViewer x:Name="SongsGridScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,8,20,16"
+                    <ScrollViewer x:Name="SongsGridScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,0,20,0"
                                   CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                      <ItemsControl ItemsSource="{Binding DisplayedTracks}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                      <ItemsControl Padding="0,8,0,8" ItemsSource="{Binding DisplayedTracks}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                         <ItemsControl.ItemsPanel>
                           <ItemsPanelTemplate>
                             <local:VirtualizingBalancedPanel MinItemWidth="260" MaxItemWidth="360" Gap="12"/>
@@ -1204,14 +1217,14 @@
                                   <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Border Width="84" Height="84" CornerRadius="7" ClipToBounds="True" Background="#20FFFFFF" VerticalAlignment="Center">
-                                  <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="LowQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                  <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="Linear" Source="{Binding Converter={StaticResource AlbumArtConverter}, ConverterParameter=small}" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="12,0,6,0" VerticalAlignment="Center">
                                   <TextBlock Foreground="#FFFFFFFF" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
                                   <TextBlock Foreground="#C8FFFFFF" FontSize="12" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
                                   <TextBlock Foreground="#96FFFFFF" FontSize="11.5" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Text="{Binding Album, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Album}" />
                                 </StackPanel>
-                                <Button Grid.Column="2" VerticalAlignment="Top" HorizontalAlignment="Right" Style="{StaticResource APK_IconButton}" Width="28" Height="28" Margin="0,-2,-2,0" ToolTip="Options" Command="{Binding DataContext.OpenTrackBottomSheetCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
+                                <Button Grid.Column="2" VerticalAlignment="Top" HorizontalAlignment="Right" Style="{StaticResource APK_IconButton}" Width="28" Height="28" Margin="0,-2,-2,0" ToolTip="Options" Click="TrackOptionsButton_Click">
                                   <Path Data="{StaticResource Icon.More}" Fill="#88FFFFFF" Stretch="Uniform" Width="13" Height="13" />
                                 </Button>
                               </Grid>
@@ -1223,9 +1236,9 @@
                   </Grid>
                 </Grid>
                 <Grid Name="TabContent_Artists" Visibility="Collapsed">
-                  <ScrollViewer Name="ArtistsSearchScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20"
+                  <ScrollViewer Name="ArtistsSearchScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,0,20,0"
                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                    <ItemsControl ItemsSource="{Binding DisplayedArtists}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ItemsControl Padding="0,8,0,8" ItemsSource="{Binding DisplayedArtists}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
@@ -1234,13 +1247,13 @@
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
                           <Border Cursor="Hand" Margin="0,0" HorizontalAlignment="Stretch" MouseLeftButtonUp="ArtistRow_Click">
-                            <StackPanel HorizontalAlignment="Center">
-                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}">
+                            <StackPanel HorizontalAlignment="Stretch">
+                              <Grid HorizontalAlignment="Stretch" Height="{Binding ActualWidth, RelativeSource={RelativeSource Self}}">
                                 <UIElement.Clip>
-                                  <Binding Path="ItemWidth" RelativeSource="{RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}" Converter="{StaticResource CircleClipConverter}" />
+                                  <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" Converter="{StaticResource CircleClipConverter}" />
                                 </UIElement.Clip>
                                 <Border Background="#28FFFFFF" />
-                                <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" />
+                                <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="Linear" />
                                 <Path Data="{StaticResource Icon.Artist}" Fill="#AAFFFFFF" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" VerticalAlignment="Center">
                                   <FrameworkElement.Style>
                                     <Style TargetType="{x:Type Path}">
@@ -1263,8 +1276,8 @@
                   </ScrollViewer>
                 </Grid>
                 <Grid Name="TabContent_Albums" Visibility="Collapsed">
-                  <ScrollViewer x:Name="AlbumsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,10,20,20" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                    <ItemsControl ItemsSource="{Binding DisplayedAlbums}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                  <ScrollViewer x:Name="AlbumsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="20,0,20,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ItemsControl Padding="0,8,0,8" ItemsSource="{Binding DisplayedAlbums}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <local:VirtualizingBalancedPanel MinItemWidth="150" MaxItemWidth="176" Gap="10"/>
@@ -1273,13 +1286,13 @@
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
                           <Border Cursor="Hand" Margin="0" HorizontalAlignment="Stretch" MouseLeftButtonUp="AlbumRow_Click">
-                            <StackPanel HorizontalAlignment="Center">
-                              <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" ClipToBounds="True">
+                            <StackPanel HorizontalAlignment="Stretch">
+                              <Grid HorizontalAlignment="Stretch" Height="{Binding ActualWidth, RelativeSource={RelativeSource Self}}" ClipToBounds="True">
                                 <Border Background="#28FFFFFF" />
-                                <Image Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium}" />
+                                <Image Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="Linear" Source="{Binding Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium}" />
                               </Grid>
-                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="13" Foreground="#B8FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Text="{Binding Album}" />
-                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="11" Foreground="#80FFFFFF" HorizontalAlignment="Center" MaxWidth="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Text="{Binding Artist}" />
+                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="13" Foreground="#B8FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0" Text="{Binding Album}" />
+                              <TextBlock TextTrimming="CharacterEllipsis" FontSize="11" Foreground="#80FFFFFF" HorizontalAlignment="Center" Text="{Binding Artist}" />
                             </StackPanel>
                           </Border>
                         </DataTemplate>
@@ -1288,8 +1301,8 @@
                   </ScrollViewer>
                 </Grid>
                 <Grid Name="TabContent_Genres" Visibility="Collapsed">
-                  <ScrollViewer x:Name="GenresScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">
-                    <ItemsControl ItemsSource="{Binding DisplayedGenres}" VerticalAlignment="Top">
+                  <ScrollViewer x:Name="GenresScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,0,20,0" CanContentScroll="False" VerticalContentAlignment="Top">
+                    <ItemsControl Padding="0,8,0,8" ItemsSource="{Binding DisplayedGenres}" VerticalAlignment="Top">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <local:BalancedItemsPanel MinItemWidth="132" MaxItemWidth="176" Gap="10"/>
@@ -1316,8 +1329,8 @@
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
-                  <ScrollViewer x:Name="FoldersScroll" Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,4,20,12" CanContentScroll="False" VerticalContentAlignment="Top">
-                    <ItemsControl ItemsSource="{Binding Folders}" VerticalAlignment="Top">
+                  <ScrollViewer x:Name="FoldersScroll" Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,0,20,0" CanContentScroll="False" VerticalContentAlignment="Top">
+                    <ItemsControl Padding="0,8,0,8" ItemsSource="{Binding Folders}" VerticalAlignment="Top">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <local:BalancedItemsPanel MinItemWidth="132" MaxItemWidth="176" Gap="10"/>
@@ -1777,9 +1790,9 @@
                 <TextBlock Grid.Column="1" Text="ARTISTS" Style="{StaticResource APK_TextSectionTitle}" VerticalAlignment="Center" />
               </Grid>
             </Border>
-            <ScrollViewer Name="MainArtistsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="16,8,16,12"
+            <ScrollViewer Name="MainArtistsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" Padding="16,0,16,0"
                           VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-              <ItemsControl ItemsSource="{Binding Artists}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+              <ItemsControl Padding="0,8,0,8" ItemsSource="{Binding Artists}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
                     <local:VirtualizingBalancedPanel MinItemWidth="132" MaxItemWidth="176" Gap="10"/>
@@ -1788,13 +1801,13 @@
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Margin="4,4" Cursor="Hand" HorizontalAlignment="Stretch" MouseLeftButtonUp="ArtistRow_Click">
-                      <StackPanel HorizontalAlignment="Center">
-                        <Grid HorizontalAlignment="Center" Width="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}" Height="{Binding ItemWidth, RelativeSource={RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}}">
+                      <StackPanel HorizontalAlignment="Stretch">
+                        <Grid HorizontalAlignment="Stretch" Height="{Binding ActualWidth, RelativeSource={RelativeSource Self}}">
                           <UIElement.Clip>
-                            <Binding Path="ItemWidth" RelativeSource="{RelativeSource AncestorType={x:Type local:VirtualizingBalancedPanel}}" Converter="{StaticResource CircleClipConverter}" />
+                            <Binding Path="ActualWidth" RelativeSource="{RelativeSource Self}" Converter="{StaticResource CircleClipConverter}" />
                           </UIElement.Clip>
                           <Border Background="#28FFFFFF" />
-                          <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" />
+                          <controls:AsyncArtistImage x:Name="ArtistThumb" ArtistName="{Binding Artist}" Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="Linear" />
                           <Path Data="{StaticResource Icon.Artist}" Fill="#AAFFFFFF" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <FrameworkElement.Style>
                               <Style TargetType="{x:Type Path}">
@@ -1821,7 +1834,10 @@
               <RowDefinition Height="Auto" />
               <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Border Name="ArtistDetailBackRow" Grid.Row="0" Padding="16,10,24,4" HorizontalAlignment="Left">
+            <!-- Back is handled by the single TopBar button (SidebarBackButton), which
+                 routes to the same hero-reverse handlers. This duplicate in-page row
+                 is collapsed; keep the element because the transition code animates it. -->
+            <Border Name="ArtistDetailBackRow" Grid.Row="0" Padding="16,10,24,4" HorizontalAlignment="Left" Visibility="Collapsed">
               <Button Style="{StaticResource APK_IconButton}" Width="36" Height="36" ToolTip="Back" Click="ArtistDetailBack_Click">
                 <Path Data="{StaticResource Icon.Back}" Fill="#FFFFFFFF" Stretch="Uniform" Width="16" Height="16" />
               </Button>
@@ -1835,20 +1851,8 @@
                 <UIElement.Clip>
                   <EllipseGeometry Center="150,150" RadiusX="150" RadiusY="150" />
                 </UIElement.Clip>
-                <Ellipse Width="300" Height="300" HorizontalAlignment="Center" VerticalAlignment="Center" Fill="#222222" Stroke="#444444" StrokeThickness="3" />
+                <!-- Uses the shared default artist image (same placeholder as the grid tiles). -->
                 <Image Stretch="UniformToFill" Width="300" Height="300" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" Source="{Binding CurrentArtistName, Converter={StaticResource ArtistImageConverter}, ConverterParameter=full}" />
-                <Path Data="{StaticResource Icon.Artist}" Fill="#AAAAAA" Stretch="Uniform" Width="100" Height="100" HorizontalAlignment="Center" VerticalAlignment="Center">
-                  <FrameworkElement.Style>
-                    <Style TargetType="{x:Type Path}">
-                      <Setter Property="Visibility" Value="Collapsed" />
-                      <Style.Triggers>
-                        <DataTrigger Value="" Binding="{Binding CurrentArtistName, Converter={StaticResource ArtistImageConverter}}">
-                          <Setter Property="Visibility" Value="Visible" />
-                        </DataTrigger>
-                      </Style.Triggers>
-                    </Style>
-                  </FrameworkElement.Style>
-                </Path>
               </Grid>
               <Grid Name="ArtistDetailInfo" Column="1" Margin="0,20,24,20">
                 <Grid.RowDefinitions>
@@ -1877,88 +1881,94 @@
                   </StackPanel>
                 </Grid>
                 <TextBlock Grid.Row="1" FontSize="14" Foreground="#99FFFFFF" Margin="0,0,0,16" Text="{Binding ArtistDetailStats}" />
-                <Grid Row="2" Margin="0,0,0,12">
+                <Grid Row="2" Margin="0,0,0,14">
+                  <Grid.Resources>
+                    <Style x:Key="ArtistDetailTabBase" TargetType="Button">
+                      <Setter Property="Foreground" Value="#A8FFFFFF" />
+                      <Setter Property="FontSize" Value="13" />
+                      <Setter Property="Padding" Value="16,9" />
+                      <Setter Property="Cursor" Value="Hand" />
+                      <Setter Property="Background" Value="#12FFFFFF" />
+                      <Setter Property="BorderBrush" Value="#1EFFFFFF" />
+                      <Setter Property="Template">
+                        <Setter.Value>
+                          <ControlTemplate TargetType="Button">
+                            <Border CornerRadius="10" BorderThickness="1" SnapsToDevicePixels="True"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}">
+                              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                Margin="{TemplateBinding Padding}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                              <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#20FFFFFF" />
+                              </Trigger>
+                              <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#2AFFFFFF" />
+                              </Trigger>
+                            </ControlTemplate.Triggers>
+                          </ControlTemplate>
+                        </Setter.Value>
+                      </Setter>
+                    </Style>
+                  </Grid.Resources>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
-                  <Button Grid.Column="0" Style="{StaticResource APK_TabButton}" CommandParameter="albums" Padding="8,6,8,6" Margin="0,0,8,0" Command="{Binding SwitchArtistDetailTabCommand}">
-                    <StackPanel>
-                      <TextBlock Text="Albums" FontSize="14" FontWeight="SemiBold" Foreground="#99FFFFFF" HorizontalAlignment="Center" TextAlignment="Center">
-                        <FrameworkElement.Style>
-                          <Style TargetType="{x:Type TextBlock}">
-                            <Setter Property="Foreground" Value="#99FFFFFF" />
-                            <Style.Triggers>
-                              <DataTrigger Value="True" Binding="{Binding IsArtistDetailAlbumsTab}">
-                                <Setter Property="Foreground" Value="#FF6C63FF" />
-                                <Setter Property="FontWeight" Value="Bold" />
-                              </DataTrigger>
-                            </Style.Triggers>
-                          </Style>
-                        </FrameworkElement.Style>
-                      </TextBlock>
-                      <Border Height="2" CornerRadius="1" HorizontalAlignment="Center" Margin="0,4,0,0">
-                        <FrameworkElement.Style>
-                          <Style TargetType="{x:Type Border}">
-                            <Setter Property="Background" Value="#00FFFFFF" />
-                            <Style.Triggers>
-                              <DataTrigger Value="True" Binding="{Binding IsArtistDetailAlbumsTab}">
-                                <Setter Property="Background" Value="#FF6C63FF" />
-                              </DataTrigger>
-                            </Style.Triggers>
-                          </Style>
-                        </FrameworkElement.Style>
-                      </Border>
+                  <Button Grid.Column="1" CommandParameter="albums" Margin="0,0,0,0"
+                          Command="{Binding SwitchArtistDetailTabCommand}">
+                    <Button.Style>
+                      <Style TargetType="Button" BasedOn="{StaticResource ArtistDetailTabBase}">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsArtistDetailAlbumsTab}" Value="True">
+                            <Setter Property="Background" Value="#306C63FF" />
+                            <Setter Property="BorderBrush" Value="#886C63FF" />
+                            <Setter Property="Foreground" Value="#FFFFFFFF" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Button.Style>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="Albums" />
+                      <TextBlock Text="{Binding ArtistAlbumCount, StringFormat='   {0}'}" FontSize="11" Opacity="0.75" VerticalAlignment="Center" />
                     </StackPanel>
                   </Button>
-                  <Button Grid.Column="1" Style="{StaticResource APK_TabButton}" CommandParameter="tracks" Padding="8,6,8,6" Margin="8,0,0,0" Command="{Binding SwitchArtistDetailTabCommand}">
-                    <StackPanel>
-                      <TextBlock Text="Tracks" FontSize="14" FontWeight="SemiBold" Foreground="#99FFFFFF" HorizontalAlignment="Center" TextAlignment="Center">
-                        <FrameworkElement.Style>
-                          <Style TargetType="{x:Type TextBlock}">
-                            <Setter Property="Foreground" Value="#99FFFFFF" />
-                            <Style.Triggers>
-                              <DataTrigger Value="True" Binding="{Binding IsArtistDetailTracksTab}">
-                                <Setter Property="Foreground" Value="#FF6C63FF" />
-                                <Setter Property="FontWeight" Value="Bold" />
-                              </DataTrigger>
-                            </Style.Triggers>
-                          </Style>
-                        </FrameworkElement.Style>
-                      </TextBlock>
-                      <Border Height="2" CornerRadius="1" HorizontalAlignment="Center" Margin="0,4,0,0">
-                        <FrameworkElement.Style>
-                          <Style TargetType="{x:Type Border}">
-                            <Setter Property="Background" Value="#00FFFFFF" />
-                            <Style.Triggers>
-                              <DataTrigger Value="True" Binding="{Binding IsArtistDetailTracksTab}">
-                                <Setter Property="Background" Value="#FF6C63FF" />
-                              </DataTrigger>
-                            </Style.Triggers>
-                          </Style>
-                        </FrameworkElement.Style>
-                      </Border>
+                  <Button Grid.Column="0" CommandParameter="tracks" Margin="0,0,10,0" Command="{Binding SwitchArtistDetailTabCommand}">
+                    <Button.Style>
+                      <Style TargetType="Button" BasedOn="{StaticResource ArtistDetailTabBase}">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsArtistDetailTracksTab}" Value="True">
+                            <Setter Property="Background" Value="#306C63FF" />
+                            <Setter Property="BorderBrush" Value="#886C63FF" />
+                            <Setter Property="Foreground" Value="#FFFFFFFF" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Button.Style>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="Tracks" />
+                      <TextBlock Text="{Binding ArtistTrackCount, StringFormat='   {0}'}" FontSize="11" Opacity="0.75" VerticalAlignment="Center" />
                     </StackPanel>
                   </Button>
-                </Grid>
-                <Border Grid.Row="3" Height="1" Background="#22FFFFFF" Margin="0,0,0,4" SnapsToDevicePixels="True" UseLayoutRounding="True" />
+                </Grid>                <Border Grid.Row="3" Height="1" Background="#22FFFFFF" Margin="0,0,0,4" SnapsToDevicePixels="True" UseLayoutRounding="True" />
                 <Grid Row="4" Name="ArtistDetailContentHost">
                   <Grid Visibility="{Binding ArtistDetailActiveTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=albums}">
-                    <!-- The list scrolls itself: the outer ScrollViewer used to
-                         remove the height constraint, so every album card was
-                         realized even though virtualization was requested. -->
-                    <ListBox ItemsSource="{Binding ArtistAlbums}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
-                      <ListBox.ItemsPanel>
-                        <ItemsPanelTemplate>
-                          <local:VirtualizingBalancedPanel MinItemWidth="152" MaxItemWidth="176" Gap="10"/>
-                        </ItemsPanelTemplate>
-                      </ListBox.ItemsPanel>
-                      <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Border Width="140" Margin="6,8" Cursor="Hand" MouseLeftButtonUp="ArtistAlbum_Click">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                  Padding="0,4,10,8" CanContentScroll="False">
+                      <ItemsControl ItemsSource="{Binding ArtistAlbums}">
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <WrapPanel ItemWidth="164" ItemHeight="204" HorizontalAlignment="Left" />
+                          </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <Border Width="148" Margin="4,4" Cursor="Hand" MouseLeftButtonUp="ArtistAlbum_Click">
                               <StackPanel>
-                                <Border Width="140" Height="140" CornerRadius="10" ClipToBounds="True" Background="#26FFFFFF">
-                                  <!-- Canonical album cover (one deterministic cover per album name), NOT the card's own track art -->
+                                <Border Width="148" Height="148" CornerRadius="10" ClipToBounds="True" Background="#26FFFFFF">
                                   <Image Stretch="UniformToFill" Style="{StaticResource RoundedImage10}" RenderOptions.BitmapScalingMode="HighQuality">
                                     <Image.Source>
                                       <MultiBinding Converter="{StaticResource AlbumCoverArtConverter}" ConverterParameter="medium">
@@ -1968,15 +1978,17 @@
                                     </Image.Source>
                                   </Image>
                                 </Border>
-                                <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" Margin="0,8,0,0" Text="{Binding Album}" />
-                                <TextBlock FontSize="12" Foreground="#80FFFFFF" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" Text="{Binding Artist}" />
+                                <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"
+                                           Margin="2,8,2,0" Text="{Binding Album}" ToolTip="{Binding Album}" />
+                                <TextBlock FontSize="11" Foreground="#80FFFFFF" TextTrimming="CharacterEllipsis"
+                                           Margin="2,2,2,0" Text="{Binding Artist}" ToolTip="{Binding Artist}" />
                               </StackPanel>
                             </Border>
-                        </DataTemplate>
-                      </ListBox.ItemTemplate>
-                      </ListBox>
-                  </Grid>
-                  <Grid Visibility="{Binding ArtistDetailActiveTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=tracks}">
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </ScrollViewer>
+                  </Grid>                  <Grid Visibility="{Binding ArtistDetailActiveTab, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=tracks}">
                     <Grid.RowDefinitions>
                       <RowDefinition Height="Auto" />
                       <RowDefinition Height="*" />
@@ -2043,7 +2055,10 @@
               <RowDefinition Height="Auto" />
               <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Border Name="AlbumDetailBackRow" Grid.Row="0" Padding="16,10,24,4" HorizontalAlignment="Left">
+            <!-- Back is handled by the single TopBar button (SidebarBackButton), which
+                 routes to the same hero-reverse handlers. This duplicate in-page row
+                 is collapsed; keep the element because the transition code animates it. -->
+            <Border Name="AlbumDetailBackRow" Grid.Row="0" Padding="16,10,24,4" HorizontalAlignment="Left" Visibility="Collapsed">
               <Button Style="{StaticResource APK_IconButton}" Width="36" Height="36" ToolTip="Back" Click="AlbumDetailBack_Click">
                 <Path Data="{StaticResource Icon.Back}" Fill="#FFFFFFFF" Stretch="Uniform" Width="16" Height="16" />
               </Button>
@@ -2055,7 +2070,7 @@
               </Grid.ColumnDefinitions>
               <Border Name="AlbumDetailArtBorder" Grid.Column="0" Width="280" Height="280" CornerRadius="12" ClipToBounds="True" Margin="24,24,32,24" VerticalAlignment="Top">
                 <Border.Background>
-                  <ImageBrush Stretch="UniformToFill" ImageSource="{Binding Path=CurrentAlbumArtTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" RenderOptions.BitmapScalingMode="HighQuality" />
+                  <ImageBrush Stretch="UniformToFill" ImageSource="{Binding Path=CurrentAlbumArtTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=large}" RenderOptions.BitmapScalingMode="HighQuality" />
                 </Border.Background>
               </Border>
               <Grid Name="AlbumDetailInfo" Column="1" Margin="8,24,0,0">
@@ -2283,7 +2298,7 @@
                             <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="0,0,0,-1" IsHitTestVisible="False" />
                             <Border Grid.Column="0" Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
+                                <Image Width="48" Height="48" Stretch="Uniform" RenderOptions.BitmapScalingMode="Linear" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
                             </Border>
                             <TextBlock Grid.Column="1" Style="{StaticResource APK_TextBodyStyle}" Foreground="#FFFFFFFF" FontSize="12.5" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Title, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
                             <TextBlock Grid.Column="2" Foreground="#D8FFFFFF" FontSize="12" FontWeight="Normal" VerticalAlignment="Center" Margin="12,0,8,0" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown}" />
@@ -2468,7 +2483,7 @@
             </Grid>
           </Grid>
           <Grid Visibility="{Binding CurrentView, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=settings}">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16,24,16">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,0,24,0">
               <Grid MaxWidth="1100" HorizontalAlignment="Left">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="210" />
@@ -2738,7 +2753,7 @@
                 <Button Grid.Column="2" Style="{StaticResource APK_AccentButton}" Content="+ Add Folder" Padding="12,4" Command="{Binding AddHiddenFolderDialogCommand}" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl ItemsSource="{Binding HiddenFoldersList}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
@@ -2781,7 +2796,7 @@
               </Grid>
             </Border>
             <Grid Row="1">
-              <ScrollViewer Padding="24,0,24,16" VerticalScrollBarVisibility="Auto">
+              <ScrollViewer Padding="24,0,24,0" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
                   <ItemsControl ItemsSource="{Binding HiddenTracks}">
                     <ItemsControl.ItemTemplate>
@@ -2844,7 +2859,7 @@
                 <Button Grid.Column="2" Style="{StaticResource APK_AccentButton}" Content="Scan Duplicates" Padding="12,4" Command="{Binding OpenDuplicateFinderCommand}" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl ItemsSource="{Binding DuplicateTracks}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -2894,7 +2909,7 @@
                 </Button>
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl ItemsSource="{Binding DeletedTracks}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -2944,7 +2959,7 @@
             <Border Grid.Row="1" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
               <views:TrackTableHeader x:Name="AlbumMusicHeader" Table="{Binding AlbumMusicTable, RelativeSource={RelativeSource AncestorType=Window}}" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
             </Border>
-            <ScrollViewer Grid.Row="2" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="2" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl x:Name="AlbumMusicList" ItemsSource="{Binding Tracks}" controls:TrackTable.State="{Binding AlbumMusicTable, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -3018,7 +3033,7 @@
                 <TextBlock Grid.Column="1" Text="EDIT TAGS" Style="{StaticResource APK_TextSectionTitle}" VerticalAlignment="Center" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,16,24,24">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0">
               <StackPanel MaxWidth="600" HorizontalAlignment="Left">
                 <TextBlock Style="{StaticResource APK_TextLowStyle}" Margin="0,0,0,16" TextWrapping="Wrap" Text="{Binding EditingTrack.FilePath}" />
                 <TextBlock Text="Title" Style="{StaticResource APK_TextBodyStyle}" Margin="0,4" />
@@ -3154,7 +3169,7 @@
                 <TextBlock Grid.Column="2" Style="{StaticResource APK_TextMediumStyle}" VerticalAlignment="Center" Text="{Binding MusicSelectList.Count, StringFormat={}{0} tracks}" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl ItemsSource="{Binding MusicSelectList}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -3200,7 +3215,7 @@
                 <TextBlock Grid.Column="1" Text="EDIT PLAYLIST CONTENTS" Style="{StaticResource APK_TextSectionTitle}" VerticalAlignment="Center" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl ItemsSource="{Binding PlaylistEditTracks}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -3243,7 +3258,7 @@
                 <TextBlock Grid.Column="1" Text="REORDER PLAYLISTS" Style="{StaticResource APK_TextSectionTitle}" VerticalAlignment="Center" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl ItemsSource="{Binding Playlists}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
@@ -3303,7 +3318,7 @@
                 <TextBlock Grid.Column="1" Text="SELECT PLAYLIST" Style="{StaticResource APK_TextSectionTitle}" VerticalAlignment="Center" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl ItemsSource="{Binding PlaylistSelectList}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
@@ -3333,7 +3348,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
               </Grid.ColumnDefinitions>
-              <Border Grid.Column="0" Width="280" Height="280" CornerRadius="12" Background="#26FFFFFF" Margin="24,24,32,24" VerticalAlignment="Top">
+              <Border Grid.Column="0" Width="280" Height="280" CornerRadius="12" Background="#26FFFFFF" BorderBrush="#1AFFFFFF" BorderThickness="1" Margin="24,24,32,24" VerticalAlignment="Top">
                 <Path Data="{StaticResource Icon.Playlist}" Fill="#FF6C63FF" Stretch="Uniform" Width="80" Height="80" HorizontalAlignment="Center" VerticalAlignment="Center" />
               </Border>
               <Grid Column="1" Margin="8,24,0,0">
@@ -3346,10 +3361,30 @@
                 <TextBlock Grid.Row="0" FontSize="26" FontWeight="Bold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" Margin="0,0,0,4" Text="{Binding CurrentPlaylistName}" />
                 <TextBlock Grid.Row="1" FontSize="13" Foreground="#B8FFFFFF" Margin="0,0,0,12" Text="{Binding PlaylistDetailMeta}" />
                 <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,0,12">
-                  <Button Style="{StaticResource APK_CircleActionButton}" Width="52" Height="52" Margin="0,0,8,0" ToolTip="Play" Command="{Binding PlayPlaylistDetailCommand}">
+                  <Button Width="52" Height="52" Margin="0,0,8,0" ToolTip="Play" Command="{Binding PlayPlaylistDetailCommand}">
+                    <Button.Style>
+                      <Style TargetType="Button" BasedOn="{StaticResource APK_CircleActionButton}">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding PlaylistDetailTrackCount}" Value="0">
+                            <Setter Property="IsEnabled" Value="False" />
+                            <Setter Property="Opacity" Value="0.35" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Button.Style>
                     <Path Data="{StaticResource Icon.Play}" Fill="#FFFFFFFF" Stretch="Uniform" Width="20" Height="20" />
                   </Button>
-                  <Button Style="{StaticResource APK_IconButton}" Width="44" Height="44" Margin="0,0,8,0" ToolTip="Shuffle" Command="{Binding ShufflePlaylistDetailCommand}">
+                  <Button Width="44" Height="44" Margin="0,0,8,0" ToolTip="Shuffle" Command="{Binding ShufflePlaylistDetailCommand}">
+                    <Button.Style>
+                      <Style TargetType="Button" BasedOn="{StaticResource APK_IconButton}">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding PlaylistDetailTrackCount}" Value="0">
+                            <Setter Property="IsEnabled" Value="False" />
+                            <Setter Property="Opacity" Value="0.35" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Button.Style>
                     <Path Data="{StaticResource Icon.Shuffle}" Fill="#FFFFFFFF" Stretch="Uniform" Width="18" Height="18" />
                   </Button>
                 </StackPanel>
@@ -3358,15 +3393,33 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                   </Grid.RowDefinitions>
-                  <StackPanel Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,40,0,0" Visibility="{Binding PlaylistDetailTrackCount, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=0}">
+                  <StackPanel Grid.Row="0" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding PlaylistDetailTrackCount, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=0}">
                     <Path Data="{StaticResource Icon.Playlist}" Fill="#40FFFFFF" Stretch="Uniform" Width="64" Height="64" Margin="0,0,0,16" />
-                    <TextBlock Text="Playlist is empty" FontSize="16" FontWeight="SemiBold" Foreground="#99FFFFFF" HorizontalAlignment="Center" />
-                    <TextBlock Text="Add songs from the library using the three-dot menu on any track" FontSize="13" Foreground="#60FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="300" />
+                    <TextBlock Text="Playlist is empty" FontSize="16" FontWeight="SemiBold" Foreground="#B8FFFFFF" HorizontalAlignment="Center" />
+                    <TextBlock Text="Add songs from the library using the three-dot menu on any track" FontSize="13" Foreground="#70FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="300" />
                   </StackPanel>
                   <Border Grid.Row="0" Margin="0,4,0,0" BorderBrush="#22FFFFFF" BorderThickness="0,0,0,1" SnapsToDevicePixels="True">
+                    <Border.Style>
+                      <Style TargetType="Border">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding PlaylistDetailTrackCount}" Value="0">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Border.Style>
                     <views:TrackTableHeader x:Name="PlaylistDetailHeader" Table="{Binding PlaylistDetailTable, RelativeSource={RelativeSource AncestorType=Window}}" HeaderPaddingLeft="12" ShowColumnRules="False" ColumnToggled="TableHeader_ColumnToggled" HoverChanged="TableHeader_HoverChanged" ColumnHideRequested="TableHeader_ColumnHideRequested" DragStarted="TableHeader_DragStarted" DragDelta="TableHeader_DragDelta" DragCompleted="TableHeader_DragCompleted" ColumnsMenuRequested="TableHeader_ColumnsMenuRequested" />
                   </Border>
-                  <ListBox x:Name="PlaylistDetailList" Grid.Row="1" Style="{StaticResource APK_VirtualListBox}" Padding="0" ItemsSource="{Binding PlaylistDetailTracks}" controls:TrackTable.State="{Binding PlaylistDetailTable, RelativeSource={RelativeSource AncestorType=Window}}">
+                  <ListBox x:Name="PlaylistDetailList" Grid.Row="1" Padding="0" ItemsSource="{Binding PlaylistDetailTracks}" controls:TrackTable.State="{Binding PlaylistDetailTable, RelativeSource={RelativeSource AncestorType=Window}}">
+                    <ListBox.Style>
+                      <Style TargetType="ListBox" BasedOn="{StaticResource APK_VirtualListBox}">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding PlaylistDetailTrackCount}" Value="0">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </ListBox.Style>
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
                         <Border x:Name="RowBorder" Height="48" BorderThickness="0" BorderBrush="#12FFFFFF" Padding="0" Cursor="Hand" MouseLeftButtonUp="PlaylistDetailTrack_Click" SnapsToDevicePixels="True">
@@ -3593,7 +3646,7 @@
                 <TextBlock Grid.Column="1" Text="BROWSE LYRICS (.LRC)" Style="{StaticResource APK_TextSectionTitle}" VerticalAlignment="Center" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="16,0,16,4">
+            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="16,0,16,0">
               <ListBox Background="#00FFFFFF" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled" Padding="0" ItemsSource="{Binding LrcFolderNames}" SelectedItem="{Binding SelectedLrcFolder}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -3627,7 +3680,7 @@
                 </ItemsControl.ItemTemplate>
               </ListBox>
             </ScrollViewer>
-            <ScrollViewer Grid.Row="2" Padding="24,0,24,16" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
+            <ScrollViewer Grid.Row="2" Padding="24,0,24,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True">
               <ItemsControl ItemsSource="{Binding LrcLocalFiles}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -3688,7 +3741,7 @@
                 <Button Grid.Column="2" Style="{StaticResource APK_AccentButton}" Content="Bind to Current" Padding="12,4" Command="{Binding BindLyricFileCommand}" CommandParameter="{Binding SelectedItem, ElementName=LyricListBox}" />
               </Grid>
             </Border>
-            <ScrollViewer Grid.Row="1" Padding="24,0,24,16">
+            <ScrollViewer Grid.Row="1" Padding="24,0,24,0">
               <ItemsControl Name="LyricListBox" ItemsSource="{Binding LrcLocalFiles}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -3747,7 +3800,7 @@
               <RowDefinition Height="Auto" />
               <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="20,12,20,8">
+            <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="20,0,20,0">
               <ItemsControl ItemsSource="{Binding WallpaperCategories}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -3763,7 +3816,7 @@
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
             </ScrollViewer>
-            <ScrollViewer Grid.Row="1" Padding="20,6,20,0" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <ScrollViewer Grid.Row="1" Padding="20,0,20,0" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
               <ItemsControl ItemsSource="{Binding FilteredWallpapers}">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
@@ -3915,7 +3968,7 @@
             </Grid.Resources>
 
             <!-- Content Area with Live Windows MusicPlayer Preview & Sliders -->
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,12,20,0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,0,20,0">
               <StackPanel HorizontalAlignment="Center" Width="700" VerticalAlignment="Stretch">
 
                 <!-- The preview shares the same Home content control as the Home page. -->
@@ -4325,7 +4378,7 @@
                 </Grid>
               </Border>
               <!-- Song rows -->
-              <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="20,0,20,8" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True" Visibility="{Binding IsSongsSectionCollapsed, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=inverse}">
+              <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="20,0,20,0" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" CanContentScroll="True" Visibility="{Binding IsSongsSectionCollapsed, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=inverse}">
                 <StackPanel>
                   <ItemsControl ItemsSource="{Binding SearchResults}">
                     <ItemsControl.ItemsPanel>
@@ -4399,7 +4452,9 @@
                   <TranslateTransform x:Name="ArtistTransitionTranslate" X="0" Y="0" />
                 </TransformGroup>
               </UIElement.RenderTransform>
-              <Border Background="#28FFFFFF" />
+              <!-- No extra plate here: the artist/album image already carries its own
+                   placeholder background. A second translucent layer made the flying
+                   disc look brighter than the settled circle during the animation. -->
               <Image Name="ArtistTransitionImage" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="Linear" />
             </Grid>
           </Canvas>
@@ -4448,8 +4503,7 @@
                     </Style>
                   </FrameworkElement.Style>
                   <Grid>
-                    <Path Data="{StaticResource Icon.Songs}" Fill="#35FFFFFF" Stretch="Uniform" Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium}" />
+                    <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="Linear" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=small}" />
                   </Grid>
                 </Border>
 
@@ -4580,27 +4634,16 @@
               </Grid.RowDefinitions>
               <Border Name="PlayingPageArea" Grid.Row="0" ClipToBounds="True" Cursor="Hand" PreviewMouseLeftButtonDown="PlayingPageArea_PreviewMouseLeftButtonDown" PreviewMouseMove="PlayingPageArea_PreviewMouseMove" PreviewMouseLeftButtonUp="PlayingPageArea_PreviewMouseLeftButtonUp" PreviewMouseWheel="PlayingPageArea_PreviewMouseWheel">
                 <Grid Name="SlideHost">
-                  <Grid Name="AlbumArtPageGrid">
+                  <Grid Name="AlbumArtPageGrid" Background="Transparent">
                     <UIElement.RenderTransform>
                       <TranslateTransform x:Name="AlbumArtTransform" X="0" />
                     </UIElement.RenderTransform>
-                    <Panel.Background>
-                      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                        <GradientStop Color="#FF1A1D24" Offset="0" />
-                        <GradientStop Color="#FF0D0F13" Offset="1" />
-                      </LinearGradientBrush>
-                    </Panel.Background>
-                    <Border Margin="24,16" MaxWidth="560" MaxHeight="560" CornerRadius="16" ClipToBounds="True" HorizontalAlignment="Center" VerticalAlignment="Center">
-                      <Image x:Name="FpAlbumArtImage" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="Linear" SnapsToDevicePixels="True" UseLayoutRounding="True" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" />
-                    </Border>
+                    <Image x:Name="FpAlbumArtImage" Margin="24,16" Stretch="Uniform" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" RenderOptions.BitmapScalingMode="Linear" SnapsToDevicePixels="True" UseLayoutRounding="True" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=full}" />
                   </Grid>
-                  <Grid Name="LyricsPageGrid" Visibility="Collapsed">
+                  <Grid Name="LyricsPageGrid" Background="Transparent" Visibility="Collapsed">
                     <UIElement.RenderTransform>
                       <TranslateTransform x:Name="LyricsTransform" X="0" />
                     </UIElement.RenderTransform>
-                    <Panel.Background>
-                      <SolidColorBrush Color="#FF101216" />
-                    </Panel.Background>
                     <Grid Margin="20,16,12,16">
                       <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -4646,23 +4689,20 @@
                         <Grid IsHitTestVisible="False" VerticalAlignment="Stretch">
                           <Panel.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                              <GradientStop Color="#FF101216" Offset="0.0" />
-                              <GradientStop Color="#00101216" Offset="0.18" />
-                              <GradientStop Color="#00101216" Offset="0.82" />
-                              <GradientStop Color="#FF101216" Offset="1.0" />
+                              <GradientStop Color="#FF0D121A" Offset="0.0" />
+                              <GradientStop Color="#000D121A" Offset="0.18" />
+                              <GradientStop Color="#000D121A" Offset="0.82" />
+                              <GradientStop Color="#FF0D121A" Offset="1.0" />
                             </LinearGradientBrush>
                           </Panel.Background>
                         </Grid>
                       </Grid>
                     </Grid>
                   </Grid>
-                  <Grid Name="VisualizerPageGrid" Visibility="Collapsed">
+                  <Grid Name="VisualizerPageGrid" Background="Transparent" Visibility="Collapsed">
                     <UIElement.RenderTransform>
                       <TranslateTransform x:Name="VisualizerTransform" X="0" />
                     </UIElement.RenderTransform>
-                    <Panel.Background>
-                      <SolidColorBrush Color="#FF101216" />
-                    </Panel.Background>
                     <local:AudioVisualizerControl Margin="12,16,12,16" />
                   </Grid>
                 </Grid>
@@ -5624,11 +5664,11 @@
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <Border Grid.Row="0" Margin="18,4,18,10">
-                  <StackPanel>
-                    <TextBlock Text="UPCOMING" FontSize="17" FontWeight="Bold" Foreground="#FFFFFFFF" FontFamily="Segoe UI" />
-                    <TextBlock Text="{Binding Queue.Count, StringFormat='{}{0} tracks'}" FontSize="12" Foreground="#80FFFFFF" Margin="0,3,0,0" />
-                  </StackPanel>
+                <Border Grid.Row="0" Margin="18,2,18,6">
+                  <Grid>
+                    <TextBlock Text="UPCOMING" FontSize="11" FontWeight="Bold" Foreground="#66FFFFFF" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Queue.Count, StringFormat='{}{0} tracks'}" FontSize="11" Foreground="#44FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                  </Grid>
                 </Border>
 
                 <Grid Grid.Row="1" ClipToBounds="True">
@@ -5639,12 +5679,12 @@
                     <TextBlock Text="Play a song or right-click to 'Play Next'" FontSize="12" Foreground="#40FFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0" />
                   </StackPanel>
 
-                  <!-- Virtualized Queue ListBox - own style, see APK_QueueListBox -->
-                  <ListBox x:Name="QueueListBox" Style="{StaticResource APK_QueueListBox}" ItemsSource="{Binding Queue}" AllowDrop="True" DragOver="QueueListBox_DragOver" Drop="QueueListBox_Drop" PreviewMouseMove="QueueListBox_PreviewMouseMove" PreviewKeyDown="QueueListBox_PreviewKeyDown" VirtualizingStackPanel.CleanUpVirtualizedItem="QueueListBox_CleanUpVirtualizedItem" FocusVisualStyle="{x:Null}" IsTabStop="False" SelectionMode="Single">
+                  <!-- Virtualized Queue ListBox -->
+                  <ListBox x:Name="QueueListBox" Style="{StaticResource APK_VirtualListBox}" ItemsSource="{Binding Queue}" Padding="10,0,10,12" AllowDrop="True" DragOver="QueueListBox_DragOver" Drop="QueueListBox_Drop" PreviewMouseMove="QueueListBox_PreviewMouseMove" PreviewKeyDown="QueueListBox_PreviewKeyDown" VirtualizingStackPanel.CleanUpVirtualizedItem="QueueListBox_CleanUpVirtualizedItem" FocusVisualStyle="{x:Null}" IsTabStop="False" SelectionMode="Single">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <Border x:Name="QueueItemBorder" Height="48" Margin="8,0,8,0" Padding="0" Cursor="Hand" Background="Transparent"
-                                BorderBrush="Transparent" BorderThickness="0" CornerRadius="0"
+                        <Border x:Name="QueueItemBorder" Height="56" CornerRadius="10" Margin="0,2" Padding="6,4" Cursor="Hand" Background="Transparent"
+                                BorderBrush="Transparent" BorderThickness="0"
                                 PreviewMouseLeftButtonDown="QueueItem_PreviewMouseLeftButtonDown"
                                 MouseMove="QueueItem_MouseMove"
                                 MouseLeftButtonUp="QueueItem_MouseLeftButtonUp"
@@ -5655,49 +5695,37 @@
                           </Border.RenderTransform>
                           <Grid>
                             <Grid.ColumnDefinitions>
-                              <ColumnDefinition Width="48" />
-                              <ColumnDefinition Width="2.6*" />
-                              <ColumnDefinition Width="2.2*" />
-                              <ColumnDefinition Width="46" />
-                              <ColumnDefinition Width="36" />
-                              <ColumnDefinition Width="32" />
+                              <ColumnDefinition Width="20" />
+                              <ColumnDefinition Width="44" />
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
 
-                            <!-- Row rule, like the track tables: it runs under the artwork -->
-                            <Border Grid.Column="0" Grid.ColumnSpan="6" VerticalAlignment="Bottom" Height="1" Background="#12FFFFFF" IsHitTestVisible="False" />
-
-                            <!-- Column rules -->
-                            <Border Grid.Column="1" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
-                            <Border Grid.Column="2" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
-                            <Border Grid.Column="3" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
-                            <Border Grid.Column="4" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
-                            <Border Grid.Column="5" BorderBrush="#18FFFFFF" BorderThickness="1,0,0,0" VerticalAlignment="Stretch" HorizontalAlignment="Left" IsHitTestVisible="False" />
-
-                            <!-- Album art: the same cell as the track tables - 48px square, flush, no halo -->
-                            <Grid Grid.Column="0">
-                              <Border Width="48" Height="48" ClipToBounds="True" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" RenderOptions.CachingHint="Cache" Source="{Binding Converter={StaticResource AlbumArtConverter}}" />
-                              </Border>
-                              <!-- Now-playing badge, bottom-left of the artwork -->
-                              <Path x:Name="QueueEqIcon" Data="{StaticResource Icon.Equalizer}" Fill="{StaticResource APK_AccentBrush}" Stretch="Uniform" Width="14" Height="14" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="3,0,0,3" Visibility="Collapsed" />
-                            </Grid>
-
-                            <!-- Title -->
-                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="12,0,8,0" FontSize="13" FontWeight="Medium" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
-
-                            <!-- Artist -->
-                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="12,0,8,0" FontSize="12.5" Foreground="#D8FFFFFF" TextTrimming="CharacterEllipsis" Text="{Binding Artist, Converter={StaticResource FallbackIfEmptyConverter}, ConverterParameter=Unknown Artist}" />
-
-                            <!-- Duration -->
-                            <TextBlock Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,10,0" FontSize="11.5" Foreground="#99FFFFFF" Text="{Binding Duration, Converter={StaticResource DurationConverter}}" />
-
                             <!-- Grip icon -->
-                            <Path Grid.Column="4" Data="{StaticResource Icon.Menu}" Fill="#59FFFFFF" Stretch="Uniform" Width="11" Height="13" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                            <Path Grid.Column="0" Data="{StaticResource Icon.Menu}" Fill="#33FFFFFF" Stretch="Uniform" Width="10" Height="12" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" />
 
-                            <!-- Remove from queue -->
-                            <Button x:Name="QueueBtnRemove" Grid.Column="5" Style="{StaticResource APK_IconButton}" Width="28" Height="28" ToolTip="Remove from Queue" Command="{Binding DataContext.RemoveFromQueueCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" HorizontalAlignment="Center" VerticalAlignment="Center">
-                              <Path Data="{StaticResource Icon.Close}" Fill="#77FFFFFF" Stretch="Uniform" Width="9" Height="9" />
-                            </Button>
+                            <!-- Album Art -->
+                            <Border Grid.Column="1" Width="40" Height="40" CornerRadius="6" ClipToBounds="True" Background="#26FFFFFF" VerticalAlignment="Center">
+                              <Image Stretch="UniformToFill" Style="{StaticResource RoundedImage6}" Source="{Binding Converter={StaticResource AlbumArtConverter}}" RenderOptions.BitmapScalingMode="HighQuality" />
+                            </Border>
+
+                            <!-- Text info -->
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="10,0,8,0">
+                              <TextBlock Style="{StaticResource APK_TextBodyStyle}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="150" Text="{Binding Title}" />
+                              <TextBlock Style="{StaticResource APK_TextMediumStyle}" FontSize="11" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" MaxWidth="150" Text="{Binding Artist}" />
+                            </StackPanel>
+
+                            <!-- Right Controls: Duration, Playing EQ & Action Buttons -->
+                            <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,4,0">
+                              <Path x:Name="QueueEqIcon" Data="{StaticResource Icon.Equalizer}" Fill="{StaticResource APK_AccentBrush}" Stretch="Uniform" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center" Visibility="Collapsed" />
+                              <TextBlock Text="{Binding Duration, Converter={StaticResource DurationConverter}}" FontSize="11" Foreground="#66FFFFFF" VerticalAlignment="Center" Margin="0,0,6,0" />
+                              <Button x:Name="QueueBtnPlay" Style="{StaticResource APK_IconButton}" Width="26" Height="26" ToolTip="Play Now" Command="{Binding DataContext.PlayQueueTrackCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
+                                <Path Data="{StaticResource Icon.Play}" Fill="#99FFFFFF" Stretch="Uniform" Width="9" Height="9" />
+                              </Button>
+                              <Button x:Name="QueueBtnRemove" Style="{StaticResource APK_IconButton}" Width="26" Height="26" ToolTip="Remove from Queue" Command="{Binding DataContext.RemoveFromQueueCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Margin="2,0,0,0">
+                                <Path Data="{StaticResource Icon.Close}" Fill="#77FFFFFF" Stretch="Uniform" Width="9" Height="9" />
+                              </Button>
+                            </StackPanel>
                           </Grid>
                         </Border>
                       </DataTemplate>

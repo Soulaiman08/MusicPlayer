@@ -87,6 +87,8 @@ public sealed class AsyncArtistImage : Image
         _pendingArtist = null;
 
         Interlocked.Increment(ref _requestVersion);
+        BeginAnimation(OpacityProperty, null);
+        Opacity = 1.0;
         Source = null;
     }
 
@@ -137,11 +139,51 @@ public sealed class AsyncArtistImage : Image
             return;
         }
 
+        if (MusicPlayer.Diagnostics.ScrollDiagHarness.Mode == MusicPlayer.Diagnostics.ScrollDiagHarness.DiagMode.A)
+        {
+            _pendingArtist = null;
+            Source = null;
+            return;
+        }
+        if (MusicPlayer.Diagnostics.ScrollDiagHarness.Mode == MusicPlayer.Diagnostics.ScrollDiagHarness.DiagMode.B)
+        {
+            _pendingArtist = null;
+            Source = vm.ArtistImageCache.TryGetValue(artist!, out var bCached)
+                ? bCached
+                : MusicPlayer.Diagnostics.ScrollDiagHarness.GetOrCreateRamFallbackBitmap();
+            MusicPlayer.Diagnostics.ScrollDiagHarness.RecordSourceUpdate();
+            return;
+        }
+        if (MusicPlayer.Diagnostics.ScrollDiagHarness.Mode == MusicPlayer.Diagnostics.ScrollDiagHarness.DiagMode.C)
+        {
+            if (!vm.ArtistImages.TryGetValue(artist!, out var cPath) || string.IsNullOrWhiteSpace(cPath))
+            {
+                Source = null;
+                return;
+            }
+            var cToken = _requestCts.Token;
+            var cVer = version;
+            _ = Task.Run(() =>
+            {
+                var bi = ImageDecoder.DecodeFromFile(cPath, ImageQuality.Medium);
+                if (bi == null || cToken.IsCancellationRequested) return;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (cToken.IsCancellationRequested || cVer != Volatile.Read(ref _requestVersion)) return;
+                    if (!string.Equals(ArtistName?.Trim(), artist, StringComparison.OrdinalIgnoreCase)) return;
+                    Source = bi;
+                    MusicPlayer.Diagnostics.ScrollDiagHarness.RecordSourceUpdate();
+                }, System.Windows.Threading.DispatcherPriority.Background);
+            }, cToken);
+            return;
+        }
+
         // Check VM cache first (fast path)
         if (vm.ArtistImageCache.TryGetValue(artist, out var cached))
         {
             _pendingArtist = null;
             Source = cached;
+            MusicPlayer.Diagnostics.ScrollDiagHarness.RecordSourceUpdate();
             return;
         }
 
@@ -191,7 +233,14 @@ public sealed class AsyncArtistImage : Image
                         // can take the fast cache paths instead of being short-circuited.
                         if (string.Equals(_pendingArtist, artist, StringComparison.OrdinalIgnoreCase))
                             _pendingArtist = null;
+                        Opacity = 0.0;
                         Source = task.Result;
+                        var fadeIn = new System.Windows.Media.Animation.DoubleAnimation(0.0, 1.0, TimeSpan.FromMilliseconds(110))
+                        {
+                            EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
+                        };
+                        BeginAnimation(OpacityProperty, fadeIn);
+                        MusicPlayer.Diagnostics.ScrollDiagHarness.RecordSourceUpdate();
                     }
                     else if (IsLoaded && string.Equals(ArtistName?.Trim(), artist, StringComparison.OrdinalIgnoreCase))
                     {
@@ -200,7 +249,7 @@ public sealed class AsyncArtistImage : Image
                         // on every notification.
                         RequestImage();
                     }
-                }, System.Windows.Threading.DispatcherPriority.Background);
+                }, System.Windows.Threading.DispatcherPriority.Render);
             }, TaskScheduler.Default);
     }
 

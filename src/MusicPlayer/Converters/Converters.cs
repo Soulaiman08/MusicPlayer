@@ -119,11 +119,24 @@ public class AlbumArtConverter : IValueConverter
 
     private object? ConvertCore(object? value, Type targetType, object parameter, CultureInfo culture)
     {
+        if (MusicPlayer.Diagnostics.ScrollDiagHarness.Mode == MusicPlayer.Diagnostics.ScrollDiagHarness.DiagMode.A)
+        {
+            return null;
+        }
+        if (MusicPlayer.Diagnostics.ScrollDiagHarness.Mode == MusicPlayer.Diagnostics.ScrollDiagHarness.DiagMode.B)
+        {
+            MusicPlayer.Diagnostics.ScrollDiagHarness.RecordSourceUpdate();
+            if (value is MusicTrack tr && AlbumArtLoader.Instance != null)
+                return AlbumArtLoader.Instance.GetCachedOnly(tr.FilePath) ?? MusicPlayer.Diagnostics.ScrollDiagHarness.GetOrCreateRamFallbackBitmap();
+            return MusicPlayer.Diagnostics.ScrollDiagHarness.GetOrCreateRamFallbackBitmap();
+        }
         if (AlbumArtLoader.Instance == null) return null;
 
         var paramStr = parameter as string ?? "";
         var fullQuality   = paramStr.Equals("full",   StringComparison.OrdinalIgnoreCase);
+        var largeQuality  = paramStr.Equals("large",  StringComparison.OrdinalIgnoreCase);
         var mediumQuality = paramStr.Equals("medium", StringComparison.OrdinalIgnoreCase);
+        var smallQuality  = paramStr.Equals("small",  StringComparison.OrdinalIgnoreCase);
 
         if (fullQuality)
         {
@@ -131,6 +144,14 @@ public class AlbumArtConverter : IValueConverter
                 return AlbumArtLoader.Instance.LoadFullAlbumArt(trackFull);
             if (value is string path && !string.IsNullOrWhiteSpace(path))
                 return AlbumArtLoader.Instance.LoadFullAlbumArt(path);
+        }
+
+        if (largeQuality)
+        {
+            if (value is MusicTrack trackLarge)
+                return AlbumArtLoader.Instance.LoadLargeAlbumArt(trackLarge);
+            if (value is string pathLarge && !string.IsNullOrWhiteSpace(pathLarge))
+                return AlbumArtLoader.Instance.LoadLargeAlbumArt(pathLarge);
         }
 
         if (mediumQuality)
@@ -141,12 +162,22 @@ public class AlbumArtConverter : IValueConverter
                 return AlbumArtLoader.Instance.LoadMediumAlbumArt(pathMed);
         }
 
-        return value switch
+        if (smallQuality)
+        {
+            if (value is MusicTrack trackSmall)
+                return AlbumArtLoader.Instance.LoadSmallAlbumArt(trackSmall);
+            if (value is string pathSmall && !string.IsNullOrWhiteSpace(pathSmall))
+                return AlbumArtLoader.Instance.LoadSmallAlbumArt(pathSmall);
+        }
+
+        var result = value switch
         {
             MusicTrack track => AlbumArtLoader.Instance.LoadAlbumArt(track),
             string path      => AlbumArtLoader.Instance.LoadAlbumArt(path),
             _                => AlbumArtLoader.Instance.GetDefaultAlbumArt()
         };
+        if (result != null) MusicPlayer.Diagnostics.ScrollDiagHarness.RecordSourceUpdate();
+        return result;
     }
 
     public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)

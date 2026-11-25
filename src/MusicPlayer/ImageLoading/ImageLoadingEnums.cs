@@ -9,10 +9,11 @@ public enum ImageKind
 
 public enum ImageQuality
 {
-    Thumbnail, // ~80x80 (lists)
-    Medium,    // ~220x220 (cards, mini player)
-    Large,     // ~512x512
-    Full       // Original or up to 1024x1024 (full player)
+    Thumbnail, // ~100px (compact list rows)
+    Small,     // ~160px (tracks grid, mini player)
+    Medium,    // ~280px (albums & artists cards)
+    Large,     // ~560px (detail pages)
+    Full       // Original or up to 1024px (full player)
 }
 
 public enum ImagePriority

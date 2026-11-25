@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
 using MusicPlayer.Database;
@@ -172,32 +171,38 @@ public sealed class ImageLoadingCoordinator : IDisposable
         return _defaultArt;
     }
 
-    private static BitmapSource? _frozenDefaultBitmap;
+    private static ImageSource? _frozenDefaultImage;
     private static readonly object _defaultArtLock = new();
 
     public static ImageSource CreateDefaultArt()
     {
-        if (_frozenDefaultBitmap != null) return _frozenDefaultBitmap;
+        if (_frozenDefaultImage != null) return _frozenDefaultImage;
 
         lock (_defaultArtLock)
         {
-            if (_frozenDefaultBitmap != null) return _frozenDefaultBitmap;
+            if (_frozenDefaultImage != null) return _frozenDefaultImage;
 
             const int size = 256;
             var group = new DrawingGroup();
 
-            // Lightweight translucent rounded background matching Artists and Genres
+            // Full-bleed background: fills the whole square with no rounded
+            // corners, so the artwork reaches every edge of its container.
             var bgBrush = new SolidColorBrush(Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
             bgBrush.Freeze();
-            var bgGeom = new RectangleGeometry(new Rect(0, 0, size, size), 24, 24);
+            var bgGeom = new RectangleGeometry(new Rect(0, 0, size, size));
             bgGeom.Freeze();
             group.Children.Add(new GeometryDrawing(bgBrush, null, bgGeom));
 
-            // Clean music note geometry (Icon.Songs) in crisp translucent white (#AAFFFFFF)
-            var rawGeom = Geometry.Parse("M18.85,2.00 L9.54,3.74 L8.76,4.34 L8.64,17.20 L7.44,16.83 L6.35,16.83 L5.39,17.08 L4.13,17.98 L3.65,18.94 L3.65,19.84 L4.13,20.86 L4.91,21.52 L6.41,22.00 L7.32,22.00 L8.64,21.64 L9.72,20.74 L10.08,19.96 L10.14,9.09 L10.62,8.43 L18.07,6.80 L18.79,7.05 L18.85,15.03 L17.83,14.67 L16.38,14.67 L15.00,15.21 L14.04,16.29 L13.86,17.62 L14.16,18.40 L14.82,19.12 L16.38,19.78 L17.29,19.84 L18.67,19.54 L19.33,19.18 L20.05,18.40 L20.35,17.62 L20.35,2.96 L19.93,2.24 L19.45,2.00 L18.91,2.00 Z");
-            var bounds = rawGeom.Bounds;
+            // Same music-note glyph as the app logo (Icon.Songs in Themes/Icons.xaml).
+            // Keep this path byte-for-byte identical to that resource so the
+            // default artwork always mirrors the brand mark.
+            var iconGeometry = Geometry.Parse(
+                "M18.85,2.00 L9.54,3.74 L8.76,4.34 L8.64,17.20 L7.44,16.83 L6.35,16.83 L5.39,17.08 L4.13,17.98 L3.65,18.94 L3.65,19.84 L4.13,20.86 L4.91,21.52 L6.41,22.00 L7.32,22.00 L8.64,21.64 L9.72,20.74 L10.08,19.96 L10.14,9.09 L10.62,8.43 L18.07,6.80 L18.79,7.05 L18.85,15.03 L17.83,14.67 L16.38,14.67 L15.00,15.21 L14.04,16.29 L13.86,17.62 L14.16,18.40 L14.82,19.12 L16.38,19.78 L17.29,19.84 L18.67,19.54 L19.33,19.18 L20.05,18.40 L20.35,17.62 L20.35,2.96 L19.93,2.24 L19.45,2.00 L18.91,2.00 Z");
+            iconGeometry.Freeze();
 
-            double targetSize = 88.0;
+            var bounds = iconGeometry.Bounds;
+
+            double targetSize = 96.0;
             double scale = targetSize / Math.Max(bounds.Width, bounds.Height);
             double offsetX = (size / 2.0) - (bounds.X + bounds.Width / 2.0) * scale;
             double offsetY = (size / 2.0) - (bounds.Y + bounds.Height / 2.0) * scale;
@@ -211,30 +216,14 @@ public sealed class ImageLoadingCoordinator : IDisposable
             tg.Children.Add(new TranslateTransform(offsetX, offsetY));
             tg.Freeze();
             noteGroup.Transform = tg;
-            noteGroup.Children.Add(new GeometryDrawing(noteBrush, null, rawGeom));
+            noteGroup.Children.Add(new GeometryDrawing(noteBrush, null, iconGeometry));
             group.Children.Add(noteGroup);
 
+            // Stay vector-based so the logo glyph stays razor sharp at every
+            // size (the full player scales it up to ~560px).
             var drawingImage = new DrawingImage(group);
             drawingImage.Freeze();
-
-            try
-            {
-                if (Application.Current?.Dispatcher?.CheckAccess() == true || Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
-                {
-                    var visual = new DrawingVisual();
-                    using (var ctx = visual.RenderOpen())
-                    {
-                        ctx.DrawImage(drawingImage, new Rect(0, 0, size, size));
-                    }
-                    var rtb = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
-                    rtb.Render(visual);
-                    rtb.Freeze();
-                    _frozenDefaultBitmap = rtb;
-                    return _frozenDefaultBitmap;
-                }
-            }
-            catch { }
-
+            _frozenDefaultImage = drawingImage;
             return drawingImage;
         }
     }

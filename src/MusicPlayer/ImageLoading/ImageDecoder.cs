@@ -8,13 +8,15 @@ namespace MusicPlayer.ImageLoading;
 public static class ImageDecoder
 {
     public const int ThumbnailPixelSize = 100;
-    public const int MediumPixelSize = 256;
-    public const int LargePixelSize = 512;
+    public const int SmallPixelSize = 160;
+    public const int MediumPixelSize = 280;
+    public const int LargePixelSize = 560;
     public const int FullPixelSize = 1024;
 
     public static int GetTargetPixelSize(ImageQuality quality) => quality switch
     {
         ImageQuality.Thumbnail => ThumbnailPixelSize,
+        ImageQuality.Small => SmallPixelSize,
         ImageQuality.Medium => MediumPixelSize,
         ImageQuality.Large => LargePixelSize,
         ImageQuality.Full => FullPixelSize,
@@ -54,11 +56,8 @@ public static class ImageDecoder
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) return null;
         try
         {
-            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            using var ms = new MemoryStream();
-            fs.CopyTo(ms);
-            ms.Position = 0;
-            return Decode(ms, quality, sourceKey);
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+            return Decode(fs, quality, sourceKey);
         }
         catch
         {
@@ -80,10 +79,12 @@ public static class ImageDecoder
             if (pixelHeight > 0) bitmap.DecodePixelHeight = pixelHeight;
             bitmap.EndInit();
             bitmap.Freeze();
+            long elapsedTicks = Stopwatch.GetTimestamp() - started;
             ImageDecodeMetrics.RecordDecode(
                 $"{pixelWidth}x{pixelHeight}",
                 sourceKey,
-                Stopwatch.GetTimestamp() - started);
+                elapsedTicks);
+            MusicPlayer.Diagnostics.ScrollDiagHarness.RecordDecode(elapsedTicks * 1000.0 / Stopwatch.Frequency);
             return bitmap;
         }
         catch

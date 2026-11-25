@@ -24,7 +24,7 @@ public static class WallpaperDecodeCache
     private static readonly SemaphoreSlim _decodeSemaphore = new(2, 2);
 
     /// <summary>Approximate memory budget for cached decoded wallpapers.</summary>
-    public const long BudgetBytes = 256L * 1024 * 1024;
+    public const long BudgetBytes = 64L * 1024 * 1024;
 
     private static long _usedBytes;
 

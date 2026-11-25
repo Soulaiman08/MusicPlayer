@@ -720,7 +720,7 @@ bool isSongs = FindAncestorGrid(sender)?.Name == "SongsHeaderGrid";
         new("AlbumMusic", StandardColumns, StandardWeights, StandardMinimums);
     public TrackTableState PlaylistDetailTable { get; } =
         new("PlaylistDetail", new[] { "Title", "Artists", "Album", "Genres", "Time" },
-            new[] { 2.6, 2.4, 1.8, 1.1, 0.9 }, new double[] { 130, 110, 110, 90, 84 });
+            new[] { 2.5, 2.2, 1.7, 1.1, 1.1 }, new double[] { 130, 110, 110, 90, 96 });
     public TrackTableState GenreDetailTable { get; } =
         new("GenreDetail", StandardColumns, StandardWeights, StandardMinimums);
 

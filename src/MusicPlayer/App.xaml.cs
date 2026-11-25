@@ -123,21 +123,25 @@ public partial class App : Application
 
     public App()
     {
-        // Disable WPF D3D9 dirty-rectangle optimization to prevent back-buffer desync,
-        // tile tearing, and rectangular visual distortion under high GPU load (Microsoft Issue #5441).
-        // The dirty-rect optimisation fills the back-buffer with an earlier frame's data when
-        // the GPU is under sustained load (Intel HD 4400 compositing 4K wallpaper + glass +
-        // animations). Disabling it forces WPF to redraw the full back-buffer every present,
-        // which is a small cost compared to the visual corruption it eliminates.
-        // Dirty-rectangle A/B: preserve the baseline unless explicitly enabled.
-        bool enableDirtyRectangles =
+        // Cap WPF timeline animations to 60 FPS to prevent GPU/CPU drain on high-refresh monitors (144Hz/240Hz)
+        try
+        {
+            System.Windows.Media.Animation.Timeline.DesiredFrameRateProperty.OverrideMetadata(
+                typeof(System.Windows.Media.Animation.Timeline),
+                new FrameworkPropertyMetadata(60));
+        }
+        catch { }
+
+        // Enable WPF dirty-rectangle optimization by default so WPF only redraws changed regions
+        // rather than compositing the entire window back-buffer on every tick.
+        bool disableDirtyRectangles =
             string.Equals(
-                Environment.GetEnvironmentVariable("MUSICPLAYER_DIRTY_RECTANGLES"),
-                "enable",
+                Environment.GetEnvironmentVariable("MUSICPLAYER_DISABLE_DIRTY_RECTANGLES"),
+                "1",
                 StringComparison.OrdinalIgnoreCase);
         AppContext.SetSwitch(
             "Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles",
-            !enableDirtyRectangles);
+            disableDirtyRectangles);
 
         ForceIntegratedGpu();
         RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.Default;
@@ -419,7 +423,7 @@ public partial class App : Application
                     if (!string.IsNullOrEmpty(uri))
                         _wallpaperPreloadTask = MusicPlayer.Utilities.WallpaperDecodeCache.PreloadAsync(
                             new[] { uri! },
-                            3840,
+                            MusicPlayer.Utilities.WallpaperDecodeCache.GetDisplayDecodeWidth(),
                             _wallpaperPreloadCts.Token);
                 }
                 catch (Exception ex)

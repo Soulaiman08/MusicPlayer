@@ -243,20 +243,29 @@ public class AlbumArtLoader : IDisposable
 
     // Direct in-memory cache mirrors for test inspection compatibility.
     // Generous budgets to avoid constant thrashing and re-extraction across library views.
-    private const long ThumbnailCacheBudgetBytes = 64L * 1024 * 1024; // 64 MB
-    private const long MediumCacheBudgetBytes = 64L * 1024 * 1024;   // 64 MB
-    private const long FullCacheBudgetBytes = 64L * 1024 * 1024;     // 64 MB
+    private const long ThumbnailCacheBudgetBytes = 24L * 1024 * 1024; // 24 MB
+    private const long SmallCacheBudgetBytes = 24L * 1024 * 1024;     // 24 MB
+    private const long MediumCacheBudgetBytes = 32L * 1024 * 1024;    // 32 MB
+    private const long LargeCacheBudgetBytes = 24L * 1024 * 1024;     // 24 MB
+    private const long FullCacheBudgetBytes = 24L * 1024 * 1024;      // 24 MB
 
     private readonly ConcurrentDictionary<string, ImageSource?> _cache = new();
+    private readonly ConcurrentDictionary<string, ImageSource?> _smallCache = new();
     private readonly ConcurrentDictionary<string, ImageSource?> _mediumCache = new();
+    private readonly ConcurrentDictionary<string, ImageSource?> _largeCache = new();
     private readonly ConcurrentDictionary<string, ImageSource?> _fullQualityCache = new();
 
     // Track estimated byte sizes for budget enforcement
     private readonly ConcurrentDictionary<string, long> _cacheSizes = new();
+    private readonly ConcurrentDictionary<string, long> _smallCacheSizes = new();
     private readonly ConcurrentDictionary<string, long> _mediumCacheSizes = new();
+    private readonly ConcurrentDictionary<string, long> _largeCacheSizes = new();
     private readonly ConcurrentDictionary<string, long> _fullCacheSizes = new();
+    private readonly ConcurrentDictionary<string, byte> _inFlightKeys = new(StringComparer.OrdinalIgnoreCase);
     private long _currentCacheBytes;
+    private long _currentSmallCacheBytes;
     private long _currentMediumCacheBytes;
+    private long _currentLargeCacheBytes;
     private long _currentFullCacheBytes;
 
     private static void StoreBounded(
@@ -319,7 +328,9 @@ public class AlbumArtLoader : IDisposable
     }
 
     private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingThumbnailImages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingSmallImages = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingMediumImages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingLargeImages = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ProgressiveArtImage> _pendingFullImages = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly ConcurrentDictionary<string, Lazy<Task<ImageSource?>>> _testPendingMediumParses = new(StringComparer.OrdinalIgnoreCase);
@@ -457,8 +468,11 @@ public class AlbumArtLoader : IDisposable
             if (_disposed) return;
             _disposed = true;
             _pendingThumbnailImages.Clear();
+            _pendingSmallImages.Clear();
             _pendingMediumImages.Clear();
+            _pendingLargeImages.Clear();
             _pendingFullImages.Clear();
+            _inFlightKeys.Clear();
         }
 
         if (ReferenceEquals(Instance, this))
@@ -509,6 +523,101 @@ public class AlbumArtLoader : IDisposable
 
         EnqueueBackgroundArtLoad(filePath, track, ImageQuality.Thumbnail, _pendingThumbnailImages, progressive);
 
+        return progressive.Image;
+    }
+
+    public ImageSource? GetCachedOnly(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath)) return null;
+        return _cache.TryGetValue(filePath, out var img) ? img : null;
+    }
+
+    public void ClearMemoryCachesForDiag()
+    {
+        _cache.Clear();
+        _cacheSizes.Clear();
+        Interlocked.Exchange(ref _currentCacheBytes, 0);
+        _smallCache.Clear();
+        _smallCacheSizes.Clear();
+        Interlocked.Exchange(ref _currentSmallCacheBytes, 0);
+        _mediumCache.Clear();
+        _mediumCacheSizes.Clear();
+        Interlocked.Exchange(ref _currentMediumCacheBytes, 0);
+        _largeCache.Clear();
+        _largeCacheSizes.Clear();
+        Interlocked.Exchange(ref _currentLargeCacheBytes, 0);
+        _coordinator.MemoryCache.Clear();
+    }
+
+    public ImageSource? LoadSmallAlbumArt(MusicTrack? track)
+    {
+        if (track == null) return GetDefaultAlbumArt();
+        string? path = ResolveTrackArtPath(track);
+        if (string.IsNullOrWhiteSpace(path)) return GetDefaultAlbumArt();
+        return LoadSmallAlbumArtInternal(path, track);
+    }
+
+    public ImageSource? LoadSmallAlbumArt(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
+        return LoadSmallAlbumArtInternal(filePath, null);
+    }
+
+    private ImageSource? LoadSmallAlbumArtInternal(string path, MusicTrack? track)
+    {
+        if (_disposed) return GetDefaultAlbumArt();
+
+        if (_smallCache.TryGetValue(path, out var direct) && direct != null) return direct;
+        var mem = _coordinator.TryGetAlbumArt(track, ImageQuality.Small)
+               ?? _coordinator.TryGetAlbumArt(path, ImageQuality.Small);
+        if (mem != null)
+        {
+            StoreBounded(_smallCache, _smallCacheSizes, ref _currentSmallCacheBytes, SmallCacheBudgetBytes, path, mem);
+            return mem;
+        }
+
+        ImageSource placeholder = _cache.TryGetValue(path, out var thumb) && thumb != null
+            ? thumb
+            : GetDefaultAlbumArt();
+
+        var progressive = GetOrCreateProgressiveImage(_pendingSmallImages, path, placeholder);
+        EnqueueBackgroundArtLoad(path, track, ImageQuality.Small, _pendingSmallImages, progressive);
+        return progressive.Image;
+    }
+
+    public ImageSource? LoadLargeAlbumArt(MusicTrack? track)
+    {
+        if (track == null) return GetDefaultAlbumArt();
+        string? path = ResolveTrackArtPath(track);
+        if (string.IsNullOrWhiteSpace(path)) return GetDefaultAlbumArt();
+        return LoadLargeAlbumArtInternal(path, track);
+    }
+
+    public ImageSource? LoadLargeAlbumArt(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath)) return GetDefaultAlbumArt();
+        return LoadLargeAlbumArtInternal(filePath, null);
+    }
+
+    private ImageSource? LoadLargeAlbumArtInternal(string path, MusicTrack? track)
+    {
+        if (_disposed) return GetDefaultAlbumArt();
+
+        if (_largeCache.TryGetValue(path, out var direct) && direct != null) return direct;
+        var mem = _coordinator.TryGetAlbumArt(track, ImageQuality.Large)
+               ?? _coordinator.TryGetAlbumArt(path, ImageQuality.Large);
+        if (mem != null)
+        {
+            StoreBounded(_largeCache, _largeCacheSizes, ref _currentLargeCacheBytes, LargeCacheBudgetBytes, path, mem);
+            return mem;
+        }
+
+        ImageSource placeholder = _mediumCache.TryGetValue(path, out var med) && med != null
+            ? med
+            : (_smallCache.TryGetValue(path, out var sm) && sm != null ? sm : GetDefaultAlbumArt());
+
+        var progressive = GetOrCreateProgressiveImage(_pendingLargeImages, path, placeholder);
+        EnqueueBackgroundArtLoad(path, track, ImageQuality.Large, _pendingLargeImages, progressive);
         return progressive.Image;
     }
 
@@ -596,17 +705,24 @@ public class AlbumArtLoader : IDisposable
         ConcurrentDictionary<string, ProgressiveArtImage> pendingImages,
         ProgressiveArtImage progressive)
     {
+        string flightKey = $"{path}:{(int)quality}";
+        if (!_inFlightKeys.TryAdd(flightKey, 0))
+            return;
+
         lock (_lifetimeGate)
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                _inFlightKeys.TryRemove(flightKey, out _);
+                return;
+            }
 
             Task task = Task.Run(async () =>
             {
                 ImageSource? result = null;
                 try
                 {
-                    var priority = _scrollingActive ? ImagePriority.NearScroll : ImagePriority.Visible;
-                    result = await _coordinator.LoadAlbumArtAsync(track, path, quality, priority, _lifetimeCts.Token).ConfigureAwait(false);
+                    result = await _coordinator.LoadAlbumArtAsync(track, path, quality, ImagePriority.Visible, _lifetimeCts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex)
@@ -615,6 +731,7 @@ public class AlbumArtLoader : IDisposable
                 }
                 finally
                 {
+                    _inFlightKeys.TryRemove(flightKey, out _);
                     // ALWAYS clean up pending entry regardless of success/failure/cancellation
                     if (pendingImages.TryRemove(path, out var p) && p != null)
                     {
@@ -629,7 +746,7 @@ public class AlbumArtLoader : IDisposable
                                         p.SetSource(result);
                                 }
                                 catch { }
-                            }), DispatcherPriority.Background);
+                            }), DispatcherPriority.Render);
                         }
                     }
                 }
@@ -638,8 +755,12 @@ public class AlbumArtLoader : IDisposable
                 {
                     if (quality == ImageQuality.Thumbnail)
                         StoreBounded(_cache, _cacheSizes, ref _currentCacheBytes, ThumbnailCacheBudgetBytes, path, result);
+                    else if (quality == ImageQuality.Small)
+                        StoreBounded(_smallCache, _smallCacheSizes, ref _currentSmallCacheBytes, SmallCacheBudgetBytes, path, result);
                     else if (quality == ImageQuality.Medium)
                         StoreBounded(_mediumCache, _mediumCacheSizes, ref _currentMediumCacheBytes, MediumCacheBudgetBytes, path, result);
+                    else if (quality == ImageQuality.Large)
+                        StoreBounded(_largeCache, _largeCacheSizes, ref _currentLargeCacheBytes, LargeCacheBudgetBytes, path, result);
                     else if (quality == ImageQuality.Full)
                         StoreBounded(_fullQualityCache, _fullCacheSizes, ref _currentFullCacheBytes, FullCacheBudgetBytes, path, result);
 
@@ -708,7 +829,8 @@ public class AlbumArtLoader : IDisposable
 
     public Task PreloadTrackArtwork(
         IEnumerable<MusicTrack> tracks,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ImagePriority priority = ImagePriority.Preload)
     {
         return Task.Run(() =>
         {
@@ -723,7 +845,7 @@ public class AlbumArtLoader : IDisposable
             {
                 try
                 {
-                    var art = _coordinator.LoadAlbumArtAsync(track, track.FilePath, ImageQuality.Thumbnail, ImagePriority.Preload, cancellationToken).GetAwaiter().GetResult();
+                    var art = _coordinator.LoadAlbumArtAsync(track, track.FilePath, ImageQuality.Thumbnail, priority, cancellationToken).GetAwaiter().GetResult();
                     if (art != null) StoreBounded(_cache, _cacheSizes, ref _currentCacheBytes, ThumbnailCacheBudgetBytes, track.FilePath, art);
                 }
                 catch { }
@@ -733,7 +855,8 @@ public class AlbumArtLoader : IDisposable
 
     public Task PreloadAlbumArtwork(
         IEnumerable<MusicTrack> albums,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ImagePriority priority = ImagePriority.Preload)
     {
         return Task.Run(() =>
         {
@@ -751,7 +874,7 @@ public class AlbumArtLoader : IDisposable
                     string path = ResolveTrackArtPath(album) ?? album.FilePath;
                     if (string.IsNullOrEmpty(path)) return;
 
-                    var art = _coordinator.LoadAlbumArtAsync(album, path, ImageQuality.Medium, ImagePriority.Preload, cancellationToken).GetAwaiter().GetResult();
+                    var art = _coordinator.LoadAlbumArtAsync(album, path, ImageQuality.Medium, priority, cancellationToken).GetAwaiter().GetResult();
                     if (art != null)
                         StoreBounded(_mediumCache, _mediumCacheSizes, ref _currentMediumCacheBytes, MediumCacheBudgetBytes, path, art);
                 }

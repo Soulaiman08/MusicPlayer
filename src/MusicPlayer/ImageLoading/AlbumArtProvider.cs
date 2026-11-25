@@ -117,59 +117,25 @@ public sealed class AlbumArtProvider
 
                 if (!string.IsNullOrEmpty(record.ContentHash))
                 {
-                    if (_diskCache.TryGetValidCachedFile(record.ContentHash, quality, out var cachedFile) && cachedFile != null)
+                    string? diskFile = null;
+                    if (_diskCache.TryGetValidCachedFile(record.ContentHash, ImageQuality.Full, out var fullCachedFile) && fullCachedFile != null)
+                        diskFile = fullCachedFile;
+                    else if (_diskCache.TryGetValidCachedFile(record.ContentHash, quality, out var legacyFile) && legacyFile != null)
+                        diskFile = legacyFile;
+
+                    if (diskFile != null)
                     {
                         ImageDecodeMetrics.RecordDiskHit();
                         var decodedFromDisk = await _scheduler.ScheduleAsync(
                             OperationType.ImageDecode,
                             priority,
-                            _ => Task.FromResult(ImageDecoder.DecodeFromFile(cachedFile, quality, normPath)),
+                            _ => Task.FromResult(ImageDecoder.DecodeFromFile(diskFile, quality, normPath)),
                             cancellationToken).ConfigureAwait(false);
 
                         if (decodedFromDisk != null)
                         {
                             _memoryCache.Set(normPath, ImageKind.AlbumArt, quality, decodedFromDisk);
                             return decodedFromDisk;
-                        }
-                    }
-                    // If target quality is not yet cached on disk, but the Full (original) asset is,
-                    // decode target quality directly from the cached Full asset without TagLib re-extraction.
-                    else if (_diskCache.TryGetValidCachedFile(record.ContentHash, ImageQuality.Full, out var fullCachedFile) && fullCachedFile != null)
-                    {
-                        ImageDecodeMetrics.RecordDiskHit();
-                        var derivedFromFull = await _scheduler.ScheduleAsync(
-                            OperationType.ImageDecode,
-                            priority,
-                            _ => Task.FromResult(ImageDecoder.DecodeFromFile(fullCachedFile, quality, normPath)),
-                            cancellationToken).ConfigureAwait(false);
-
-                        if (derivedFromFull != null)
-                        {
-                            _memoryCache.Set(normPath, ImageKind.AlbumArt, quality, derivedFromFull);
-
-                            try
-                            {
-                                bool isPngFile = fullCachedFile.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
-                                byte[]? derivedBytes = ImageDecoder.EncodeToBytes(derivedFromFull, isPngFile);
-                                if (derivedBytes != null && derivedBytes.Length > 0)
-                                {
-                                    string? savedDerived = await _diskCache.SaveAtomicAsync(
-                                        record.ContentHash, quality, derivedBytes, isPngFile,
-                                        cancellationToken: cancellationToken).ConfigureAwait(false);
-
-                                    if (savedDerived != null && _databaseService != null)
-                                    {
-                                        if (quality == ImageQuality.Thumbnail) record.ThumbnailPath = savedDerived;
-                                        if (quality == ImageQuality.Medium) record.MediumPath = savedDerived;
-                                        if (quality == ImageQuality.Large) record.LargePath = savedDerived;
-                                        record.LastVerifiedUtcTicks = DateTime.UtcNow.Ticks;
-                                        _databaseService.UpsertAlbumArtRecord(record);
-                                    }
-                                }
-                            }
-                            catch { }
-
-                            return derivedFromFull;
                         }
                     }
                     else
@@ -225,24 +191,13 @@ public sealed class AlbumArtProvider
         {
             _memoryCache.Set(normPath, ImageKind.AlbumArt, quality, decoded);
 
-            // 6. Save original and derived quality to disk cache atomically, and update DB record
+            // 6. Save ONLY the single original-quality asset to disk cache (Harmonoid-style) and update DB record
             try
             {
-                // Always preserve the original source bytes under Full quality
                 string? fullSavedPath = await _diskCache.SaveAtomicAsync(
                     contentHash, ImageQuality.Full, extracted.RawBytes, isPng,
                     metadataText: $"{DateTime.UtcNow.Ticks}|{extracted.RawBytes.Length}|{extracted.Kind}",
                     cancellationToken: cancellationToken).ConfigureAwait(false);
-
-                string? savedPath = fullSavedPath;
-                if (quality != ImageQuality.Full)
-                {
-                    byte[]? derivedBytes = ImageDecoder.EncodeToBytes(decoded, isPng);
-                    savedPath = await _diskCache.SaveAtomicAsync(
-                        contentHash, quality, derivedBytes ?? extracted.RawBytes, isPng,
-                        metadataText: $"{DateTime.UtcNow.Ticks}|{(derivedBytes?.Length ?? extracted.RawBytes.Length)}|{extracted.Kind}",
-                        cancellationToken: cancellationToken).ConfigureAwait(false);
-                }
 
                 if (_databaseService != null && File.Exists(sourcePath))
                 {
@@ -264,10 +219,6 @@ public sealed class AlbumArtProvider
                     rec.LastVerifiedUtcTicks = DateTime.UtcNow.Ticks;
 
                     if (fullSavedPath != null) rec.FullPath = fullSavedPath;
-                    if (quality == ImageQuality.Thumbnail) rec.ThumbnailPath = savedPath;
-                    if (quality == ImageQuality.Medium) rec.MediumPath = savedPath;
-                    if (quality == ImageQuality.Large) rec.LargePath = savedPath;
-                    if (quality == ImageQuality.Full) rec.FullPath = savedPath;
 
                     _databaseService.UpsertAlbumArtRecord(rec);
                 }

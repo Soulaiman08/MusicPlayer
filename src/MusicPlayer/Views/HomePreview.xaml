@@ -140,7 +140,6 @@
                 </Style>
               </FrameworkElement.Style>
               <Grid Background="#22151922">
-                <Path Data="{StaticResource Icon.Songs}" Fill="#35FFFFFF" Stretch="Uniform" Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center" />
                 <Image Stretch="UniformToFill" Source="{Binding CurrentTrack, Converter={StaticResource AlbumArtConverter}, ConverterParameter=medium}" />
               </Grid>
             </Border>

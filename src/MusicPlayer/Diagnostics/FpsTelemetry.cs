@@ -30,6 +30,7 @@ public static class FpsTelemetry
     public static void Start()
     {
         if (_started) return;
+        if (Environment.GetEnvironmentVariable("MUSICPLAYER_FPSTELEMETRY") != "1") return;
         _started = true;
 
         try

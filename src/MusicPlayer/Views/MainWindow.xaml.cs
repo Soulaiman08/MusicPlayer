@@ -448,6 +448,10 @@ InitializeComponent();
     private void SetWallpaperSources(ImageSource displaySource, ImageSource glassSource)
     {
         _wallpaperDisplaySource = displaySource;
+        if (BackgroundImage != null && BackgroundImage.Source == null)
+        {
+            BackgroundImage.Source = displaySource;
+        }
         _ = ApplyWallpaperAlphaToBackgroundAsync();
         if (!ReferenceEquals(_glassWallpaperSource, glassSource))
         {
@@ -1678,9 +1682,15 @@ InitializeComponent();
     {
         if (RootBorder == null) return;
 
+        // NEVER clip RootBorder with a CombinedGeometry: a non-rectangular clip on
+        // the root container forces WPF to run a full-window offscreen stencil pass
+        // on every scroll/animation frame (especially devastating when Maximized).
+        RootBorder.Clip = null;
+
         if (_usesAppWindowTitleBar)
         {
-            RootBorder.Clip = null;
+            if (WallpaperBackdropGrid != null) WallpaperBackdropGrid.Clip = null;
+            if (HeaderGlassLayer != null) HeaderGlassLayer.Clip = null;
             UpdateAppWindowTitleBarDragRegions();
             return;
         }
@@ -1689,7 +1699,8 @@ InitializeComponent();
         var height = RootBorder.ActualHeight;
         if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
         {
-            RootBorder.Clip = null;
+            if (WallpaperBackdropGrid != null) WallpaperBackdropGrid.Clip = null;
+            if (HeaderGlassLayer != null) HeaderGlassLayer.Clip = null;
             return;
         }
 
@@ -1699,11 +1710,25 @@ InitializeComponent();
         var captionButtons = new RectangleGeometry(
             new Rect(width - cutoutWidth, 0, cutoutWidth, cutoutHeight));
 
-        // WPF paints RootBorder and its descendants over DWM's glass frame. Leave
-        // the native caption-button rectangle transparent so DWM can draw and hit-test
-        // its own Minimize/Maximize/Close buttons in every window state.
-        RootBorder.Clip = new CombinedGeometry(
+        // Clip ONLY the static top-right background/glass layers so DWM can draw and
+        // hit-test its native Minimize/Maximize/Close buttons, leaving ContentGrid
+        // (and all scrolling lists/grids) completely unclipped.
+        var bgClip = new CombinedGeometry(
             GeometryCombineMode.Exclude, windowBounds, captionButtons);
+        bgClip.Freeze();
+
+        if (WallpaperBackdropGrid != null) WallpaperBackdropGrid.Clip = bgClip;
+
+        if (HeaderGlassLayer != null)
+        {
+            double headerWidth = HeaderGlassLayer.ActualWidth > 0 ? HeaderGlassLayer.ActualWidth : width;
+            double headerHeight = HeaderGlassLayer.ActualHeight > 0 ? HeaderGlassLayer.ActualHeight : NativeCaptionHeight;
+            var headerBounds = new RectangleGeometry(new Rect(0, 0, headerWidth, headerHeight));
+            var headerCutout = new RectangleGeometry(new Rect(Math.Max(0, headerWidth - cutoutWidth), 0, cutoutWidth, Math.Min(cutoutHeight, headerHeight)));
+            var headerClip = new CombinedGeometry(GeometryCombineMode.Exclude, headerBounds, headerCutout);
+            headerClip.Freeze();
+            HeaderGlassLayer.Clip = headerClip;
+        }
     }
 
     private void UpdateAppWindowTitleBarDragRegions()
@@ -1837,6 +1862,17 @@ InitializeComponent();
                     };
                     allSongsTimer.Start();
                 }
+                else if (MusicPlayer.Diagnostics.ScrollDiagHarness.IsAutoRun)
+                {
+                    var diagTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                    diagTimer.Tick += async (_, _) =>
+                    {
+                        diagTimer.Stop();
+                        try { await RunScrollDiagCampaignAsync(); }
+                        catch (Exception ex) { LogHelper.LogError("DIAG-CAMPAIGN", ex); }
+                    };
+                    diagTimer.Start();
+                }
 
                 var probeTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
                 probeTimer.Tick += (_, _) => { probeTimer.Stop(); RunFullPlayerTransitionProbe(); };
@@ -1861,38 +1897,16 @@ InitializeComponent();
         // Set default artist image for ArtistImageConverter (grey circle with person icon)
         _defaultArtistImage = CreateDefaultArtistImage();
         Converters.ArtistImageConverter.DefaultArtistImage = _defaultArtistImage;
-
-        // Recover GPU context after sleep/resume (handles app launch after sleep).
-        // Toggle render mode to force WPF to reinitialize its rendering pipeline.
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, () =>
-        {
-            try
-            {
-                RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
-                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, () =>
-                {
-                    RenderOptions.ProcessRenderMode = RenderMode.Default;
-                });
-            }
-            catch { }
-        });
     }
 
     private void CacheStaticBackgroundLayers()
     {
         try
         {
-            if (RootBorder?.Child is not Grid rootGrid || rootGrid.Children.Count < 3) return;
-
-            if (rootGrid.Children[0] is Image bgImage)
+            if (WallpaperBackdropGrid != null)
             {
-                bgImage.CacheMode = new System.Windows.Media.BitmapCache();
-                System.Windows.Media.RenderOptions.SetCachingHint(bgImage, System.Windows.Media.CachingHint.Cache);
-            }
-
-            if (rootGrid.Children[1] is Border bgGradient)
-            {
-                bgGradient.CacheMode = new System.Windows.Media.BitmapCache();
+                WallpaperBackdropGrid.CacheMode = new System.Windows.Media.BitmapCache();
+                System.Windows.Media.RenderOptions.SetCachingHint(WallpaperBackdropGrid, System.Windows.Media.CachingHint.Cache);
             }
         }
         catch { }
@@ -3045,6 +3059,15 @@ InitializeComponent();
             ViewModel?.PlayTrackCommand.Execute(dataContext);
     }
 
+    private void TrackOptionsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MusicTrack track })
+        {
+            e.Handled = true;
+            ViewModel?.OpenTrackBottomSheetCommand.Execute(track);
+        }
+    }
+
     private void ArtistRow_Click(object sender, MouseButtonEventArgs e)
     {
         if (_hiddenForwardHeroSource != null || _isBackTransitioning) return;
@@ -3278,30 +3301,37 @@ InitializeComponent();
             var visual = new System.Windows.Media.DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
-                // Grey circle background
-                dc.DrawEllipse(
-                    new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3A, 0x3E, 0x48)),
-                    null,
+                // Same default artist placeholder as the artist grid tiles:
+                // translucent white disc + Icon.Artist glyph (Themes/Icons.xaml).
+                var plateBrush = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
+                dc.DrawEllipse(plateBrush, null,
                     new System.Windows.Point(size / 2.0, size / 2.0),
                     size / 2.0, size / 2.0);
 
-                // Person icon (head + body) scaled from 48Ã—48 viewBox to 256Ã—256.
-                // Geometry.Parse returns frozen (read-only) geometries, so apply
-                // the scale via DrawingContext.PushTransform instead of setting
-                // .Transform (setting it throws "read-only state" -> crash).
-                double s = size / 48.0;
-                var headGeom = System.Windows.Media.Geometry.Parse(
-                    "M24,24c4.4,0,8-3.6,8-8s-3.6-8-8-8s-8,3.6-8,8S19.6,24,24,24z");
-                var bodyGeom = System.Windows.Media.Geometry.Parse(
-                    "M24,28c-5.3,0-16,2.7-16,8v4h32v-4C40,30.7,29.3,28,24,28z");
+                // Person glyph from Icon.Artist (24x24 design space), centered.
+                var personGeom = System.Windows.Media.Geometry.Parse(
+                    "M12,12 C14.21,12 16,10.21 16,8 C16,5.79 14.21,4 12,4 C9.79,4 8,5.79 8,8 C8,10.21 9.79,12 12,12 Z " +
+                    "M12,14.5 C8.67,14.5 4,16.17 4,19.5 L4,20 C4,20.55 4.45,21 5,21 L19,21 C19.55,21 20,20.55 20,20 L20,19.5 C20,16.17 15.33,14.5 12,14.5 Z");
+                var bounds = personGeom.Bounds;
+                const double target = 72.0;
+                double scale = target / Math.Max(bounds.Width, bounds.Height);
+                double offsetX = (size / 2.0) - (bounds.X + bounds.Width / 2.0) * scale;
+                double offsetY = (size / 2.0) - (bounds.Y + bounds.Height / 2.0) * scale;
 
-                var brush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0xAA, 0xFF, 0xFF, 0xFF));
-                dc.PushTransform(new System.Windows.Media.ScaleTransform(s, s));
-                dc.DrawGeometry(brush, null, headGeom);
-                dc.DrawGeometry(brush, null, bodyGeom);
+                var brush = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(0xAA, 0xFF, 0xFF, 0xFF));
+                dc.PushTransform(new System.Windows.Media.TransformGroup
+                {
+                    Children =
+                    {
+                        new System.Windows.Media.ScaleTransform(scale, scale),
+                        new System.Windows.Media.TranslateTransform(offsetX, offsetY)
+                    }
+                });
+                dc.DrawGeometry(brush, null, personGeom);
                 dc.Pop();
             }
-
             var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap(size, size, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
             rtb.Render(visual);
             rtb.Freeze();
@@ -3751,7 +3781,16 @@ InitializeComponent();
         }
         StageIn(ArtistDetailBackRow, -10, MotionTokens.ReverseRevealLead, MotionTokens.ReverseRevealLeadDuration);
         StageIn(ArtistDetailInfo, 16, MotionTokens.ReverseRevealLead, MotionTokens.ReverseRevealLeadDuration);
-        StageIn(ArtistDetailContentHost, 24, MotionTokens.ReverseRevealFollow, MotionTokens.ReverseRevealFollowDuration);
+        // The content host (which holds the album card we are flying back to) must
+        // stay hidden for the whole flight. Revealing it during the morph put a
+        // second copy of the cover behind the flying one. It is revealed at landing.
+        ArtistDetailContentHost.BeginAnimation(OpacityProperty, null);
+        ArtistDetailContentHost.Opacity = 0;
+        if (ArtistDetailContentHost.RenderTransform is TranslateTransform hostTransform)
+        {
+            hostTransform.BeginAnimation(TranslateTransform.YProperty, null);
+            hostTransform.Y = 24;
+        }
     }
 
     private void StartReverseTransition(ImageSource imageSource)
@@ -3769,6 +3808,15 @@ InitializeComponent();
             unblockTimer.Stop();
             if (!NavGate.IsCurrent(unblockGen)) return;
             _isBackTransitioning = false;
+            // Safety net: never leave the artist content host hidden if the morph
+            // was cancelled/interrupted before its Completed handler ran.
+            ArtistDetailContentHost.BeginAnimation(OpacityProperty, null);
+            ArtistDetailContentHost.Opacity = 1;
+            if (ArtistDetailContentHost.RenderTransform is TranslateTransform restoreTransform)
+            {
+                restoreTransform.BeginAnimation(TranslateTransform.YProperty, null);
+                restoreTransform.Y = 0;
+            }
             if (TransitionInputBlocker != null)
                 TransitionInputBlocker.Visibility = Visibility.Collapsed;
         };
@@ -3857,33 +3905,18 @@ InitializeComponent();
         ArtistTransitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(scale, duration) { EasingFunction = ease });
         ArtistTransitionTranslate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(sourceCenter.X - targetCenter.X, duration) { EasingFunction = ease });
 
-        // Gentle fade-out of overlay in final 70ms so it melts into the card seamlessly
-        var fadeEase = new QuadraticEase { EasingMode = EasingMode.EaseIn };
-        var overlayFade = new DoubleAnimation(0.0, MotionTokens.OverlayMeltDuration)
-        {
-            BeginTime = MotionTokens.OverlayMeltBegin,
-            EasingFunction = fadeEase
-        };
-        ArtistTransitionOverlay.BeginAnimation(OpacityProperty, overlayFade);
+        // Capture this BEFORE the stash-restore block below clears _isAlbumTransition:
+        // the morph's Completed callback runs later and would otherwise see false.
+        bool arrivingFromAlbumDetail = _isAlbumTransition &&
+            string.Equals(ViewModel?.CurrentView, "artist_detail", StringComparison.Ordinal);
 
-        // Reveal the hidden source card the moment the overlay starts fading, so the
-        // card is already back underneath the fading pixels â€” no gap, no double image.
-        if (_hiddenReverseCard != null)
+        if (arrivingFromAlbumDetail)
         {
-            long revealGen = _navGen;
-            var revealTimer = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = MotionTokens.CardRevealDelay
-            };
-            revealTimer.Tick += (_, _) =>
-            {
-                revealTimer.Stop();
-                if (!NavGate.IsCurrent(revealGen)) return;
-                RestoreHiddenReverseCard();
-            };
-            revealTimer.Start();
+            // The flying cover is opaque; landing card must NOT be visible underneath
+            // during the morph (that is the double-image). Bring the content host back
+            // only after the overlay is gone, already at full opacity so it cannot pop.
+            if (_hiddenReverseCard != null) RestoreHiddenReverseCard();
         }
-
         var morphAnim = new DoubleAnimation(sourceCenter.Y - targetCenter.Y, duration) { EasingFunction = ease };
         morphAnim.Completed += (_, _) =>
         {
@@ -3891,6 +3924,18 @@ InitializeComponent();
             ArtistTransitionOverlay.Visibility = Visibility.Collapsed;
             ArtistTransitionOverlay.BeginAnimation(OpacityProperty, null);
             ArtistTransitionOverlay.Opacity = 1;
+            if (arrivingFromAlbumDetail)
+            {
+                // Overlay is gone; reveal the host instantly at full opacity so the
+                // landing card is there in the same frame - no double, no gap.
+                ArtistDetailContentHost.BeginAnimation(OpacityProperty, null);
+                ArtistDetailContentHost.Opacity = 1;
+                if (ArtistDetailContentHost.RenderTransform is TranslateTransform hostTransform)
+                {
+                    hostTransform.BeginAnimation(TranslateTransform.YProperty, null);
+                    hostTransform.Y = 0;
+                }
+            }
             _isAlbumTransition = false;
             _albumTransitionTrack = null;
             _isBackTransitioning = false;
@@ -4004,6 +4049,10 @@ InitializeComponent();
                         foreach (var gc in g.Children)
                             if (gc is Image) { hasArtImage = true; break; }
                     }
+                    else if (sq is Border coverBox && coverBox.Child is Image)
+                    {
+                        hasArtImage = true;
+                    }
                     if (!hasArtImage) goto nextChild;
                 }
                 else if (sq.Clip is not EllipseGeometry)
@@ -4016,7 +4065,7 @@ InitializeComponent();
             if (album && child is Border { DataContext: MusicTrack t2, IsVisible: true } b2 &&
                 b2.Child is StackPanel sp2 && sp2.Children.Count > 0 &&
                 sp2.Children[0] is Border artBox &&
-                Math.Abs(artBox.Width - 140) < 0.5 && artBox.ActualWidth > 0 &&
+                Math.Abs(artBox.Width - 148) < 0.5 && artBox.ActualWidth > 0 &&
                 artBox.Child is Image &&
                 string.Equals(t2.Album, name, StringComparison.OrdinalIgnoreCase))
             {
@@ -6577,7 +6626,15 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
         else if (e.PropertyName == nameof(MainViewModel.IsSearching))
             AnimateSearchBar();
         else if (e.PropertyName == nameof(MainViewModel.CurrentTrack))
-            Dispatcher.BeginInvoke(() => { StartMiniTitleMarquee(); StartFpTitleMarquee(); });
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                StartMiniTitleMarquee();
+                StartFpTitleMarquee();
+                if (CanAutoScrollLyrics)
+                    ScrollLyricsToCurrent(immediate: true);
+            });
+        }
         else if (e.PropertyName == nameof(MainViewModel.IsPlaying))
             QueueRefreshRequested();
         else if (e.PropertyName == nameof(MainViewModel.ShowQueue))
@@ -6599,14 +6656,10 @@ private void WindowMinimize_Click(object sender, RoutedEventArgs e)
                 if (ViewModel?.CurrentlyPlayingPage == CurrentlyPlayingPage.Lyrics)
                 {
                     ViewModel?.RefreshLyricHighlight();
-                    var lyricsReopenTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
-                    lyricsReopenTimer.Tick += (_, _) =>
+                    Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
                     {
-                        lyricsReopenTimer.Stop();
-                        UpdateLyricsPadding();
-                        QueueScrollLyricsToCurrent();
-                    };
-                    lyricsReopenTimer.Start();
+                        ScrollLyricsToCurrent(immediate: true);
+                    }));
                 }
             }
             else
@@ -7309,6 +7362,96 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         Dispatcher.BeginInvoke(new Action(() => Application.Current.Shutdown()));
     }
 
+    private async System.Threading.Tasks.Task RunScrollDiagCampaignAsync()
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(25);
+        while ((ViewModel?.IsInitializing == true || (ViewModel?.Tracks.Count ?? 0) == 0) && DateTime.UtcNow < deadline)
+        {
+            await System.Threading.Tasks.Task.Delay(200);
+        }
+        await System.Threading.Tasks.Task.Delay(1000);
+
+        WindowState = WindowState.Maximized;
+        if (Environment.GetEnvironmentVariable("MUSICPLAYER_DIAG_NOBG") == "1" && WallpaperBackdropGrid != null)
+            WallpaperBackdropGrid.Visibility = Visibility.Collapsed;
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(800);
+
+        var mode = MusicPlayer.Diagnostics.ScrollDiagHarness.Mode;
+        if (mode == MusicPlayer.Diagnostics.ScrollDiagHarness.DiagMode.C ||
+            mode == MusicPlayer.Diagnostics.ScrollDiagHarness.DiagMode.D)
+        {
+            ViewModel?.ArtistImageCache.Clear();
+            AlbumArtLoader.Instance?.ClearMemoryCachesForDiag();
+        }
+
+        // 1. Tracks Grid
+        IsSongsGridView = true;
+        ViewModel?.NavigateCommand.Execute("songs");
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(800);
+
+        var tracksGridCtrl = FindTracksItemsControl("grid");
+        await RunScrollBurstDiagAsync("tracks_grid", SongsGridScroller, () => tracksGridCtrl != null ? GetItemsPanelChildCount(tracksGridCtrl) : 0);
+
+        // 1b. Tracks List
+        IsSongsGridView = false;
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(600);
+        var tracksListScroller = FindVisualChild<ScrollViewer>(AllSongsListBox);
+        await RunScrollBurstDiagAsync("tracks_list", tracksListScroller, () => AllSongsListBox != null ? GetItemsPanelChildCount(AllSongsListBox) : 0);
+
+        // 2. Artists Tab
+        SwitchTab("artists");
+        await WaitForDispatcherIdleAsync();
+        await System.Threading.Tasks.Task.Delay(800);
+
+        var artistsCtrl = ArtistsSearchScroll?.Content as ItemsControl ?? FindVisualChild<ItemsControl>(TabContent_Artists);
+        await RunScrollBurstDiagAsync("artists", ArtistsSearchScroll, () => artistsCtrl != null ? GetItemsPanelChildCount(artistsCtrl) : 0);
+        if (artistsCtrl != null)
+        {
+            var panel = FindVisualChild<VirtualizingBalancedPanel>(artistsCtrl);
+            if (panel != null)
+            {
+                int nonZero = 0, visible = 0;
+                for (int i = 0; i < panel.Children.Count; i++)
+                {
+                    if (panel.Children[i] is FrameworkElement fe)
+                    {
+                        if (fe.RenderSize.Width > 0 && fe.RenderSize.Height > 0) nonZero++;
+                        if (fe.IsVisible) visible++;
+                    }
+                }
+                LogHelper.LogInfo($"[DIAG-PANEL-STATE] tab=artists children={panel.Children.Count} nonZero={nonZero} visible={visible} offset={ArtistsSearchScroll?.VerticalOffset:0.0} extent={ArtistsSearchScroll?.ExtentHeight:0.0} vp={ArtistsSearchScroll?.ViewportHeight:0.0}");
+            }
+        }
+
+        LogHelper.Flush();
+        Dispatcher.BeginInvoke(new Action(() => Application.Current.Shutdown()));
+    }
+
+    private async System.Threading.Tasks.Task RunScrollBurstDiagAsync(string tabName, ScrollViewer? scroller, Func<int> realizedCounter)
+    {
+        if (scroller == null) return;
+        MusicPlayer.Diagnostics.ScrollDiagHarness.BeginWindow(Dispatcher, realizedCounter);
+
+        // 3.0s smooth wheel scroll burst: 90 ticks down (~1.5s) + 90 ticks up (~1.5s)
+        for (int i = 0; i < 180; i++)
+        {
+            int delta = i < 90 ? -120 : 120;
+            var args = new System.Windows.Input.MouseWheelEventArgs(System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, delta)
+            {
+                RoutedEvent = UIElement.MouseWheelEvent,
+                Source = scroller
+            };
+            scroller.RaiseEvent(args);
+            await System.Threading.Tasks.Task.Delay(16);
+        }
+
+        await System.Threading.Tasks.Task.Delay(250);
+        MusicPlayer.Diagnostics.ScrollDiagHarness.EndWindow(tabName);
+    }
+
     private void RunPendingNavigation()
     {
         var nav = _pendingNavAction;
@@ -7803,6 +7946,11 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
             outgoingGrid.Visibility = Visibility.Visible;
             incomingGrid.Visibility = Visibility.Visible;
+            if (incomingGrid == LyricsPageGrid)
+            {
+                ViewModel?.RefreshLyricHighlight();
+                ScrollLyricsToCurrent(immediate: true);
+            }
 
             if (outgoingGrid != VisualizerPageGrid) outgoingGrid.CacheMode = _fpTransitionCache;
             if (incomingGrid != VisualizerPageGrid) incomingGrid.CacheMode = _fpTransitionCache;
@@ -7940,7 +8088,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         if (activePage == CurrentlyPlayingPage.Lyrics)
         {
             ViewModel?.RefreshLyricHighlight();
-            QueueScrollLyricsToCurrent();
+            ScrollLyricsToCurrent(immediate: true);
         }
         else
         {
@@ -8231,15 +8379,15 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
         }));
     }
 
-    private void ScrollLyricsToCurrent()
+    private void ScrollLyricsToCurrent(bool immediate = false)
     {
         var vm = ViewModel;
         if (!CanAutoScrollLyrics || vm == null || LyricsList == null || LyricsScrollViewer == null) return;
-        if (vm.CurrentLyricIndex < 0 || vm.CurrentLyricIndex >= LyricsList.Items.Count) return;
+        if (LyricsList.Items.Count == 0) return;
 
         var idx = vm.CurrentLyricIndex;
 
-        Dispatcher.BeginInvoke(new Action(() =>
+        void ApplyScroll()
         {
             if (!CanAutoScrollLyrics) return;
             if (LyricsScrollViewer.ActualHeight <= 0)
@@ -8248,7 +8396,7 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
                 {
                     _lyricsScrollRetryCount++;
                     var retryTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
-                    retryTimer.Tick += (_, _) => { retryTimer.Stop(); ScrollLyricsToCurrent(); };
+                    retryTimer.Tick += (_, _) => { retryTimer.Stop(); ScrollLyricsToCurrent(immediate); };
                     retryTimer.Start();
                 }
                 return;
@@ -8257,22 +8405,35 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
             UpdateLyricsPadding();
 
-            var container = LyricsList.ItemContainerGenerator.ContainerFromIndex(idx) as FrameworkElement;
-            if (container == null)
+            double targetOffset = 0.0;
+            if (idx >= 0 && idx < LyricsList.Items.Count)
             {
-                if (LyricsList.ItemContainerGenerator.Status != System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
+                var container = LyricsList.ItemContainerGenerator.ContainerFromIndex(idx) as FrameworkElement;
+                if (container == null)
                 {
-                    Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(ScrollLyricsToCurrent));
+                    if (LyricsList.ItemContainerGenerator.Status != System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
+                    {
+                        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() => ScrollLyricsToCurrent(immediate)));
+                    }
+                    return;
                 }
-                return;
+
+                var containerTop = container.TranslatePoint(new Point(0, 0), LyricsScrollViewer);
+                var containerHeight = container.ActualHeight;
+                var visibleHeight = LyricsScrollViewer.ActualHeight;
+
+                targetOffset = LyricsScrollViewer.VerticalOffset + containerTop.Y + containerHeight / 2.0 - visibleHeight / 2.0;
+                targetOffset = Math.Max(0, targetOffset);
             }
 
-            var containerTop = container.TranslatePoint(new Point(0, 0), LyricsScrollViewer);
-            var containerHeight = container.ActualHeight;
-            var visibleHeight = LyricsScrollViewer.ActualHeight;
-
-            var targetOffset = LyricsScrollViewer.VerticalOffset + containerTop.Y + containerHeight / 2.0 - visibleHeight / 2.0;
-            targetOffset = Math.Max(0, targetOffset);
+            if (immediate)
+            {
+                StopLyricsScroll();
+                _lyricsScrollProgrammatic = true;
+                LyricsScrollViewer.ScrollToVerticalOffset(targetOffset);
+                _lyricsScrollProgrammatic = false;
+                return;
+            }
 
             _lyricsScrollFrom = LyricsScrollViewer.VerticalOffset;
             _lyricsScrollTo = targetOffset;
@@ -8282,7 +8443,17 @@ else if (e.PropertyName == nameof(MainViewModel.CurrentView))
 
             _lyricsScrollActive = true;
             EnsurePerfRenderActive();
-        }));
+        }
+
+        if (immediate && LyricsScrollViewer.ActualHeight > 0)
+        {
+            LyricsScrollViewer.UpdateLayout();
+            ApplyScroll();
+        }
+        else
+        {
+            Dispatcher.BeginInvoke(new Action(ApplyScroll));
+        }
     }
 
     // Hidden Lyrics scrolls still call ScrollToVerticalOffset and can trigger layout.

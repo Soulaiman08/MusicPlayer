@@ -90,7 +90,7 @@ public partial class MainViewModel : ViewModelBase
 
 	private string _currentArtistName = string.Empty;
 
-	private string _artistDetailActiveTab = "albums";
+	private string _artistDetailActiveTab = "tracks";
 
 	private int _artistAlbumCount;
 
@@ -877,7 +877,7 @@ public partial class MainViewModel : ViewModelBase
 			: span.TotalHours >= 1
 				? $"{(int)span.TotalHours} hr {span.Minutes} min"
 				: $"{(int)span.TotalMinutes} min";
-		PlaylistDetailMeta = count == 0 ? string.Empty : $"{count} song{(count == 1 ? "" : "s")} · {length}";
+		PlaylistDetailMeta = count == 0 ? "0 songs" : $"{count} song{(count == 1 ? "" : "s")} · {length}";
 		OnPropertyChanged("PlaylistDetailMeta");
 	}
 
@@ -4676,16 +4676,6 @@ public partial class MainViewModel : ViewModelBase
 		}
 		LogHelper.LogInfo($"[StartupPerf] PreloadArtistImages done totalMs={_startupSw.ElapsedMilliseconds}");
 		if (token.IsCancellationRequested) return;
-		if (sortedTracks != null && sortedTracks.Count > 0)
-		{
-			statusCallback?.Invoke("Loading album art...");
-			var albumCards = await Task.Run(() => BuildAlbumCards(sortedTracks), token);
-			var preloadAlbumsTask = _albumArt.PreloadAlbumArtwork(albumCards, token);
-			var preloadTracksTask = _albumArt.PreloadTrackArtwork(sortedTracks.Take(150), token);
-			await Task.WhenAll(preloadAlbumsTask, preloadTracksTask);
-		}
-		LogHelper.LogInfo($"[StartupPerf] PreloadTrackArtwork done totalMs={_startupSw.ElapsedMilliseconds}");
-		if (token.IsCancellationRequested) return;
 		GC.Collect(0);
 		LoadPlaylists();
 		RestoreQueueOnStartup();
@@ -4693,6 +4683,18 @@ public partial class MainViewModel : ViewModelBase
 		UpdateQueueSummary();
 		IsInitializing = false;
 		LogHelper.LogInfo($"[StartupPerf] InitializeAsync complete totalMs={_startupSw.ElapsedMilliseconds}");
+		// Preload ONLY the first visible viewport in background right after splash closes
+		// (matches Harmonoid's instant splash screen while keeping initial views warm).
+		if (sortedTracks != null && sortedTracks.Count > 0)
+		{
+			StartTrackedBackgroundTask("InitialViewportArtPreload", async ct =>
+			{
+				var albumCards = await Task.Run(() => BuildAlbumCards(sortedTracks), ct);
+				var preloadAlbumsTask = _albumArt.PreloadAlbumArtwork(albumCards.Take(21), ct, ImageLoading.ImagePriority.Visible);
+				var preloadTracksTask = _albumArt.PreloadTrackArtwork(sortedTracks.Take(24), ct, ImageLoading.ImagePriority.Visible);
+				await Task.WhenAll(preloadAlbumsTask, preloadTracksTask);
+			});
+		}
 		// Row-thumbnail warmup runs immediately in background so the entire library is cached in RAM.
 		// MUSICPLAYER_PERFTEST_NOWARMUP=1 disables the background warmup and the
 		// artist-cache re-crop so scroll measurements are not polluted by them.
@@ -5044,7 +5046,7 @@ public partial class MainViewModel : ViewModelBase
 		// Do not start heavy artwork extraction the moment the loading overlay
 		// disappears. Wait for the user to be idle (or for a minimum age) first.
 		await MusicPlayer.Views.SmoothScrollHelper.WaitUntilIdleForBackgroundAsync(
-			quietMs: 2000, minAgeMs: 5000, maxWaitMs: 120000, cancellationToken);
+			quietMs: 600, minAgeMs: 1500, maxWaitMs: 120000, cancellationToken);
 		if (cancellationToken.IsCancellationRequested) return;
 
 		// Process the library in bounded batches so the UI thread and the decode
@@ -6021,6 +6023,7 @@ public partial class MainViewModel : ViewModelBase
 		}
 		LoadFolders();
 		LoadLibraryFull();
+		LoadPlaylists();
 		UpdateHomeCardCounts();
 	}
 	private void NavigateToPlaylists()
@@ -6976,7 +6979,7 @@ private async Task LoadArtistsAsync()
 	}
 
 	private int _artistImagesNotifyQueued;
-	private const int ArtistImageCacheSoftLimit = 512;
+	private const int ArtistImageCacheSoftLimit = 192;
 
 	/// <summary>
 	/// Coalesces image-completion notifications into one per dispatcher turn.
@@ -7356,7 +7359,7 @@ private async Task LoadArtistsAsync()
 			});
 			await DispatchAsync(delegate
 			{
-				ArtistDetailActiveTab = "albums";
+				ArtistDetailActiveTab = "tracks";
 				ArtistDetailTracks.ReplaceAll(tracks);
 				ArtistAlbums.ReplaceAll(albums);
 				ArtistAlbumCount = albums.Count;

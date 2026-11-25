@@ -250,6 +250,7 @@ public class DatabaseService
                 PathContainment.IsWithin(track.FilePath, mp));
             if (!belongsToManaged)
             {
+                _db.Table<PlaylistTrack>().Where(pt => pt.TrackId == track.Id).Delete();
                 _db.Delete<MusicTrack>(track.Id);
             }
         }
@@ -459,12 +460,34 @@ public class DatabaseService
     public Dictionary<int, int> GetAllPlaylistTrackCounts()
     {
         using var _ = LockIfNeeded();
-        var all = _db.Table<PlaylistTrack>().Select(pt => pt.PlaylistId).ToList();
+        var managedPaths = _db.Table<ManagedMusicFolder>()
+            .Where(f => f.Enabled)
+            .Select(f => f.Path)
+            .ToList();
+
+        if (managedPaths.Count == 0)
+            return new Dictionary<int, int>();
+
+        var all = _db.Table<PlaylistTrack>().ToList();
+        var trackValidCache = new Dictionary<int, bool>();
         var counts = new Dictionary<int, int>();
-        foreach (var playlistId in all)
+
+        foreach (var pt in all)
         {
-            if (counts.ContainsKey(playlistId)) counts[playlistId]++;
-            else counts[playlistId] = 1;
+            if (!trackValidCache.TryGetValue(pt.TrackId, out bool isValid))
+            {
+                var track = _db.Table<MusicTrack>().FirstOrDefault(t => t.Id == pt.TrackId);
+                isValid = track != null
+                    && !track.IsHidden
+                    && !string.IsNullOrEmpty(track.FilePath)
+                    && managedPaths.Any(mp => PathContainment.IsWithin(track.FilePath, mp));
+                trackValidCache[pt.TrackId] = isValid;
+            }
+
+            if (!isValid) continue;
+
+            if (counts.ContainsKey(pt.PlaylistId)) counts[pt.PlaylistId]++;
+            else counts[pt.PlaylistId] = 1;
         }
         return counts;
     }
@@ -585,6 +608,14 @@ public class DatabaseService
     public List<MusicTrack> GetPlaylistTracks(int playlistId)
     {
         using var _ = LockIfNeeded();
+        var managedPaths = _db.Table<ManagedMusicFolder>()
+            .Where(f => f.Enabled)
+            .Select(f => f.Path)
+            .ToList();
+
+        if (managedPaths.Count == 0)
+            return new List<MusicTrack>();
+
         var trackIds = _db.Table<PlaylistTrack>()
             .Where(pt => pt.PlaylistId == playlistId)
             .OrderBy(pt => pt.Position)
@@ -592,7 +623,10 @@ public class DatabaseService
             .ToList();
 
         return trackIds.Select(id => _db.Table<MusicTrack>().FirstOrDefault(t => t.Id == id))
-            .Where(t => t != null)
+            .Where(t => t != null
+                && !t.IsHidden
+                && !string.IsNullOrEmpty(t.FilePath)
+                && managedPaths.Any(mp => PathContainment.IsWithin(t.FilePath, mp)))
             .Cast<MusicTrack>()
             .ToList();
     }
@@ -935,12 +969,18 @@ public class DatabaseService
     public List<MusicTrack> SearchTracks(string query)
     {
         using var _ = LockIfNeeded();
+        var managedPaths = GetManagedFolderPathsLocked();
+        if (managedPaths.Count == 0)
+            return new List<MusicTrack>();
+
         var lowerQuery = query.ToLower();
         return _db.Table<MusicTrack>()
             .Where(t => !t.IsHidden && (t.Title.ToLower().Contains(lowerQuery) ||
                         t.Artist.ToLower().Contains(lowerQuery) ||
                         t.Album.ToLower().Contains(lowerQuery)))
             .OrderBy(t => t.Title)
+            .ToList()
+            .Where(t => IsTrackInManagedFolderLocked(t, managedPaths))
             .ToList();
     }
 
