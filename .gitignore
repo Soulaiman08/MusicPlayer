@@ -97,3 +97,5 @@ desktop.ini
 /LaunchFixtureNoArt.bat
 /docs/*.md
 fixtures/
+src/MusicPlayer.Core
+src/MusicPlayer.WinUI.Prototype

@@ -32,24 +32,7 @@
       </Grid.RowDefinitions>
 
       <!-- Card 0: ALL SONGS -->
-      <Border Grid.Row="0" Grid.Column="0" Height="84" Margin="0,0,12,12" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="AllSongsCard_Click" SnapsToDevicePixels="True">
-<Border.Style>
-          <Style TargetType="Border">
-            <Setter Property="Background" Value="#1CFFFFFF" />
-            <Setter Property="BorderBrush" Value="#28FFFFFF" />
-            <Setter Property="Effect">
-              <Setter.Value>
-                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
-              </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#2BFFFFFF" />
-                <Setter Property="BorderBrush" Value="#404995F3" />
-              </Trigger>
-            </Style.Triggers>
-          </Style>
-        </Border.Style>
+      <Border Grid.Row="0" Grid.Column="0" Height="84" Margin="0,0,12,12" Cursor="Hand" MouseLeftButtonUp="AllSongsCard_Click" Style="{StaticResource APK_GlassCardBorder}">
         <Grid Margin="16,12">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="52" />
@@ -66,30 +49,13 @@
           </Border>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
             <TextBlock Text="ALL SONGS" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
-            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[0].Count, StringFormat={}{0} tracks}" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#B8C4D8" Text="{Binding HomeCards[0].Count, StringFormat={}{0} tracks}" />
           </StackPanel>
         </Grid>
       </Border>
 
       <!-- Card 1: FOLDERS -->
-      <Border Grid.Row="0" Grid.Column="1" Height="84" Margin="0,0,12,12" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="FoldersCard_Click" SnapsToDevicePixels="True">
-<Border.Style>
-          <Style TargetType="Border">
-            <Setter Property="Background" Value="#1CFFFFFF" />
-            <Setter Property="BorderBrush" Value="#28FFFFFF" />
-            <Setter Property="Effect">
-              <Setter.Value>
-                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
-              </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#2BFFFFFF" />
-                <Setter Property="BorderBrush" Value="#40FFCF4D" />
-              </Trigger>
-            </Style.Triggers>
-          </Style>
-        </Border.Style>
+      <Border Grid.Row="0" Grid.Column="1" Height="84" Margin="0,0,12,12" Cursor="Hand" MouseLeftButtonUp="FoldersCard_Click" Style="{StaticResource APK_GlassCardBorder}">
         <Grid Margin="16,12">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="52" />
@@ -106,30 +72,13 @@
           </Border>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
             <TextBlock Text="FOLDERS" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
-            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[1].Count, StringFormat={}{0} folders}" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#B8C4D8" Text="{Binding HomeCards[1].Count, StringFormat={}{0} folders}" />
           </StackPanel>
         </Grid>
       </Border>
 
       <!-- Card 2: FAVORITES -->
-      <Border Grid.Row="0" Grid.Column="2" Height="84" Margin="0,0,0,12" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="FavoritesCard_Click" SnapsToDevicePixels="True">
-<Border.Style>
-          <Style TargetType="Border">
-            <Setter Property="Background" Value="#1CFFFFFF" />
-            <Setter Property="BorderBrush" Value="#28FFFFFF" />
-            <Setter Property="Effect">
-              <Setter.Value>
-                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
-              </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#2BFFFFFF" />
-                <Setter Property="BorderBrush" Value="#40FF5A5A" />
-              </Trigger>
-            </Style.Triggers>
-          </Style>
-        </Border.Style>
+      <Border Grid.Row="0" Grid.Column="2" Height="84" Margin="0,0,0,12" Cursor="Hand" MouseLeftButtonUp="FavoritesCard_Click" Style="{StaticResource APK_GlassCardBorder}">
         <Grid Margin="16,12">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="52" />
@@ -146,30 +95,13 @@
           </Border>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
             <TextBlock Text="FAVORITES" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
-            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[2].Count, StringFormat={}{0} favorites}" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#B8C4D8" Text="{Binding HomeCards[2].Count, StringFormat={}{0} favorites}" />
           </StackPanel>
         </Grid>
       </Border>
 
       <!-- Card 3: RECENT PLAY -->
-      <Border Grid.Row="1" Grid.Column="0" Height="84" Margin="0,0,12,0" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="RecentPlayCard_Click" SnapsToDevicePixels="True">
-<Border.Style>
-          <Style TargetType="Border">
-            <Setter Property="Background" Value="#1CFFFFFF" />
-            <Setter Property="BorderBrush" Value="#28FFFFFF" />
-            <Setter Property="Effect">
-              <Setter.Value>
-                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
-              </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#2BFFFFFF" />
-                <Setter Property="BorderBrush" Value="#404CAF50" />
-              </Trigger>
-            </Style.Triggers>
-          </Style>
-        </Border.Style>
+      <Border Grid.Row="1" Grid.Column="0" Height="84" Margin="0,0,12,0" Cursor="Hand" MouseLeftButtonUp="RecentPlayCard_Click" Style="{StaticResource APK_GlassCardBorder}">
         <Grid Margin="16,12">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="52" />
@@ -186,30 +118,13 @@
           </Border>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
             <TextBlock Text="RECENT PLAY" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
-            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[3].Count, StringFormat={}{0} tracks}" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#B8C4D8" Text="{Binding HomeCards[3].Count, StringFormat={}{0} tracks}" />
           </StackPanel>
         </Grid>
       </Border>
 
       <!-- Card 4: RECENT ADD -->
-      <Border Grid.Row="1" Grid.Column="1" Height="84" Margin="0,0,12,0" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="RecentAddCard_Click" SnapsToDevicePixels="True">
-<Border.Style>
-          <Style TargetType="Border">
-            <Setter Property="Background" Value="#1CFFFFFF" />
-            <Setter Property="BorderBrush" Value="#28FFFFFF" />
-            <Setter Property="Effect">
-              <Setter.Value>
-                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
-              </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#2BFFFFFF" />
-                <Setter Property="BorderBrush" Value="#4000A3FF" />
-              </Trigger>
-            </Style.Triggers>
-          </Style>
-        </Border.Style>
+      <Border Grid.Row="1" Grid.Column="1" Height="84" Margin="0,0,12,0" Cursor="Hand" MouseLeftButtonUp="RecentAddCard_Click" Style="{StaticResource APK_GlassCardBorder}">
         <Grid Margin="16,12">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="52" />
@@ -226,30 +141,13 @@
           </Border>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
             <TextBlock Text="RECENT ADD" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
-            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[4].Count, StringFormat={}{0} tracks}" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#B8C4D8" Text="{Binding HomeCards[4].Count, StringFormat={}{0} tracks}" />
           </StackPanel>
         </Grid>
       </Border>
 
       <!-- Card 5: MOST PLAY -->
-      <Border Grid.Row="1" Grid.Column="2" Height="84" Margin="0,0,0,0" BorderThickness="1" CornerRadius="16" Cursor="Hand" MouseLeftButtonUp="MostPlayCard_Click" SnapsToDevicePixels="True">
-<Border.Style>
-          <Style TargetType="Border">
-            <Setter Property="Background" Value="#1CFFFFFF" />
-            <Setter Property="BorderBrush" Value="#28FFFFFF" />
-            <Setter Property="Effect">
-              <Setter.Value>
-                <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
-              </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#2BFFFFFF" />
-                <Setter Property="BorderBrush" Value="#40FF9800" />
-              </Trigger>
-            </Style.Triggers>
-          </Style>
-        </Border.Style>
+      <Border Grid.Row="1" Grid.Column="2" Height="84" Margin="0,0,0,0" Cursor="Hand" MouseLeftButtonUp="MostPlayCard_Click" Style="{StaticResource APK_GlassCardBorder}">
         <Grid Margin="16,12">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="52" />
@@ -266,7 +164,7 @@
           </Border>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0">
             <TextBlock Text="MOST PLAY" FontSize="14.5" FontWeight="SemiBold" Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis" />
-            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#A0A5B2" Text="{Binding HomeCards[5].Count, StringFormat={}{0} tracks}" />
+            <TextBlock Style="{StaticResource APK_TextMediumStyle}" Margin="0,3,0,0" FontSize="12" Foreground="#B8C4D8" Text="{Binding HomeCards[5].Count, StringFormat={}{0} tracks}" />
           </StackPanel>
         </Grid>
       </Border>
@@ -314,24 +212,7 @@
       </ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate>
         <DataTemplate>
-          <Border Height="74" HorizontalAlignment="Stretch" MaxWidth="190" BorderThickness="1" CornerRadius="16" Margin="0,0,12,12" Padding="12" Cursor="Hand" MouseLeftButtonUp="PlaylistItem_Click" SnapsToDevicePixels="True">
-<Border.Style>
-          <Style TargetType="Border">
-            <Setter Property="Background" Value="#1CFFFFFF" />
-            <Setter Property="BorderBrush" Value="#28FFFFFF" />
-                <Setter Property="Effect">
-                  <Setter.Value>
-                    <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Opacity="0.08" Color="#000000" RenderingBias="Performance" />
-                  </Setter.Value>
-                </Setter>
-                <Style.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#26FFFFFF" />
-                    <Setter Property="BorderBrush" Value="#38FFFFFF" />
-                  </Trigger>
-                </Style.Triggers>
-              </Style>
-            </Border.Style>
+          <Border Height="74" HorizontalAlignment="Stretch" MaxWidth="190" Margin="0,0,12,12" Padding="12" Cursor="Hand" MouseLeftButtonUp="PlaylistItem_Click" Style="{StaticResource APK_GlassCardBorder}">
             <FrameworkElement.ContextMenu>
               <ContextMenu>
                 <MenuItem Header="Play" Click="PlaylistContextPlay_Click" />
@@ -355,7 +236,7 @@
               </Border>
               <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,0,0,0">
                 <TextBlock Style="{StaticResource APK_TextBodyStyle}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" Text="{Binding Name}" Foreground="#FFFFFFFF" />
-                <TextBlock Style="{StaticResource APK_TextLowStyle}" Margin="0,3,0,0" FontSize="11.5" Foreground="#8A92A2" TextTrimming="CharacterEllipsis" Text="{Binding TrackCount, StringFormat={}{0} songs}" />
+                <TextBlock Style="{StaticResource APK_TextLowStyle}" Margin="0,3,0,0" FontSize="11.5" Foreground="#B0BCD0" TextTrimming="CharacterEllipsis" Text="{Binding TrackCount, StringFormat={}{0} songs}" />
               </StackPanel>
             </Grid>
           </Border>

@@ -1592,50 +1592,13 @@ InitializeComponent();
 
     private void OnWindowSourceInitialized(object? sender, EventArgs e)
     {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd == nint.Zero)
-            return;
-
-        // WindowChrome and AppWindowTitleBar both own non-client hit testing.
-        // Switch atomically to AppWindow only after its HWND bridge is available;
-        // otherwise retain the existing WindowChrome path as a safe fallback.
-        var existingChrome = WindowChrome.GetWindowChrome(this);
-        try
-        {
-            if (!AppWindowTitleBar.IsCustomizationSupported())
-                return;
-
-            var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
-            var appWindow = AppWindow.GetFromWindowId(windowId);
-            if (appWindow == null)
-                return;
-
-            WindowChrome.SetWindowChrome(this, null);
-            var titleBar = appWindow.TitleBar;
-            titleBar.ExtendsContentIntoTitleBar = true;
-
-            // Let the MusicPlayer visual continue behind the system-drawn
-            // caption buttons. Keep hover and pressed colors unset so Windows
-            // retains its native feedback, including the Close button red state.
-            titleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
-            titleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
-
-            _appWindow = appWindow;
-            _usesAppWindowTitleBar = true;
-            // The maximized WindowChrome layout kept a 7-DIP safety inset for
-            // its non-client frame. AppWindow owns that frame now, so keeping
-            // the inset would expose the transparent Window background as a
-            // thick white border.
-            Padding = new Thickness(0);
-            UpdateNativeCaptionButtonCutout();
-            UpdateAppWindowTitleBarDragRegions();
-        }
-        catch
-        {
-            WindowChrome.SetWindowChrome(this, existingChrome);
-            _appWindow = null;
-            _usesAppWindowTitleBar = false;
-        }
+        // Keep WPF's native WindowChrome (UseAeroCaptionButtons="False") instead of
+        // AppWindow.TitleBar.ExtendsContentIntoTitleBar: AppWindow's DComp titlebar
+        // desyncs from WPF's D3D9 HwndSource during resize/maximize/restore and
+        // leaves black DWM surfaces and ghost frames.
+        _appWindow = null;
+        _usesAppWindowTitleBar = false;
+        UpdateNativeCaptionButtonCutout();
     }
 
     private void RootBorder_Loaded(object sender, RoutedEventArgs e)
@@ -1681,55 +1644,24 @@ InitializeComponent();
     private void UpdateNativeCaptionButtonCutout()
     {
         if (RootBorder == null) return;
-
-        // NEVER clip RootBorder with a CombinedGeometry: a non-rectangular clip on
-        // the root container forces WPF to run a full-window offscreen stencil pass
-        // on every scroll/animation frame (especially devastating when Maximized).
         RootBorder.Clip = null;
-
-        if (_usesAppWindowTitleBar)
-        {
-            if (WallpaperBackdropGrid != null) WallpaperBackdropGrid.Clip = null;
-            if (HeaderGlassLayer != null) HeaderGlassLayer.Clip = null;
-            UpdateAppWindowTitleBarDragRegions();
-            return;
-        }
-
-        var width = RootBorder.ActualWidth;
-        var height = RootBorder.ActualHeight;
-        if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
-        {
-            if (WallpaperBackdropGrid != null) WallpaperBackdropGrid.Clip = null;
-            if (HeaderGlassLayer != null) HeaderGlassLayer.Clip = null;
-            return;
-        }
-
-        var windowBounds = new RectangleGeometry(new Rect(0, 0, width, height));
-        var cutoutWidth = Math.Min(NativeCaptionButtonRegionWidth, width);
-        var cutoutHeight = Math.Min(NativeCaptionHeight, height);
-        var captionButtons = new RectangleGeometry(
-            new Rect(width - cutoutWidth, 0, cutoutWidth, cutoutHeight));
-
-        // Clip ONLY the static top-right background/glass layers so DWM can draw and
-        // hit-test its native Minimize/Maximize/Close buttons, leaving ContentGrid
-        // (and all scrolling lists/grids) completely unclipped.
-        var bgClip = new CombinedGeometry(
-            GeometryCombineMode.Exclude, windowBounds, captionButtons);
-        bgClip.Freeze();
-
-        if (WallpaperBackdropGrid != null) WallpaperBackdropGrid.Clip = bgClip;
-
-        if (HeaderGlassLayer != null)
-        {
-            double headerWidth = HeaderGlassLayer.ActualWidth > 0 ? HeaderGlassLayer.ActualWidth : width;
-            double headerHeight = HeaderGlassLayer.ActualHeight > 0 ? HeaderGlassLayer.ActualHeight : NativeCaptionHeight;
-            var headerBounds = new RectangleGeometry(new Rect(0, 0, headerWidth, headerHeight));
-            var headerCutout = new RectangleGeometry(new Rect(Math.Max(0, headerWidth - cutoutWidth), 0, cutoutWidth, Math.Min(cutoutHeight, headerHeight)));
-            var headerClip = new CombinedGeometry(GeometryCombineMode.Exclude, headerBounds, headerCutout);
-            headerClip.Freeze();
-            HeaderGlassLayer.Clip = headerClip;
-        }
+        if (WallpaperBackdropGrid != null) WallpaperBackdropGrid.Clip = null;
+        if (HeaderGlassLayer != null) HeaderGlassLayer.Clip = null;
     }
+
+    private void CaptionMinimize_Click(object sender, RoutedEventArgs e)
+        => SystemCommands.MinimizeWindow(this);
+
+    private void CaptionMaximizeRestore_Click(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+            SystemCommands.RestoreWindow(this);
+        else
+            SystemCommands.MaximizeWindow(this);
+    }
+
+    private void CaptionClose_Click(object sender, RoutedEventArgs e)
+        => SystemCommands.CloseWindow(this);
 
     private void UpdateAppWindowTitleBarDragRegions()
     {
@@ -2021,24 +1953,16 @@ InitializeComponent();
 
     private void OnEnterSizeMove()
     {
-        if (ContentGrid != null && ContentGrid.Visibility == Visibility.Visible) ContentGrid.CacheMode = _fpTransitionCache;
-        if (HeaderGlassLayer != null) HeaderGlassLayer.CacheMode = _fpTransitionCache;
-        if (BackgroundImage != null) BackgroundImage.CacheMode = _fpTransitionCache;
-        if (BackgroundGradientOverlay != null) BackgroundGradientOverlay.CacheMode = _fpTransitionCache;
-        if (MiniPlayerBorder != null) MiniPlayerBorder.CacheMode = _fpTransitionCache;
+        // Do not apply BitmapCache to ContentGrid/MiniPlayerBorder during resize:
+        // WM_ENTERSIZEMOVE fires for manual resizing as well as moving, and
+        // caching the subtree stretches/distorts the rendered frame while dragging.
     }
 
     private void OnExitSizeMove()
     {
-        if (ContentGrid != null) ContentGrid.CacheMode = null;
-        if (HeaderGlassLayer != null) HeaderGlassLayer.CacheMode = null;
-        if (BackgroundImage != null) BackgroundImage.CacheMode = null;
-        if (BackgroundGradientOverlay != null) BackgroundGradientOverlay.CacheMode = null;
-        if (MiniPlayerBorder != null) MiniPlayerBorder.CacheMode = null;
-
         UpdateNativeCaptionButtonCutout();
-        MarkGlassBackdropDirty();
-        UpdateGlassSurfaceBrushes();
+        _glassDirty = false;
+        RebuildGlassBackdropCache();
         UpdateTracksScrollbarInset();
         _resizeMarqueeTimer.Stop();
         _resizeMarqueeTimer.Start();
@@ -2092,7 +2016,7 @@ InitializeComponent();
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern uint GetDpiForWindow(nint hwnd);
 
-    private static void WmGetMinMaxInfo(nint hwnd, nint lParam)
+    private void WmGetMinMaxInfo(nint hwnd, nint lParam)
         {
             try
             {
@@ -2114,7 +2038,7 @@ InitializeComponent();
                 {
                     LogHelper.LogInfo($"[MINMAX-B] rawMax={rawMaxSize.x}x{rawMaxSize.y} rawPos={rawMaxPos.x},{rawMaxPos.y} rawMin={rawMinTrack.x}x{rawMinTrack.y} appliedMin={mmi.ptMinTrackSize.x}x{mmi.ptMinTrackSize.y}");
                 }
-                else
+                else if (!_usesAppWindowTitleBar)
                 {
                     LogHelper.LogInfo($"[MINMAX-A] rawMax={rawMaxSize.x}x{rawMaxSize.y} rawPos={rawMaxPos.x},{rawMaxPos.y} rawMin={rawMinTrack.x}x{rawMinTrack.y}");
                     nint monitor = MonitorFromWindow(hwnd, 2);
@@ -4550,7 +4474,16 @@ InitializeComponent();
             {
                 LogHelper.LogInfo("[QUEUE_DRAG] Minimized during drag â€” verdict deferred to Activated");
             }
+            return;
         }
+
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Render, new Action(() =>
+        {
+            UpdateNativeCaptionButtonCutout();
+            _glassDirty = false;
+            RebuildGlassBackdropCache();
+            UpdateTracksScrollbarInset();
+        }));
     }
 
     private void Window_PreviewMouseUp(object sender, MouseButtonEventArgs e)
